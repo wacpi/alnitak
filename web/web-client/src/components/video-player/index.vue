@@ -1,4 +1,5 @@
 <template>
+  <!-- 播放器容器和弹幕发送区 -->
   <div class="player-container">
     <div class="player" id="dplayer"></div>
     <div class="danmaku-send">
@@ -9,6 +10,7 @@
 </template>
 
 <script setup lang="ts">
+// ===== 依赖与类型定义 =====
 import Hls from "hls.js";
 import Wplayer from 'wplayer-next';
 import { ref, onBeforeMount, watch, onMounted } from 'vue';
@@ -17,6 +19,7 @@ import DanmakuSend from "./components/DanmakuSend.vue";
 import { getResourceQualityApi, getVideoFileUrl } from "@/api/video";
 import { addHistoryAPI } from "@/api/history";
 
+// ===== 组件属性定义 =====
 const props = withDefaults(defineProps<{
   videoInfo: VideoType;
   part: number;
@@ -26,6 +29,7 @@ const props = withDefaults(defineProps<{
   progress: null
 })
 
+// ===== 播放器与弹幕相关变量 =====
 let player: any = null;
 const defaultQuality = ref('');
 const hls = shallowRef<Hls | null>(null);
@@ -39,10 +43,17 @@ const options: PlayerOptionsType = {
     type: 'customHls',
     customType: {
       // TODO: 处理IOS系统中的hls视频播放
+      //这段代码先前造成清晰度切换进度丢失问题！
       customHls: function (video: HTMLVideoElement) {
-        if (!hls.value) hls.value = new Hls();
-        hls.value.loadSource(video.src);
-        hls.value.attachMedia(video);
+        if (!hls.value) {  // 如果 Hls 实例不存在，才创建一个新的 Hls 实例
+          hls.value = new Hls();
+        } else {
+          hls.value.destroy();  // 销毁旧的实例，防止内存泄漏
+          hls.value = new Hls();  // 重新实例化 Hls（仅在必要时）
+        }
+        hls.value.loadSource(video.src);  // 加载新的 HLS 视频源
+        hls.value.attachMedia(video);  // 将 HLS 实例附加到视频元素上
+
         hls.value.on(Hls.Events.ERROR, () => {
           console.error("资源加载失败");
         });
@@ -52,6 +63,7 @@ const options: PlayerOptionsType = {
   danmaku: {}
 }
 
+// ===== 弹幕过滤配置 =====
 let disableLeave = 0;
 let disableType: number[] = [];
 const initFilterConfig = () => {
@@ -66,8 +78,10 @@ const initFilterConfig = () => {
   }
 }
 
+// ===== 进度续播相关 =====
 let pendingSeek: number | null = null;
 
+// ===== 监听 progress 属性变化，自动 seek =====
 watch(
   () => props.progress,
   (val) => {
@@ -81,29 +95,30 @@ watch(
   { immediate: true }
 );
 
+// ===== 分集切换与播放器实例化 =====
 const loadPart = async (part: number) => {
   const el = document.getElementById('dplayer');
   if (el) {
     await loadResource(part);
+    /* === 播放器销毁与重建实例化片段 start === */
     if (player) player.destroy();
-
     options.container = el;
     player = new Wplayer(options);
+    /* === 播放器销毁与重建实例化片段 end === */
     player.on('quality_start', (quality: PlayerQualityType) => {
       localStorage.setItem('default-video-quality', quality.name);
     })
     filterDanmaku({ disableLeave, disableType });
-
   }
 }
 
+// ===== 清晰度映射表与资源加载 =====
 const resourceNameMap = {
-  "640x360_500k_30": "360p",
-  "854x480_900k_30": "480p",
-  "1080x720_2000k_30": "720p",// 兼容之前的错误Add commentMore actions
-  "1280x720_2000k_30": "720p",
-  "1920x1080_3000k_30": "1080p",
-  "1920x1080_6000k_60": "1080p60",
+  "640x360_1000k_30": "360p",
+  "854x480_1500k_30": "480p",
+  "1280x720_3000k_30": "720p",
+  "1920x1080_6000k_30": "1080p",
+  "1920x1080_8000k_60": "1080p60",
 }
 
 const loadResource = async (part: number) => {
@@ -139,6 +154,7 @@ const loadResource = async (part: number) => {
   }
 }
 
+// ===== 弹幕相关方法 =====
 let originalDanmaku: DanmakuType[] = [];
 const setDanmaku = (data: DanmakuType[]) => {
   originalDanmaku = data;
@@ -198,15 +214,17 @@ const isDisableType = (item: DanmakuType, disableType: Array<number>) => {
   return false;
 }
 
-// 上传历史记录
+// ===== 历史记录上报 =====
 const uploadHistory = async () => {
   await addHistoryAPI({ vid: props.videoInfo.vid, part: props.part, time: player.video.currentTime });
 }
 
+// ===== 分集切换监听 =====
 watch(() => props.part, (val) => {
   loadPart(val);
 });
 
+// ===== 播放器 ready 回调与定时上报历史 =====
 let timer: number | null = null;
 const onReadyCallbacks: Array<() => void> = [];
 const setOnReady = (cb: () => void) => {
@@ -246,6 +264,7 @@ onBeforeUnmount(() => {
   if (timer) clearInterval(timer);
 })
 
+// ===== 对外暴露方法 =====
 defineExpose({
   setOnReady,
   uploadHistory,
@@ -254,6 +273,7 @@ defineExpose({
 </script>
 
 <style lang="scss" scoped>
+// ===== 播放器与弹幕样式 =====
 .player-container {
   height: 0;
   width: 100%;
