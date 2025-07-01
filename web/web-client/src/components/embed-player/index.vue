@@ -34,11 +34,12 @@ const injectDanmaku = () => {
 }
 
 const resourceNameMap: Record<string, string> = {
-  "640x360_1000k_30": "360P",
-  "854x480_1500k_30": "480P",
-  "1280x720_3000k_30": "720P",
-  "1920x1080_6000k_30": "1080P",
-  "1920x1080_8000k_60": "1080P60",
+  "640x360_500k_30": "360p",
+  "854x480_900k_30": "480p",
+  "1080x720_2000k_30": "720p",// 兼容之前的错误Add commentMore actions
+  "1280x720_2000k_30": "720p",
+  "1920x1080_3000k_30": "1080p",
+  "1920x1080_6000k_60": "1080p60",
 };
 
 const getQualities = (qualityList: string[], resourceId: number) => {
