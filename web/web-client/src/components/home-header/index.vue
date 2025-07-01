@@ -8,7 +8,7 @@
     </div>
     <div class="header-search">
       <div class="search-input">
-        <input class="input" v-model="keywords" @keydown.enter="handelSearch">
+        <input class="input" v-model="keywords" @keydown.enter="handelSearch" name="search">
         <button class="btn" @click="handelSearch">
           <search-icon class="icon" size="16" />
         </button>
