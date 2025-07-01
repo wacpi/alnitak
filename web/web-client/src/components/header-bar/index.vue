@@ -5,7 +5,7 @@
     </nuxt-link>
     <div v-show="isSearchPage" class="header-center">
       <div class="search-form">
-        <input class="input" v-model="keywords" @keydown.enter="handelSearch">
+        <input class="input" v-model="keywords" @keydown.enter="handelSearch" id="header-search-input" name="keywords">
         <button class="btn" @click="handelSearch">
           <search-icon class="icon" size="16" />
         </button>

@@ -34,7 +34,7 @@
         </div>
       </div>
       <div class="msg-input">
-        <el-input v-model="msgForm.content" placeholder="发个消息呗~" maxlength="255" show-word-limit type="textarea" :rows="3"
+        <el-input v-model="msgForm.content" placeholder="发个消息呗~" maxlength="255" show-word-limit type="textarea" :rows="3" id="whisper-msg-input" name="whisperMsg"
           :autosize="{ minRows: 4, maxRows: 4 }" resize="none" />
         <div class="btn-box">
           <div></div>

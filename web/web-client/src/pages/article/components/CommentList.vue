@@ -14,7 +14,7 @@
       <div class="login-btn">登录</div>
     </div>
     <el-input class="comment-input" v-model="commentContent" resize="none" :rows="3" type="textarea"
-      placeholder="善语结善缘，恶言伤人心" />
+      placeholder="善语结善缘，恶言伤人心" id="article-comment-input" name="articleComment" />
     <button class="comment-submit" :class="isLoggedIn ? '' : 'submit-disabled'" @click="submitComment">发表评论</button>
   </div>
   <!-- 评论列表 -->
@@ -90,7 +90,7 @@
     <div v-show="item.showReplyBox" :id="`reply-box-${item.id}`" class="comment-box reply-box">
       <common-avatar class="avatar" :url="userInfo?.avatar" :size="32"></common-avatar>
       <el-input class="comment-input" v-model="commentForm.content" resize="none" :rows="3" type="textarea"
-        :placeholder="replyTip" />
+        :placeholder="replyTip" id="article-reply-input" name="articleReply" />
       <button class="comment-submit" @click="submitReply(item)">回复</button>
     </div>
     <div class="bottom-line"></div>
