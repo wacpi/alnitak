@@ -7,7 +7,7 @@
 
       </el-form-item>
       <el-form-item label="简介">
-        <el-input v-model="collectionForm.desc" placeholder="简单介绍一下视频~" maxlength="150" show-word-limit type="textarea"
+        <el-input v-model="collectionForm.desc" placeholder="简单介绍一下视频~" maxlength="150" show-word-limit type="textarea" id="collection-desc-input" name="collectionDesc"
           :rows="3" :autosize="descSize" resize="none" />
       </el-form-item>
       <el-form-item label="公开">

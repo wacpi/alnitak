@@ -43,7 +43,7 @@
                 <p class="danmaku-menu-title">弹幕颜色</p>
                 <div class="customize-color">
                   <span style="color: #fff">#</span>
-                  <input type="text" v-model="danmakuForm.color" maxlength="6">
+                  <input type="text" v-model="danmakuForm.color" maxlength="6" id="danmaku-color-input" name="danmakuColor">
                   <div :style="`background-color: #${danmakuForm.color}`"></div>
                 </div>
               </div>
@@ -63,7 +63,7 @@
             <div class="placeholder"></div>
           </div>
         </div>
-        <input v-model="danmakuForm.text" placeholder="发个弹幕呗" @keydown.enter="sendDanmaku" />
+        <input v-model="danmakuForm.text" placeholder="发个弹幕呗" @keydown.enter="sendDanmaku" id="danmaku-text-input" name="danmakuText" />
       </div>
       <button class="send-btn" @click="sendDanmaku">发送</button>
     </div>
