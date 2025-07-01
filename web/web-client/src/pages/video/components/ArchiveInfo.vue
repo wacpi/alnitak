@@ -14,33 +14,32 @@
       <p>{{ stat.collect }}</p>
     </div>
     <!-- 分享按钮 -->
-    <div class="archive-item share-item">
-      <el-icon class="icon" @click="showShare = true">
+    <div class="archive-item share-item" @mouseenter="onShareEnter" @mouseleave="onShareLeave">
+      <el-icon class="icon">
         <svg class="icon" viewBox="0 0 28 28" width="26" height="26" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
           <path
           <path d="M13 9V4c0-1.1.9-2 2-2 .5 0 1 .2 1.4.5l11 8.5c1 .8 1.1 2.3.2 3.2-.1.1-.2.2-.2.2l-11 8.5c-.7.5-1.7.4-2.2-.3-.2-.2-.4-.6-.4-1V19C7 19 4.5 21 2 25c-.1.2-.5.3-.5-.2C1.5 15 4 9 13 9Z"/>
           />
         </svg>
       </el-icon>
+      <div v-if="showShare" class="share-popover" @mouseenter="onShareEnter" @mouseleave="onShareLeave">
+        <el-tabs v-model="shareTab">
+          <el-tab-pane label="分享链接" name="link">
+            <div class="embed-box">
+              <el-input v-model="shareUrl" readonly></el-input>
+              <el-button type="primary" @click="copyUrl">复制链接</el-button>
+            </div>
+          </el-tab-pane>
+          <el-tab-pane label="嵌入代码" name="embed">
+            <div class="embed-box">
+              <el-input v-model="embedCode" readonly></el-input>
+              <el-button type="primary" @click="copyEmbed">复制嵌入代码</el-button>
+            </div>
+          </el-tab-pane>
+        </el-tabs>
+      </div>
     </div>
     <collection-list v-if="showCollect" :vid="vid" @close="closeCollectionCard"></collection-list>
-    <!-- 分享弹窗 -->
-    <el-dialog v-model="showShare" title="分享" width="500px" :close-on-click-modal="true">
-      <el-tabs v-model="shareTab">
-        <el-tab-pane label="分享链接" name="link">
-          <div class="embed-box">
-            <el-input v-model="shareUrl" readonly></el-input>
-            <el-button type="primary" @click="copyUrl">复制链接</el-button>
-          </div>
-        </el-tab-pane>
-        <el-tab-pane label="嵌入代码" name="embed">
-          <div class="embed-box">
-            <el-input v-model="embedCode" readonly></el-input>
-            <el-button type="primary" @click="copyEmbed">复制嵌入代码</el-button>
-          </div>
-        </el-tab-pane>
-      </el-tabs>
-    </el-dialog>
   </div>
 </template>
 
@@ -162,6 +161,23 @@ const closeCollectionCard = (val: number) => {
   showCollect.value = false;
 }
 
+// 分享板块延迟隐藏逻辑
+let sharePopoverTimer: number | null = null;
+
+const onShareEnter = () => {
+  if (sharePopoverTimer) {
+    clearTimeout(sharePopoverTimer);
+    sharePopoverTimer = null;
+  }
+  showShare.value = true;
+};
+
+const onShareLeave = () => {
+  sharePopoverTimer = window.setTimeout(() => {
+    showShare.value = false;
+  }, 120); // 120ms 容错，保证鼠标能顺利移入板块
+};
+
 onBeforeMount(async () => {
   await getArchiveStat();
   await getLikeStatus();
@@ -210,6 +226,25 @@ onBeforeMount(async () => {
   }
   .share-item {
     position: relative;
+    .share-popover {
+      position: absolute;
+      bottom: 36px;
+      left: 0;
+      z-index: 100;
+      background: #fff;
+      border: 1px solid #eee;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      padding: 16px 20px 8px 20px;
+      min-width: 320px;
+      min-height: 120px;
+      .embed-box {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+    }
   }
 }
 
