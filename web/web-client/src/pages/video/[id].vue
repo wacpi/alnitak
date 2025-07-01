@@ -153,13 +153,24 @@ const changePart = async (target: number) => {
 }
 
 // 监听路由参数 p，自动切换分P和弹幕
-watch(() => route.query.p, (newP) => {
+watch(() => route.query.p, async (newP) => {
   const partNum = Number(newP) || 1;
   // 如果分P有效，则切换；否则重定向到 p1
   if (videoInfo.value?.resources[partNum - 1]) {
     currentPart.value = partNum;
+    // 获取历史进度
+    const res = await getHistoryProgressAPI(videoInfo.value.vid, partNum);
+    if (res.data.code === 200 && res.data.data && typeof res.data.data.progress === 'number') {
+      // 如果有历史进度，恢复播放进度
+      pendingProgress.value = res.data.data.progress;
+    } else {
+      // 如果没有历史进度，直接设置为 null 或初始值
+      pendingProgress.value = null;
+    }
+    // 获取弹幕列表
     getDanmakuList(videoInfo.value.vid, partNum);
   } else {
+    // 如果分P无效，重定向到 p1
     router.replace({ path: `/video/${videoId}`, query: { p: 1 } });
   }
 });
