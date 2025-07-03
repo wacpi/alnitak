@@ -18,7 +18,7 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, computed, watchEffect } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import EmbedPlayer from '@/components/embed-player/index.vue';
+import EmbedPlayer from '@/components/embed-player/art.vue';
 import { asyncGetVideoInfoAPI } from '@/api/video';
 import { getHistoryProgressAPI } from '@/api/history';
 import { getDanmakuAPI } from '@/api/danmaku';
@@ -153,7 +153,7 @@ video {
   display: flex;
   align-items: center;
   gap: 16px;
-  z-index: 2;
+  z-index: 9999;
   transition: opacity 0.3s;
   box-shadow: none !important;
 }

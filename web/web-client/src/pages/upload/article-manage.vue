@@ -24,9 +24,11 @@
                     </li>
                     <li class="item more">
                       <el-dropdown>
-                        <el-icon size="16">
-                          <more-icon></more-icon>
-                        </el-icon>
+                        <el-button class="more-btn" plain>
+                          <el-icon size="16">
+                            <more-icon></more-icon>
+                          </el-icon>
+                        </el-button>
                         <template #dropdown>
                           <el-dropdown-menu>
                             <el-dropdown-item @click="modifyArticle(item.aid)">编辑</el-dropdown-item>
@@ -226,6 +228,7 @@ onBeforeMount(() => {
       text-overflow: ellipsis;
       -webkit-box-orient: vertical;
       -webkit-line-clamp: 1;
+      line-clamp: 1;
     }
 
     .abstract {
@@ -240,6 +243,7 @@ onBeforeMount(() => {
       text-overflow: ellipsis;
       -webkit-box-orient: vertical;
       -webkit-line-clamp: 2;
+      line-clamp: 2;
     }
 
     .entry-footer {
