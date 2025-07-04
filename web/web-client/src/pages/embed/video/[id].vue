@@ -18,7 +18,7 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, computed, watchEffect } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import EmbedPlayer from '@/components/embed-player/art.vue';
+import EmbedPlayer from '@/components/embed-player/index.vue';
 import { asyncGetVideoInfoAPI } from '@/api/video';
 import { getHistoryProgressAPI } from '@/api/history';
 import { getDanmakuAPI } from '@/api/danmaku';
