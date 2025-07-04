@@ -16,27 +16,23 @@
     <!-- 分享按钮 -->
     <div class="archive-item share-item" @mouseenter="onShareEnter" @mouseleave="onShareLeave">
       <el-icon class="icon">
-        <svg class="icon" viewBox="0 0 28 28" width="26" height="26" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-          <path
-          <path d="M13 9V4c0-1.1.9-2 2-2 .5 0 1 .2 1.4.5l11 8.5c1 .8 1.1 2.3.2 3.2-.1.1-.2.2-.2.2l-11 8.5c-.7.5-1.7.4-2.2-.3-.2-.2-.4-.6-.4-1V19C7 19 4.5 21 2 25c-.1.2-.5.3-.5-.2C1.5 15 4 9 13 9Z"/>
-          />
-        </svg>
+        <ShareIcon />
       </el-icon>
       <div v-if="showShare" class="share-popover" @mouseenter="onShareEnter" @mouseleave="onShareLeave">
-        <el-tabs v-model="shareTab">
-          <el-tab-pane label="分享链接" name="link">
-            <div class="embed-box">
-              <el-input v-model="shareUrl" readonly></el-input>
-              <el-button type="primary" @click="copyUrl">复制链接</el-button>
-            </div>
-          </el-tab-pane>
-          <el-tab-pane label="嵌入代码" name="embed">
-            <div class="embed-box">
-              <el-input v-model="embedCode" readonly></el-input>
-              <el-button type="primary" @click="copyEmbed">复制嵌入代码</el-button>
-            </div>
-          </el-tab-pane>
-        </el-tabs>
+      <el-tabs v-model="shareTab">
+        <el-tab-pane label="分享链接" name="link">
+          <div class="embed-box">
+            <el-input v-model="shareUrl" readonly></el-input>
+            <el-button type="primary" @click="copyUrl">复制链接</el-button>
+          </div>
+        </el-tab-pane>
+        <el-tab-pane label="嵌入代码" name="embed">
+          <div class="embed-box">
+            <el-input v-model="embedCode" readonly></el-input>
+            <el-button type="primary" @click="copyEmbed">复制嵌入代码</el-button>
+          </div>
+        </el-tab-pane>
+      </el-tabs>
       </div>
     </div>
     <collection-list v-if="showCollect" :vid="vid" @close="closeCollectionCard"></collection-list>
@@ -53,6 +49,7 @@ import { getLikeVideoStatusAPI, likeVideoAPI, cancelLikeVideoAPI } from "@/api/l
 import { getCollectVideoStatusAPI } from '@/api/collect';
 import CollectionList from './CollectionList.vue';
 import { useRoute } from 'vue-router';
+import ShareIcon from '@/components/icons/ShareIcon.vue';
 
 const props = defineProps<{
   vid: number;

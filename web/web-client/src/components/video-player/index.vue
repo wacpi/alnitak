@@ -109,6 +109,10 @@ const loadPart = async (part: number) => {
       localStorage.setItem('default-video-quality', quality.name);
     })
     filterDanmaku({ disableLeave, disableType });
+    // 自动播放
+    if (player && typeof player.play === 'function') {
+      player.play();
+    }
   }
 }
 

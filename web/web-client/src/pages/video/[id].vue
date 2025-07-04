@@ -6,7 +6,7 @@
         <div class="left-column">
           <div class="video-player" ref="playerContainerRef">
             <client-only>
-              <video-player v-if="videoInfo && playerReady" ref="playerRef" :video-info="videoInfo" :part="currentPart" :progress="pendingProgress" :key="currentPart"></video-player>
+              <video-player v-if="videoInfo && playerReady" ref="playerRef" :video-info="videoInfo" :part="currentPart" :progress="pendingProgress" :key="videoInfo?.vid + '-' + currentPart"></video-player>
             </client-only>
             <div v-if="!showPlayer" class="skeleton"></div>
           </div>
@@ -293,6 +293,29 @@ watch(pendingProgress, (val) => {
     if (videoInfo.value) {
       addHistoryAPI({ vid: videoInfo.value.vid, part: currentPart.value, time: val });
       console.log('[id.vue] 上报切换分集后的历史记录:', { vid: videoInfo.value.vid, part: currentPart.value, time: val });
+    }
+  }
+});
+
+// 新增：监听 route.params.id 变化，重新拉取视频信息和重置状态
+watch(() => route.params.id, async (newId, oldId) => {
+  if (newId !== oldId) {
+    // 重新拉取视频信息
+    const { data } = await asyncGetVideoInfoAPI(newId.toString());
+    if ((data.value as any).code === statusCode.OK) {
+      videoInfo.value = (data.value as any).data.video as VideoType;
+      // 重置分集
+      currentPart.value = Number(route.query.p) || 1;
+      // 重置弹幕和进度
+      getDanmakuList(videoInfo.value.vid, currentPart.value);
+      const res = await getHistoryProgressAPI(videoInfo.value.vid, currentPart.value);
+      if (res.data.code === 200 && res.data.data && typeof res.data.data.progress === 'number') {
+        pendingProgress.value = res.data.data.progress;
+      } else {
+        pendingProgress.value = null;
+      }
+    } else {
+      navigateTo('/404');
     }
   }
 });

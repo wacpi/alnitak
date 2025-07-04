@@ -40,6 +40,7 @@
             @confirm="deleteComment(i, item)">
             <template #reference>
               <span class="del-btn" v-if="item.uid === userInfo?.uid">删除</span>
+              <span v-else style="display:none"></span>
             </template>
           </el-popconfirm>
         </client-only>
@@ -71,6 +72,7 @@
               @confirm="deleteComment(j, item, reply)">
               <template #reference>
                 <span class="del-btn" v-if="reply.uid === userInfo?.uid">删除</span>
+                <span v-else style="display:none"></span>
               </template>
             </el-popconfirm>
           </client-only>
@@ -90,7 +92,7 @@
     <div v-show="item.showReplyBox" :id="`reply-box-${item.id}`" class="comment-box reply-box">
       <common-avatar class="avatar" :url="userInfo?.avatar" :size="32"></common-avatar>
       <el-input class="comment-input" v-model="commentForm.content" resize="none" :rows="3" type="textarea"
-        :placeholder="replyTip" id="video-reply-input" name="videoReply" />
+        :placeholder="replyTip" :id="`video-reply-input-${item.id}`" name="videoReply" />
       <button class="comment-submit" @click="submitReply(item)">回复</button>
     </div>
     <div class="bottom-line"></div>

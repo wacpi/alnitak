@@ -153,7 +153,7 @@ video {
   display: flex;
   align-items: center;
   gap: 16px;
-  z-index: 2;
+  z-index: 9999;
   transition: opacity 0.3s;
   box-shadow: none !important;
 }
