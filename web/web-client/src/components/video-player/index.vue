@@ -13,7 +13,7 @@
 // ===== 依赖与类型定义 =====
 import Hls from "hls.js";
 import Wplayer from 'wplayer-next';
-import { ref, onBeforeMount, watch, onMounted } from 'vue';
+import { ref, onBeforeMount, watch, onMounted, onBeforeUnmount } from 'vue';
 import { getDanmakuAPI, sendDanmakuAPI } from "@/api/danmaku";
 import DanmakuSend from "./components/DanmakuSend.vue";
 import { getResourceQualityApi, getVideoFileUrl } from "@/api/video";
@@ -95,6 +95,20 @@ watch(
   { immediate: true }
 );
 
+// ===== 播放器 ready 回调与定时上报历史 =====
+let timer: number | null = null;
+let hasReportedWatched = false; // 是否已上报过“已看完”
+const onReadyCallbacks: Array<() => void> = [];
+const setOnReady = (cb: () => void) => {
+  onReadyCallbacks.push(cb);
+};
+
+// ===== 本地已看完标记工具函数 =====
+const getWatchedKey = () => `video-watched-${props.videoInfo.vid}-${props.part}`;
+const isWatched = () => localStorage.getItem(getWatchedKey()) === '1';
+const setWatched = () => localStorage.setItem(getWatchedKey(), '1');
+const clearWatched = () => localStorage.removeItem(getWatchedKey());
+
 // ===== 分集切换与播放器实例化 =====
 const loadPart = async (part: number) => {
   const el = document.getElementById('dplayer');
@@ -105,6 +119,8 @@ const loadPart = async (part: number) => {
     options.container = el;
     player = new Wplayer(options);
     /* === 播放器销毁与重建实例化片段 end === */
+    hasReportedWatched = false; // 切换分集时重置“已看完”标记
+    clearWatched(); // 切换分集时清除本地已看完标记
     player.on('quality_start', (quality: PlayerQualityType) => {
       localStorage.setItem('default-video-quality', quality.name);
     })
@@ -113,6 +129,22 @@ const loadPart = async (part: number) => {
     if (player && typeof player.play === 'function') {
       player.play();
     }
+    // 监听播放完成事件，上报已看完并终止定时上报
+    player.on('ended', () => {
+      addHistoryAPI({ vid: props.videoInfo.vid, part: props.part, time: -1 }); // 上报已看完
+      hasReportedWatched = true; // 标记为已看完，定时上报将停止
+      setWatched(); // 本地写入已看完标记
+    });
+    // 监听进度条大跨度跳转
+    let lastSeekTime = 0;
+    player.on('seeked', () => {
+      const current = player.video.currentTime;
+      // 只有未看完时才上报
+      if (Math.abs(current - lastSeekTime) > 10 && !isWatched()) {
+        addHistoryAPI({ vid: props.videoInfo.vid, part: props.part, time: current });
+      }
+      lastSeekTime = current;
+    });
   }
 }
 
@@ -229,13 +261,6 @@ watch(() => props.part, (val) => {
   loadPart(val);
 });
 
-// ===== 播放器 ready 回调与定时上报历史 =====
-let timer: number | null = null;
-const onReadyCallbacks: Array<() => void> = [];
-const setOnReady = (cb: () => void) => {
-  onReadyCallbacks.push(cb);
-};
-
 onMounted(async () => {
   const quality = localStorage.getItem('default-video-quality');
   if (quality) {
@@ -260,14 +285,30 @@ onMounted(async () => {
     });
   }
 
+  // 定时上报历史进度，若已看完则停止上报
   timer = window.setInterval(() => {
-    uploadHistory();
+    if (!hasReportedWatched && !isWatched()) {
+      uploadHistory(); // 只要没看完就持续上报
+    }
   }, 10000)
 })
 
+// ===== 页面关闭/离开时上报进度，已看完则不再上报 =====
+const reportOnLeave = () => {
+  if (player && player.video && typeof player.video.currentTime === 'number' && !isWatched()) {
+    addHistoryAPI({ vid: props.videoInfo.vid, part: props.part, time: player.video.currentTime });
+  }
+};
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', reportOnLeave);
+}
 onBeforeUnmount(() => {
   if (timer) clearInterval(timer);
-})
+  reportOnLeave();
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('beforeunload', reportOnLeave);
+  }
+});
 
 // ===== 对外暴露方法 =====
 defineExpose({

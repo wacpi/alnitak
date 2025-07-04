@@ -116,6 +116,12 @@ const currentPart = ref(Number(route.query.p) || 1);
 const pendingProgress = ref<number | null>(null);
 
 const onPlayerReady = () => {
+  // 新增：如果历史进度为-1，重头播放
+  if (pendingProgress.value === -1 && playerRef.value && playerRef.value.seek) {
+    playerRef.value.seek(0);
+    pendingProgress.value = null;
+    return;
+  }
   if (pendingProgress.value !== null && playerRef.value && playerRef.value.seek) {
     playerRef.value.seek(pendingProgress.value);
     pendingProgress.value = null;
