@@ -34,12 +34,11 @@ const injectDanmaku = () => {
 }
 
 const resourceNameMap: Record<string, string> = {
-  "640x360_500k_30": "360p",
-  "854x480_900k_30": "480p",
-  "1080x720_2000k_30": "720p",// 兼容之前的错误Add commentMore actions
-  "1280x720_2000k_30": "720p",
-  "1920x1080_3000k_30": "1080p",
-  "1920x1080_6000k_60": "1080p60",
+  "640x360_1000k_30": "360P",
+  "854x480_1500k_30": "480P",
+  "1280x720_3000k_30": "720P",
+  "1920x1080_6000k_30": "1080P",
+  "1920x1080_8000k_60": "1080P60",
 };
 
 const getQualities = (qualityList: string[], resourceId: number) => {
@@ -72,6 +71,22 @@ const loadDanmaku = async () => {
   injectDanmaku();
 }
 
+// 新增：获取 URL 参数
+function getQueryParam(name: string): string | null {
+  const url = window.location.href;
+  name = name.replace(/[\[\]]/g, '\\$&');
+  const regex = new RegExp('[?&]' + name + '(=([^&#]*)|&|#|$)');
+  const results = regex.exec(url);
+  if (!results) return null;
+  if (!results[2]) return '';
+  return decodeURIComponent(results[2].replace(/\+/g, ' '));
+}
+
+const autoplayParam = getQueryParam('autoplay');
+const mutedParam = getQueryParam('muted');
+const shouldAutoplay = autoplayParam === '1' || autoplayParam === 'true';
+const shouldMuted = mutedParam === '1' || mutedParam === 'true';
+
 const initPlayer = async () => {
   const container = playerContainer.value;
   console.log('[embed-player] initPlayer, container:', container);
@@ -102,7 +117,7 @@ const initPlayer = async () => {
     video: {
       quality: qualities,
       defaultQuality: 0,
-      autoplay: false,
+      autoplay: shouldAutoplay,
       controls: ["play", "progress", "volume", "quality", "fullscreen"],
       type: 'customHls',
       customType: {
@@ -125,10 +140,23 @@ const initPlayer = async () => {
     danmaku: { show: true },
     //theme: "#ff5c5c",
     preload: "auto",
-    volume: 0.8,
+    volume: shouldMuted ? 0 : 0.8,
+    muted: shouldMuted,
   });
   /* === 播放器实例化片段 end === */
   console.log('[embed-player] Wplayer instance', player);
+
+  // 新增：强制设置 video 元素属性，确保自动静音播放生效
+  setTimeout(() => {
+    const videoEl = player?.video;
+    if (videoEl) {
+      videoEl.muted = shouldMuted;
+      videoEl.volume = shouldMuted ? 0 : 0.8;
+      if (shouldAutoplay && typeof videoEl.play === 'function') {
+        videoEl.play();
+      }
+    }
+  }, 300);
 
   player.on('loadedmetadata', () => {
     console.log('[embed-player] player loadedmetadata');
