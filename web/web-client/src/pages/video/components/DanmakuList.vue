@@ -6,7 +6,7 @@
         <span class="count">({{ danmakuList.length }})</span>
       </div>
       <div class="header-right">
-        <el-icon :class="{ 'is-fold': !showDanmakuList }">
+        <el-icon :class="{ 'is-fold': showDanmakuList }">
           <down-icon />
         </el-icon>
       </div>

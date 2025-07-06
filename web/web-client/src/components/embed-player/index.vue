@@ -72,6 +72,22 @@ const loadDanmaku = async () => {
   injectDanmaku();
 }
 
+// 新增：获取 URL 参数
+function getQueryParam(name: string): string | null {
+  const url = window.location.href;
+  name = name.replace(/[\[\]]/g, '\\$&');
+  const regex = new RegExp('[?&]' + name + '(=([^&#]*)|&|#|$)');
+  const results = regex.exec(url);
+  if (!results) return null;
+  if (!results[2]) return '';
+  return decodeURIComponent(results[2].replace(/\+/g, ' '));
+}
+
+const autoplayParam = getQueryParam('autoplay');
+const mutedParam = getQueryParam('muted');
+const shouldAutoplay = autoplayParam === '1' || autoplayParam === 'true';
+const shouldMuted = mutedParam === '1' || mutedParam === 'true';
+
 const initPlayer = async () => {
   const container = playerContainer.value;
   console.log('[embed-player] initPlayer, container:', container);
@@ -102,7 +118,7 @@ const initPlayer = async () => {
     video: {
       quality: qualities,
       defaultQuality: 0,
-      autoplay: false,
+      autoplay: shouldAutoplay,
       controls: ["play", "progress", "volume", "quality", "fullscreen"],
       type: 'customHls',
       customType: {
@@ -125,10 +141,23 @@ const initPlayer = async () => {
     danmaku: { show: true },
     //theme: "#ff5c5c",
     preload: "auto",
-    volume: 0.8,
+    volume: shouldMuted ? 0 : 0.8,
+    muted: shouldMuted,
   });
   /* === 播放器实例化片段 end === */
   console.log('[embed-player] Wplayer instance', player);
+
+  // 新增：强制设置 video 元素属性，确保自动静音播放生效
+  setTimeout(() => {
+    const videoEl = player?.video;
+    if (videoEl) {
+      videoEl.muted = shouldMuted;
+      videoEl.volume = shouldMuted ? 0 : 0.8;
+      if (shouldAutoplay && typeof videoEl.play === 'function') {
+        videoEl.play();
+      }
+    }
+  }, 300);
 
   player.on('loadedmetadata', () => {
     console.log('[embed-player] player loadedmetadata');

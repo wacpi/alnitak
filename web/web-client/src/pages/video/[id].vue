@@ -51,7 +51,9 @@
           <!-- 作者信息 -->
           <author-card v-if="videoInfo" :info="videoInfo.author"></author-card>
           <!-- 添加弹幕列表 -->
-          <danmaku-list ref="danmakuListRef" :height="danmakuListHeight"></danmaku-list>
+          <div class="danmaku-list-container">
+            <danmaku-list ref="danmakuListRef" :height="danmakuListHeight"></danmaku-list>
+          </div>
           <!-- 视频分集 -->
           <div v-if="videoInfo && videoInfo.resources.length > 1">
             <part-list :resources="videoInfo.resources" :active="currentPart" @change="changePart"></part-list>
@@ -116,6 +118,12 @@ const currentPart = ref(Number(route.query.p) || 1);
 const pendingProgress = ref<number | null>(null);
 
 const onPlayerReady = () => {
+  // 新增：如果历史进度为-1，重头播放
+  if (pendingProgress.value === -1 && playerRef.value && playerRef.value.seek) {
+    playerRef.value.seek(0);
+    pendingProgress.value = null;
+    return;
+  }
   if (pendingProgress.value !== null && playerRef.value && playerRef.value.seek) {
     playerRef.value.seek(pendingProgress.value);
     pendingProgress.value = null;
@@ -470,5 +478,10 @@ watch(() => route.params.id, async (newId, oldId) => {
   width: 340px;
   margin-left: 30px;
   z-index: 1;
+
+  // 新增：弹幕列表和分集板块间距
+  .danmaku-list-container {
+    margin-bottom: 18px;
+  }
 }
 </style>

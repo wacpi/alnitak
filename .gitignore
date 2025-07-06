@@ -7,3 +7,7 @@ node_modules
 *.njsproj
 *.sln
 *.sw?
+
+web/admin-client/src/utils/global-config.ts
+web/mobile-client/src/utils/global-config.ts
+web/web-client/src/utils/global-config.ts

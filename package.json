@@ -13,5 +13,10 @@
     "@commitlint/cli": "^17.1.2",
     "@commitlint/config-conventional": "^17.1.0",
     "husky": "^8.0.1"
+  },
+  "dependencies": {
+    "artplayer": "^5.2.3",
+    "artplayer-plugin-danmuku": "^5.1.6",
+    "hls.js": "^1.6.5"
   }
 }
