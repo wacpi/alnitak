@@ -67,7 +67,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, watch, type ComponentPublicInstance, computed } from "vue";
+import { ref, onMounted, onBeforeUnmount, watch, type ComponentPublicInstance } from "vue";
 import { ElIcon } from "element-plus";
 import { Forbid as ForbidIcon } from "@icon-park/vue-next";
 import { formatTime } from "@/utils/format";
@@ -84,7 +84,6 @@ import { createUUID } from "@/utils/uuid";
 import { getDanmakuAPI } from "@/api/danmaku";
 import { getHistoryProgressAPI, addHistoryAPI } from "@/api/history";
 import { globalConfig } from '@/utils/global-config';
-import { useHead } from '#imports';
 
 const route = useRoute();
 const router = useRouter();
@@ -100,10 +99,6 @@ if ((data.value as any).code === statusCode.OK) {
   navigateTo('/404');
 }
 
-// 响应式设置页面标题
-useHead({
-  title: () => videoInfo.value?.title ? `${videoInfo.value.title} - ${globalConfig.title}` : globalConfig.title
-})
 
 const playerContainerRef = ref<HTMLElement | null>(null)
 const danmakuListHeight = ref(300);
@@ -333,6 +328,10 @@ watch(() => route.params.id, async (newId, oldId) => {
     }
   }
 });
+
+useHead({
+  title: () => videoInfo.value?.title ? `${videoInfo.value.title} - ${globalConfig.title}` : globalConfig.title
+})
 </script>
 
 <style lang="scss" scoped>

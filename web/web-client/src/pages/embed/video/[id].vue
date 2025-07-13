@@ -24,7 +24,6 @@ import { getHistoryProgressAPI } from '@/api/history';
 import { getDanmakuAPI } from '@/api/danmaku';
 import { getResourceUrl } from '@/utils/resource';
 import { globalConfig } from '@/utils/global-config';
-import { useHead } from '#imports';
 
 const route = useRoute();
 const router = useRouter();
@@ -44,11 +43,6 @@ if ((data.value as any).code === 200) {
 } else {
   router.replace('/404');
 }
-
-// 响应式设置页面标题
-useHead({
-  title: () => videoInfo.value?.title ? `${videoInfo.value.title} - ${globalConfig.title}` : globalConfig.title
-})
 
 // 校验分集参数
 if (route.query.p && Number(route.query.p) > (videoInfo.value?.resources.length || 1)) {
@@ -108,6 +102,10 @@ const hideOverlay = () => {
     hoverCount = 0;
   }
 };
+
+useHead({
+  title: () => videoInfo.value?.title ? `${videoInfo.value.title} - ${globalConfig.title}` : globalConfig.title
+})
 </script>
 
 
