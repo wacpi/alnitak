@@ -123,7 +123,7 @@ const tableData = ref<ApiItemType[]>([]);
 async function getTableData() {
   startLoading();
   const page = pagination.page || 1;
-  const pageSize = pagination.pageSize || 1;
+  const pageSize = pagination.pageSize || 10;
   const res = await getApiListAPI({ page, pageSize });
   if (res.data.code === statusCode.OK) {
     if ( res.data.data.list) {
