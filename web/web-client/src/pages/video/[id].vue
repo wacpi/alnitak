@@ -83,6 +83,7 @@ import { asyncGetVideoInfoAPI } from "@/api/video";
 import { createUUID } from "@/utils/uuid";
 import { getDanmakuAPI } from "@/api/danmaku";
 import { getHistoryProgressAPI, addHistoryAPI } from "@/api/history";
+import { globalConfig } from '@/utils/global-config';
 
 const route = useRoute();
 const router = useRouter();
@@ -327,6 +328,10 @@ watch(() => route.params.id, async (newId, oldId) => {
     }
   }
 });
+
+useHead({
+  title: () => videoInfo.value?.title ? `${videoInfo.value.title} - ${globalConfig.title}` : globalConfig.title
+})
 </script>
 
 <style lang="scss" scoped>

@@ -23,6 +23,7 @@ import { asyncGetVideoInfoAPI } from '@/api/video';
 import { getHistoryProgressAPI } from '@/api/history';
 import { getDanmakuAPI } from '@/api/danmaku';
 import { getResourceUrl } from '@/utils/resource';
+import { globalConfig } from '@/utils/global-config';
 
 const route = useRoute();
 const router = useRouter();
@@ -101,6 +102,10 @@ const hideOverlay = () => {
     hoverCount = 0;
   }
 };
+
+useHead({
+  title: () => videoInfo.value?.title ? `${videoInfo.value.title} - ${globalConfig.title}` : globalConfig.title
+})
 </script>
 
 
