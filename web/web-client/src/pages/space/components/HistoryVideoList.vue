@@ -7,7 +7,10 @@
       <nuxt-link class="title" :to="`/video/${item.vid}?p=${item.part}`">{{ item.title }}</nuxt-link>
       <div class="meta">
         <div class="play-count">
-          <span class="time">看到 {{ toDuration(item.time) }}</span>
+          <span class="time">
+            <template v-if="item.time === -1">已看完</template>
+            <template v-else>看到 {{ toDuration(item.time) }}</template>
+          </span>
         </div>
         <div class="date">{{ formatDate(item.updatedAt) }}</div>
       </div>
