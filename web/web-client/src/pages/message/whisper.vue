@@ -216,6 +216,13 @@ const initWebSocket = async () => {
 //数据接收
 const websocketOnmessage = (e: any) => {
   const res = JSON.parse(Base64.decode(e.data));
+  // 收到后端 ping，立即回复 pong
+  if (res.type === 'ping') {
+    if (websocket && websocket.readyState === WebSocket.OPEN) {
+      websocket.send(JSON.stringify({ type: 'pong' }));
+    }
+    return;
+  }
   if (msgForm.fid === res.fid) {
     msgDetails.value.push({
       fid: msgForm.fid,
