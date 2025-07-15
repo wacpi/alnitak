@@ -14,25 +14,27 @@
       <p>{{ stat.collect }}</p>
     </div>
     <!-- 分享按钮 -->
-    <div class="archive-item share-item" @mouseenter="onShareEnter" @mouseleave="onShareLeave">
+    <div class="archive-item share-item">
       <el-icon class="icon">
-        <ShareIcon />
+        <share-icon></share-icon>
       </el-icon>
-      <div v-if="showShare" class="share-popover" @mouseenter="onShareEnter" @mouseleave="onShareLeave">
-      <el-tabs v-model="shareTab">
-        <el-tab-pane label="分享链接" name="link">
-          <div class="embed-box">
-            <el-input v-model="shareUrl" readonly></el-input>
-            <el-button type="primary" @click="copyUrl">复制链接</el-button>
-          </div>
-        </el-tab-pane>
-        <el-tab-pane label="嵌入代码" name="embed">
-          <div class="embed-box">
-            <el-input v-model="embedCode" readonly></el-input>
-            <el-button type="primary" @click="copyEmbed">复制嵌入代码</el-button>
-          </div>
-        </el-tab-pane>
-      </el-tabs>
+      <div class="share-popover">
+        <div class="share-popover-content">
+          <el-tabs v-model="shareTab">
+            <el-tab-pane label="分享链接" name="link">
+              <div class="embed-box">
+                <el-input v-model="shareUrl" readonly></el-input>
+                <el-button type="primary" @click="copyUrl">复制链接</el-button>
+              </div>
+            </el-tab-pane>
+            <el-tab-pane label="嵌入代码" name="embed">
+              <div class="embed-box">
+                <el-input v-model="embedCode" readonly></el-input>
+                <el-button type="primary" @click="copyEmbed">复制嵌入代码</el-button>
+              </div>
+            </el-tab-pane>
+          </el-tabs>
+        </div>
       </div>
     </div>
     <collection-list v-if="showCollect" :vid="vid" @close="closeCollectionCard"></collection-list>
@@ -68,7 +70,6 @@ const archive = reactive({ // 是否点赞收藏
 })
 
 // 分享相关
-const showShare = ref(false);
 const shareTab = ref('link');
 const shareUrl = computed(() => window.location.href);
 const route = useRoute();
@@ -154,26 +155,9 @@ const closeCollectionCard = (val: number) => {
     stat.value.collect--;
     archive.hasCollect = false;
   }
-  
+
   showCollect.value = false;
 }
-
-// 分享板块延迟隐藏逻辑
-let sharePopoverTimer: number | null = null;
-
-const onShareEnter = () => {
-  if (sharePopoverTimer) {
-    clearTimeout(sharePopoverTimer);
-    sharePopoverTimer = null;
-  }
-  showShare.value = true;
-};
-
-const onShareLeave = () => {
-  sharePopoverTimer = window.setTimeout(() => {
-    showShare.value = false;
-  }, 120); // 120ms 容错，保证鼠标能顺利移入板块
-};
 
 onBeforeMount(async () => {
   await getArchiveStat();
@@ -193,7 +177,8 @@ onBeforeMount(async () => {
     user-select: none;
     margin-right: 20px;
 
-    i, .icon {
+    i,
+    .icon {
       font-size: 26px;
       width: 26px;
       height: 26px;
@@ -221,26 +206,38 @@ onBeforeMount(async () => {
       animation: scaleDraw .3s ease-in-out;
     }
   }
+
   .share-item {
     position: relative;
+
     .share-popover {
+      display: none;
       position: absolute;
-      bottom: 36px;
+      bottom: 26px;
       left: 0;
       z-index: 100;
-      background: #fff;
-      border: 1px solid #eee;
-      border-radius: 8px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-      padding: 16px 20px 8px 20px;
-      min-width: 320px;
-      min-height: 120px;
-      .embed-box {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-bottom: 8px;
+
+      .share-popover-content {
+        margin-bottom: 10px;
+        background: #fff;
+        border: 1px solid #eee;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        padding: 16px 20px 8px 20px;
+        min-width: 320px;
+        min-height: 120px;
+
+        .embed-box {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 8px;
+        }
       }
+    }
+
+    &:hover .share-popover {
+      display: block;
     }
   }
 }
