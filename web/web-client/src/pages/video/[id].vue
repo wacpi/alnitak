@@ -358,9 +358,9 @@ useHead({
 
 .mian-content {
   display: flex;
-  width: 85%;
+  width: 100%;
   max-width: calc(100% - 100px);
-  margin: 0 auto;
+  margin: auto 50px;
   position: relative;
 }
 
