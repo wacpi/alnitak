@@ -23,13 +23,13 @@
           <el-tabs v-model="shareTab">
             <el-tab-pane label="分享链接" name="link">
               <div class="embed-box">
-                <el-input v-model="shareUrl" readonly></el-input>
+                <el-input v-model="shareUrl" name="share-url" readonly></el-input>
                 <el-button type="primary" @click="copyUrl">复制链接</el-button>
               </div>
             </el-tab-pane>
             <el-tab-pane label="嵌入代码" name="embed">
               <div class="embed-box">
-                <el-input v-model="embedCode" readonly></el-input>
+                <el-input v-model="embedCode" name="embed-code" readonly></el-input>
                 <el-button type="primary" @click="copyEmbed">复制嵌入代码</el-button>
               </div>
             </el-tab-pane>
@@ -42,16 +42,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onBeforeMount, computed } from 'vue';
+import { ref, onBeforeMount, computed, reactive } from 'vue';
 import { ElIcon, ElMessage } from 'element-plus';
+import { useRoute } from 'vue-router';
+import { statusCode } from '@/utils/status-code';
 import LikeIcon from "@/components/icons/LikeIcon.vue";
 import CollectIcon from "@/components/icons/CollectIcon.vue";
+import ShareIcon from '@/components/icons/ShareIcon.vue';
 import { getVideoArchiveStatAPI } from "@/api/archive";
 import { getLikeVideoStatusAPI, likeVideoAPI, cancelLikeVideoAPI } from "@/api/like";
 import { getCollectVideoStatusAPI } from '@/api/collect';
 import CollectionList from './CollectionList.vue';
-import { useRoute } from 'vue-router';
-import ShareIcon from '@/components/icons/ShareIcon.vue';
 
 const props = defineProps<{
   vid: number;
@@ -71,13 +72,25 @@ const archive = reactive({ // 是否点赞收藏
 
 // 分享相关
 const shareTab = ref('link');
-const shareUrl = computed(() => window.location.href);
+
+// 使用 process.client 检查是否在客户端
+const shareUrl = computed(() => {
+  if (process.client) {
+    return window.location.href;
+  }
+  return '';
+});
+
 const route = useRoute();
 const embedCode = computed(() => {
-  const part = Number(route.query.p) || 1;
-  const url = window.location.origin + `/embed/video/${props.vid}` + (part > 1 ? `?p=${part}` : '');
-  return `<iframe src='${url}' width='800' height='450' frameborder='0' allowfullscreen></iframe>`;
+  if (process.client) {
+    const part = Number(route.query.p) || 1;
+    const url = window.location.origin + `/embed/video/${props.vid}` + (part > 1 ? `?p=${part}` : '');
+    return `<iframe src='${url}' width='800' height='450' frameborder='0' allowfullscreen></iframe>`;
+  }
+  return '';
 });
+
 const copyText = async (text: string, msg: string) => {
   try {
     await navigator.clipboard.writeText(text);
