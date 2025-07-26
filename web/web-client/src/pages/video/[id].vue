@@ -345,7 +345,19 @@ const initWebSocket = () => {
 //数据接收
 const websocketOnmessage = (e: any) => {
   const res = JSON.parse(e.data);
-  onlineCount.value = res.number;
+  
+  // 收到后端 ping，立即回复 pong
+  if (res.type === 'ping') {
+    if (websocket && websocket.readyState === WebSocket.OPEN) {
+      websocket.send(JSON.stringify({ type: 'pong' }));
+    }
+    return;
+  }
+  
+  // 处理在线人数
+  if (typeof res.number === 'number') {
+    onlineCount.value = res.number;
+  }
 }
 
 onBeforeMount(() => {
