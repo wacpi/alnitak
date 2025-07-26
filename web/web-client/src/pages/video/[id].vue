@@ -56,10 +56,20 @@
           </div>
           <!-- 视频分集 -->
           <div v-if="videoInfo && videoInfo.resources.length > 1">
-            <part-list :resources="videoInfo.resources" :active="currentPart" @change="changePart"></part-list>
+            <part-list 
+              ref="partListRef"
+              :resources="videoInfo.resources" 
+              :active="currentPart" 
+              @change="changePart"
+            ></part-list>
           </div>
           <!-- 相关推荐 -->
-          <recommend-list v-if="videoInfo" :vid="videoInfo.vid"></recommend-list>
+          <recommend-list 
+            ref="recommendListRef" 
+            v-if="videoInfo" 
+            :vid="videoInfo.vid"
+            :show-autoplay-control="!videoInfo || videoInfo.resources.length <= 1"
+          ></recommend-list>
         </div>
       </div>
     </div>
@@ -102,7 +112,13 @@ if ((data.value as any).code === statusCode.OK) {
 
 const playerContainerRef = ref<HTMLElement | null>(null)
 const danmakuListHeight = ref(300);
-const playerRef = ref<ComponentPublicInstance<{ seek: (time: number) => void; uploadHistory: () => void; setDanmaku: (data: any[]) => void; setOnReady: (cb: () => void) => void; }> | null>(null);
+const playerRef = ref<ComponentPublicInstance<{ 
+  seek: (time: number) => void; 
+  uploadHistory: () => void; 
+  setDanmaku: (data: any[]) => void; 
+  setOnReady: (cb: () => void) => void;
+  setOnEnded: (cb: () => void) => void;
+}> | null>(null);
 
 const handelResize = () => {
   nextTick(() => {
@@ -118,8 +134,57 @@ if (route.query.p && Number(route.query.p) > videoInfo.value!.resources.length) 
 const currentPart = ref(Number(route.query.p) || 1);
 const pendingProgress = ref<number | null>(null);
 
+// 获取组件引用
+const recommendListRef = ref<InstanceType<typeof RecommendList> | null>(null);
+const partListRef = ref<InstanceType<typeof PartList> | null>(null);
+
+// 视频播放结束时的自动连播逻辑
+const onVideoEnded = () => {
+  console.log('视频播放结束，检查自动连播状态');
+  
+  // 判断是多分集还是单集
+  const hasMultipleParts = videoInfo.value && videoInfo.value.resources.length > 1;
+  
+  if (hasMultipleParts) {
+    // 多分集：检查分集自动连播
+    if (partListRef.value?.autonext) {
+      const nextPart = partListRef.value.getNextPart?.();
+      console.log('自动连播下一分集:', nextPart);
+      
+      if (nextPart) {
+        setTimeout(() => {
+          changePart(nextPart);
+        }, 1000);// 这里设置延迟时间：3000毫秒 = 3秒
+      } else {
+        console.log('已是最后一集，检查推荐视频');
+        // 最后一集播放完，检查推荐自动连播
+        checkRecommendAutoplay();
+      }
+    }
+  } else {
+    // 单集：检查推荐自动连播
+    checkRecommendAutoplay();
+  }
+};
+
+// 检查推荐视频自动连播
+const checkRecommendAutoplay = () => {
+  if (recommendListRef.value?.autonext) {
+    const nextVideo = recommendListRef.value.getNextVideo?.();
+    console.log('自动连播下一个推荐视频:', nextVideo);
+    
+    if (nextVideo) {
+      setTimeout(() => {
+        navigateTo(`/video/${nextVideo.vid}`);
+      }, 3000);
+    } else {
+      console.log('没有更多推荐视频了');
+    }
+  }
+};
+
 const onPlayerReady = () => {
-  // 新增：如果历史进度为-1，重头播放
+  // 原有的进度恢复逻辑
   if (pendingProgress.value === -1 && playerRef.value && playerRef.value.seek) {
     playerRef.value.seek(0);
     pendingProgress.value = null;
@@ -129,6 +194,12 @@ const onPlayerReady = () => {
     playerRef.value.seek(pendingProgress.value);
     pendingProgress.value = null;
   }
+  
+  // 新增：绑定播放结束事件
+  if (playerRef.value && playerRef.value.setOnEnded) {
+    playerRef.value.setOnEnded(onVideoEnded);
+    console.log('自动连播事件已绑定');
+  }
 };
 
 watch(playerRef, (val) => {
@@ -137,18 +208,13 @@ watch(playerRef, (val) => {
   }
 });
 
-let needReportAfterSwitch = false;
-
 const changePart = async (target: number) => {
-  // 切换分集前先上报历史
-  if (playerRef.value && playerRef.value.uploadHistory) {
-    await playerRef.value.uploadHistory();
-  }
+  // 移除手动上报，让播放器组件自己处理
+  // 只负责切换逻辑
   if (videoInfo.value?.resources[target - 1]) {
     currentPart.value = target;
   }
   router.replace({ query: { p: currentPart.value } });
-  needReportAfterSwitch = true;
 
   // 主动请求新分集进度
   if (videoInfo.value) {
@@ -279,17 +345,7 @@ const initWebSocket = () => {
 //数据接收
 const websocketOnmessage = (e: any) => {
   const res = JSON.parse(e.data);
-  // 收到后端 ping，立即回复 pong
-  if (res.type === 'ping') {
-    if (websocket && websocket.readyState === WebSocket.OPEN) {
-      websocket.send(JSON.stringify({ type: 'pong' }));
-    }
-    return;
-  }
-  // 处理在线人数
-  if (typeof res.number === 'number') {
-    onlineCount.value = res.number;
-  }
+  onlineCount.value = res.number;
 }
 
 onBeforeMount(() => {
@@ -304,17 +360,10 @@ onBeforeUnmount(() => {
   }
 })
 
-watch(pendingProgress, (val) => {
-  console.log('[id.vue] pendingProgress变化:', val);
-  console.log('[id.vue] 实时传递给video-player的progress:', pendingProgress.value);
-  if (needReportAfterSwitch && typeof val === 'number' && val > 0) {
-    needReportAfterSwitch = false;
-    if (videoInfo.value) {
-      addHistoryAPI({ vid: videoInfo.value.vid, part: currentPart.value, time: val });
-      console.log('[id.vue] 上报切换分集后的历史记录:', { vid: videoInfo.value.vid, part: currentPart.value, time: val });
-    }
-  }
-});
+// 移除 needReportAfterSwitch 相关逻辑
+// watch(pendingProgress, (val) => {
+//   // 删除这个 watch，不再手动上报
+// });
 
 // 新增：监听 route.params.id 变化，重新拉取视频信息和重置状态
 watch(() => route.params.id, async (newId, oldId) => {
@@ -359,9 +408,11 @@ useHead({
 .mian-content {
   display: flex;
   width: 100%;
-  max-width: calc(100% - 100px);
-  margin: auto 50px;
+  max-width: 1700px; // 调整到1700px
+  margin: 0 auto;
+  padding: 0 45px; // 调整内边距到45px
   position: relative;
+  box-sizing: border-box;
 }
 
 .left-column {
@@ -497,6 +548,32 @@ useHead({
   // 新增：弹幕列表和分集板块间距
   .danmaku-list-container {
     margin-bottom: 18px;
+  }
+}
+
+// 简化响应式设计，删除多余断点
+@media (max-width: 1700px) {
+  .mian-content {
+    max-width: 1500px;
+    padding: 0 35px;
+  }
+}
+
+@media (max-width: 1500px) {
+  .mian-content {
+    max-width: 1300px;
+    padding: 0 25px;
+  }
+}
+
+@media (max-width: 1200px) {
+  .video-main {
+    min-width: auto;
+  }
+  
+  .mian-content {
+    max-width: 100%;
+    padding: 0 15px;
   }
 }
 </style>
