@@ -420,9 +420,8 @@ useHead({
 .mian-content {
   display: flex;
   width: 100%;
-  max-width: 1700px; // 调整到1700px
+  max-width: 1600px; // 调整到1700px
   margin: 0 auto;
-  padding: 0 45px; // 调整内边距到45px
   position: relative;
   box-sizing: border-box;
 }
