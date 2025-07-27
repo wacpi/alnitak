@@ -420,10 +420,9 @@ useHead({
 .mian-content {
   display: flex;
   width: 100%;
-  max-width: 1600px; // 调整到1700px
-  margin: 0 auto;
+  max-width: calc(100% - 100px);
+  margin: auto 50px;
   position: relative;
-  box-sizing: border-box;
 }
 
 .left-column {
@@ -562,29 +561,5 @@ useHead({
   }
 }
 
-// 简化响应式设计，删除多余断点
-@media (max-width: 1700px) {
-  .mian-content {
-    max-width: 1500px;
-    padding: 0 35px;
-  }
-}
 
-@media (max-width: 1500px) {
-  .mian-content {
-    max-width: 1300px;
-    padding: 0 25px;
-  }
-}
-
-@media (max-width: 1200px) {
-  .video-main {
-    min-width: auto;
-  }
-  
-  .mian-content {
-    max-width: 100%;
-    padding: 0 15px;
-  }
-}
 </style>
