@@ -399,7 +399,7 @@ onBeforeUnmount(() => {
     justify-content: center;
     position: absolute;
     //left: 0;
-    left: 125px; // 头像向右移动20px，靠近用户名
+    left: 118px; // 头像向右移动20px，靠近用户名
     width: 80px;
     cursor: pointer;
   }
