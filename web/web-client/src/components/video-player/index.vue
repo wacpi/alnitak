@@ -324,7 +324,17 @@ onMounted(async () => {
   // 定时上报历史进度，若已看完则停止上报
   timer = window.setInterval(() => {
     if (!hasReportedWatched && !isWatched()) {
-      uploadHistory(); // 只要没看完就持续上报
+      // 检查视频是否正在播放，如果暂停或未播放则跳过上报
+      if (player && player.video) {
+        const isPlaying = !player.video.paused && !player.video.ended && player.video.currentTime > 0;
+        if (isPlaying) {
+          uploadHistory(); // 只有在播放时才上报
+        } else {
+          console.log('视频暂停或未播放，跳过定时上报');
+        }
+      } else {
+        console.log('播放器未初始化，跳过定时上报');
+      }
     }
   }, 10000)
 })

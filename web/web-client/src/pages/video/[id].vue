@@ -409,25 +409,28 @@ useHead({
 .header {
   position: fixed;
 }
-
+//视频主页面
 .video-main {
   padding-top: 80px;
   margin: 0 auto;
   min-width: 1200px;
   /* 保持最小宽度为 1200px */
 }
-
+//主内容区域
 .mian-content {
   display: flex;
+  justify-content: center; // 让内容水平居中
   width: 100%;
   max-width: calc(100% - 100px);
-  margin: auto 50px;
+  margin: 0 auto;
   position: relative;
 }
-
+//左侧内容区域
 .left-column {
-  flex: 1;
-
+  width: 1200px;       // 设置固定宽度900px
+  margin-top: 20px;    // 向下移动21像素
+  //margin: 0 auto;    // 新增：居中
+//视频播放器
   .video-player {
     position: relative;
     margin: 0 auto;
@@ -442,7 +445,7 @@ useHead({
       background-color: #f0f2f5;
     }
   }
-
+//标题和版权信息
   .video-title-box {
     width: 100%;
     height: 54px;
@@ -549,7 +552,7 @@ useHead({
     }
   }
 }
-
+//右侧内容区域
 .right-column {
   width: 340px;
   margin-left: 30px;
