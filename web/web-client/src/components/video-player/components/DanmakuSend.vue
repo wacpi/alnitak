@@ -210,10 +210,10 @@ onBeforeMount(() => {
   align-items: center;
   justify-content: space-between;
   position: relative;
-  background: #fff;
+  background: var(--bg-elev-1);
   width: 100%;
   height: 40px;
-  border-bottom: 1px solid #ebebeb;
+  border-bottom: 1px solid var(--border-color);
 
   // 空白占位
   .placeholder {
@@ -232,7 +232,7 @@ onBeforeMount(() => {
       padding-left: 12px;
       text-align: left;
       font-size: 12px;
-      color: #999999;
+      color: var(--font-primary-3);
       line-height: 40px;
       width: 108px;
     }
@@ -253,11 +253,11 @@ onBeforeMount(() => {
       height: 26px;
       width: calc(100% - 60px);
       border-radius: 6px;
-      background: #ebebeb;
+      background: var(--input-bg-color);
 
       input {
         padding: 0;
-        color: #212121;
+        color: var(--font-primary-1);
         width: calc(100% - 50px);
         border: none;
         outline: none;
@@ -299,7 +299,7 @@ onBeforeMount(() => {
 // 弹幕设置
 .setting-type {
   .setting-icon {
-    color: #767676;
+    color: var(--font-primary-2);
     width: 20px;
     height: 20px;
     margin: 0 10px;
@@ -324,12 +324,14 @@ onBeforeMount(() => {
     bottom: 30px;
 
     .setting-menu-content {
-      background: rgba(12, 12, 12, 0.8);
+      background: var(--bg-elev-1);
+      border: 1px solid var(--border-color);
+      box-shadow: 0 0 20px var(--shadow-weak);
       width: 220px;
       height: 180px;
 
       .danmaku-menu-title {
-        color: #fff;
+        color: var(--font-primary-1);
         font-size: 12px;
         line-height: 16px;
         margin: 0;
@@ -351,7 +353,7 @@ onBeforeMount(() => {
 // 弹幕样式
 .setting-style {
   .style-icon {
-    color: #767676;
+    color: var(--font-primary-2);
     padding: 3px 5px;
 
     &:hover {
@@ -374,7 +376,9 @@ onBeforeMount(() => {
     bottom: 30px;
 
     .style-menu-content {
-      background: rgba(12, 12, 12, 0.8);
+      background: var(--bg-elev-1);
+      border: 1px solid var(--border-color);
+      box-shadow: 0 0 20px var(--shadow-weak);
       width: 220px;
       height: 200px;
 
@@ -386,7 +390,7 @@ onBeforeMount(() => {
       }
 
       .danmaku-menu-title {
-        color: #fff;
+        color: var(--font-primary-1);
         font-size: 12px;
         line-height: 16px;
         margin: 12px 0 12px 10px;
@@ -401,12 +405,12 @@ onBeforeMount(() => {
           height: 24px;
           margin: 0 8px 0 2px;
           background-color: transparent;
-          color: #fff;
+          color: var(--font-primary-1);
           font-size: 12px;
-          border: 1px solid rgba(161, 161, 161, 0.2);
+          border: 1px solid var(--border-color);
 
           &:focus {
-            border-color: rgba(161, 161, 161, 0.2);
+            border-color: var(--border-color);
           }
         }
 
@@ -450,13 +454,13 @@ onBeforeMount(() => {
 
   .radio-item {
     flex: 1;
-    color: #fff;
+    color: var(--font-primary-1);
     padding: 10px;
     text-align: center;
     font-size: 12px;
     padding: 6px 6px;
     margin-right: -1px;
-    border: 1px solid #fff;
+    border: 1px solid var(--border-color);
     cursor: pointer;
 
 

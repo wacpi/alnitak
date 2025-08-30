@@ -234,8 +234,19 @@ const websocketOnmessage = (e: any) => {
       toBottom();
     })
   } else {
-    msgForm.fid = res.fid;
-    initSendUser(res.fid);
+    // 不再强制切换会话，改为标记未读并将该会话置顶
+    const index = msgList.value.findIndex(item => item.user.uid === res.fid);
+    if (index >= 0) {
+      const chat = msgList.value[index];
+      chat.status = false; // 未读
+      chat.createdAt = new Date().toString();
+      // 移动到顶部
+      msgList.value.splice(index, 1);
+      msgList.value.unshift(chat);
+    } else {
+      // 若列表中没有该会话，则新增到顶部，但不切换当前会话
+      initSendUser(res.fid);
+    }
   }
 }
 
@@ -261,16 +272,16 @@ onBeforeUnmount(() => {
 .msg {
   display: flex;
   height: 100%;
-  background-color: #fff;
+  background-color: var(--bg-elev-1);
 }
 
 .msg-left {
   width: 230px;
-  border-right: 1px solid #e9eaec;
+  border-right: 1px solid var(--border-color);
 
   .left-top {
     height: 40px;
-    border-bottom: 1px solid #e9eaec;
+    border-bottom: 1px solid var(--border-color);
   }
 
   .msg-user-item {
@@ -281,10 +292,10 @@ onBeforeUnmount(() => {
     padding: 0 8px;
     position: relative;
     cursor: pointer;
-    border-bottom: 1px solid #e9eaec;
+    border-bottom: 1px solid var(--border-color);
 
     &:hover {
-      background-color: #f7f7f7;
+      background-color: var(--hover-bg);
     }
 
     // .msg-avatar {}
@@ -296,14 +307,14 @@ onBeforeUnmount(() => {
       height: 10px;
       position: absolute;
       border-radius: 50%;
-      background-color: #f5222d;
+      background-color: var(--font-danger);
     }
 
     .msg-name {
       position: absolute;
       top: 8px;
       left: 60px;
-      color: #333;
+      color: var(--font-primary-1);
       font-size: 14px;
     }
 
@@ -311,7 +322,7 @@ onBeforeUnmount(() => {
       position: absolute;
       top: 32px;
       left: 60px;
-      color: #999;
+      color: var(--font-primary-3);
       font-size: 12px;
     }
   }
@@ -321,18 +332,18 @@ onBeforeUnmount(() => {
   width: calc(100% - 220px);
 
   .right-top {
-    color: #333;
+    color: var(--font-primary-1);
     text-align: center;
     font-size: 16px;
     line-height: 40px;
-    border-bottom: 1px solid #e9eaec;
+    border-bottom: 1px solid var(--border-color);
   }
 
   .msg-main {
     overflow-y: auto;
     height: calc(100% - 196px);
-    background-color: #f4f5f7;
-    border-bottom: 1px solid #e9eaec;
+    background-color: var(--fill-1);
+    border-bottom: 1px solid var(--border-color);
 
     /**修改滚动条样式 */
     &::-webkit-scrollbar {
@@ -340,7 +351,7 @@ onBeforeUnmount(() => {
     }
 
     &::-webkit-scrollbar-thumb {
-      background-color: #d7d7d8;
+      background-color: var(--border-color);
       outline: none;
       border-radius: 2px;
     }
@@ -370,8 +381,8 @@ onBeforeUnmount(() => {
     max-width: 80%;
     margin-right: 10px;
     margin-top: 6px;
-    background-color: #40a9ff;
-    color: #fff;
+    background-color: var(--primary-color);
+    color: var(--primary-text-color);
     font-size: 16px;
     border-radius: 3px;
     padding: 5px 10px 5px 10px;
@@ -386,13 +397,16 @@ onBeforeUnmount(() => {
     margin-left: 10px;
     margin-top: 7px;
     max-width: 80%;
-    background: #fff;
+    background: var(--bg-elev-1);
+    border: 1px solid var(--border-color);
+    box-shadow: 0 1px 4px var(--shadow-weak);
     padding: 5px 10px 5px 10px;
     border-radius: 3px;
   }
 
   .content-left {
     font-size: 1rem;
+    color: var(--font-primary-1);
   }
 }
 

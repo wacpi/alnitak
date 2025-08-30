@@ -61,7 +61,7 @@ onBeforeMount(async () => {
 
 <style lang="scss" scoped>
 .video-upload {
-  background-color: #fff;
+  background-color: var(--bg-elev-1);
   width: 100%;
   min-height: 100%;
 }
@@ -81,7 +81,7 @@ onBeforeMount(async () => {
   .title {
     margin: 0;
     font-size: 16px;
-    color: #212121;
+    color: var(--font-primary-1);
     font-weight: 600;
     line-height: 50px;
   }
@@ -89,7 +89,7 @@ onBeforeMount(async () => {
 
 .divider {
   width: 100%;
-  background: #fafafa;
+  background: var(--hover-bg);
   height: 24px;
 }
 </style>

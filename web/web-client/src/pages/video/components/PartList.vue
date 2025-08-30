@@ -126,7 +126,10 @@ defineExpose({
 .part-list {
   position: relative;
   border-radius: 6px;
-  background-color: #F1F2F3;
+  /* Video PartList：容器底色使用提层背景，增强与页面的层次区分 */
+  background-color: var(--bg-elev-1);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 2px 8px var(--shadow-weak);
   margin-bottom: 18px;
 
   .part-head {
@@ -134,16 +137,18 @@ defineExpose({
     align-items: center;
     justify-content: space-between;
     padding: 12px 16px 8px;
-    border-bottom: 1px solid #e3e5e7;
+    border-bottom: 1px solid var(--border-color);
+    /* Video PartList：头部采用更浅的面板背景以形成层次 */
+    background-color: var(--panel-bg);
 
     .title {
       font-size: 16px;
-      color: #18191c;
+      color: var(--font-primary-1);
       font-weight: 500;
     }
 
     .part {
-      color: #9499a0;
+      color: var(--font-primary-3);
       font-size: 14px;
       margin-left: 4px;
     }
@@ -159,16 +164,16 @@ defineExpose({
       transition: background-color 0.2s;
 
       &:hover {
-        background-color: #e3e5e7;
+        background-color: var(--hover-bg);
       }
 
       .icon {
-        color: #61666d;
+        color: var(--font-primary-2);
         transition: color 0.2s;
       }
 
       &:hover .icon {
-        color: #18191c;
+        color: var(--font-primary-1);
       }
     }
 
@@ -181,14 +186,14 @@ defineExpose({
 
       .autoplay-text {
         font-size: 13px;
-        color: #61666d;
+        color: var(--font-primary-2);
         margin-right: 8px;
       }
 
       .switch-button {
         width: 32px;
         height: 18px;
-        background: #e3e5e7;
+        background: var(--border-color);
         border-radius: 9px;
         position: relative;
         transition: background-color 0.3s;
@@ -200,13 +205,13 @@ defineExpose({
           left: 2px;
           width: 14px;
           height: 14px;
-          background: #fff;
+          background: var(--bg-elev-1);
           border-radius: 50%;
           transition: transform 0.3s;
         }
 
         &.on {
-          background: #00aeec;
+          background: var(--primary-color);
 
           &::after {
             transform: translateX(14px);
@@ -216,23 +221,13 @@ defineExpose({
     }
   }
 
-  .part-head {
-    display: flex;
-    padding: 14px 16px 0;
-    align-items: center;
-    justify-content: space-between;
-
-    .part {
-      color: #9499A0;
-      font-size: 13px;
-    }
-  }
+  /* 移除重复的 .part-head 定义，以下为微调（保留一处定义即可） */
 }
 
 .list-box {
   padding: 0 6px;
   list-style: none;
-  color: #18191c;
+  color: var(--font-primary-1);
   margin: 0;
   padding: 0 10px 0 6px;
 
@@ -245,7 +240,7 @@ defineExpose({
     padding: 0 10px;
     height: 30px;
     line-height: 30px;
-    color: #18191C;
+    color: var(--font-primary-1);
     margin: 5px 0;
     transition: all 0.3s;
     cursor: pointer;
@@ -272,21 +267,21 @@ defineExpose({
     }
 
     .duration {
-      color: #9499A0;
+      color: var(--font-primary-3);
     }
   }
 }
 
-.number-grid {
+  .number-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(40px, 1fr));
   gap: 8px;
   padding: 16px;
   list-style: none;
-  color: #18191c;
+    color: var(--font-primary-1);
   margin: 0;
 
-  .number-item {
+    .number-item {
     box-sizing: border-box;
     display: flex;
     align-items: center;
@@ -294,32 +289,37 @@ defineExpose({
     width: 40px;
     height: 40px;
     border-radius: 4px;
-    background-color: #fff;
-    border: 1px solid #e3e5e7;
+      /* Video PartList：数字格子使用面板背景，与容器形成轻微对比 */
+      background-color: var(--panel-bg);
+      border: 1px solid var(--border-color);
     transition: all 0.2s;
     cursor: pointer;
     text-align: center;
     font-size: 14px;
     font-weight: 500;
-    color: #61666d;
+      color: var(--font-primary-2);
 
-    &:hover {
-      background-color: #f5f7fa;
-      border-color: #00aeec;
-      color: #00aeec;
-    }
+      &:hover {
+        background-color: var(--hover-bg);
+        border-color: var(--primary-hover-color);
+        color: var(--primary-hover-color);
+      }
   }
 
   .active-number {
-    background-color: #00aeec;
-    border-color: #00aeec;
-    color: #fff;
+    background-color: var(--primary-color);
+    border-color: var(--primary-color);
+    color: var(--primary-text-color);
   }
 }
 
-.active-part {
+  .active-part {
   color: var(--primary-hover-color) !important;
-  background-color: #fff;
+  background-color: var(--hover-bg);
   border-radius: 2px;
+}
+
+.list-box .list-item:hover {
+  background-color: var(--hover-bg);
 }
 </style>

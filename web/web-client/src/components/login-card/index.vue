@@ -59,9 +59,11 @@ const success = () => {
   width: 800px;
   height: 380px;
   overflow: hidden;
-  background-color: #fff;
+  /* LoginCard：卡片主体采用提层背景与主题阴影，适配深浅色 */
+  background-color: var(--bg-elev-1);
   border-radius: 20px;
-  box-shadow: 16px 16px 50px -12px rgba(0, 0, 0, 0.8);
+  box-shadow: 16px 16px 50px -12px var(--shadow-weak);
+  color: var(--font-primary-1);
 
   .card-close {
     right: 26px;
@@ -72,7 +74,7 @@ const success = () => {
     height: 30px;
 
     &:hover {
-      color: #808080;
+      color: var(--font-primary-3);
     }
   }
 
@@ -80,7 +82,8 @@ const success = () => {
   .card-left {
     width: 330px;
     grid-row: 1 / span 2;
-    background-color: #406ae3;
+    /* LoginCard：左侧插画区使用主题主色 */
+    background-color: var(--primary-color);
     -webkit-clip-path: polygon(98% 17%, 100% 34%, 98% 51%, 100% 68%, 98% 84%, 100% 100%, 0 100%, 0 0, 100% 0);
     clip-path: polygon(98% 17%, 100% 34%, 98% 51%, 100% 68%, 98% 84%, 100% 100%, 0 100%, 0 0, 100% 0);
 
@@ -98,13 +101,17 @@ const success = () => {
   //用户协议
   .protocol-container {
     grid-column: 2;
-    color: #9499a0;
+    color: var(--font-primary-3);
     text-align: center;
     font-size: 12px;
 
     .protocol {
       cursor: pointer;
-      color: #406ae3;
+      color: var(--primary-color);
+      
+      &:hover {
+        color: var(--primary-hover-color);
+      }
     }
   }
 }

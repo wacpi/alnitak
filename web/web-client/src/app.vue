@@ -1,7 +1,9 @@
 <template>
-  <el-config-provider :locale="zhCn">
+<el-config-provider :locale="zhCn">
+  <Suspense>
     <NuxtPage />
-  </el-config-provider>
+  </Suspense>
+</el-config-provider>
 </template>
 
 <script setup lang="ts">
@@ -15,6 +17,8 @@ import zhCn from 'element-plus/dist/locale/zh-cn.mjs'
 body {
   margin: 0;
   padding: 0;
+  background-color: var(--bg-page);
+  color: var(--font-primary-1);
   font-family: PingFang SC, HarmonyOS Regular, Helvetica Neue, Microsoft YaHei, sans-serif;
 }
 

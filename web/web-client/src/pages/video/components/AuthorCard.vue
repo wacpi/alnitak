@@ -99,7 +99,7 @@ onBeforeMount(() => {
       width: 100%;
       height: 100%;
       border-radius: 50%;
-      background-color: #C9CCD0;
+      background-color: var(--fill-1, #C9CCD0);
     }
   }
 }
@@ -119,7 +119,7 @@ onBeforeMount(() => {
 
         .up-name {
           font-size: 15px;
-          color: #18191C;
+          color: var(--font-primary-1);
           font-weight: 500;
           position: relative;
           white-space: nowrap;
@@ -135,7 +135,7 @@ onBeforeMount(() => {
         font-size: 13px;
         line-height: 16px;
         height: 16px;
-        color: #9499A0;
+        color: var(--font-primary-3);
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;

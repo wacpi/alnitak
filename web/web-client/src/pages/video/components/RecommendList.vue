@@ -103,7 +103,7 @@ defineExpose({
     
     .next-info {
       font-size: 14px;
-      color: #61666d;
+      color: var(--font-primary-2);
       margin: 0;
       display: flex;
       align-items: center;
@@ -123,7 +123,7 @@ defineExpose({
         .switch-button {
           width: 32px;
           height: 18px;
-          background: #e3e5e7;
+          background: var(--border-color);
           border-radius: 9px;
           position: relative;
           transition: background-color 0.3s;
@@ -135,13 +135,13 @@ defineExpose({
             left: 2px;
             width: 14px;
             height: 14px;
-            background: #fff;
+            background: var(--bg-elev-1);
             border-radius: 50%;
             transition: transform 0.3s;
           }
           
           &.on {
-            background: #00aeec;
+            background: var(--primary-hover-color);
             
             &::after {
               transform: translateX(14px);
@@ -164,7 +164,7 @@ defineExpose({
         height: 80px;
         border-radius: 6px;
         cursor: pointer;
-        background-color: #c9ccd0;
+        background-color: var(--fill-1, #c9ccd0);
 
         img {
           width: 100%;
@@ -195,7 +195,7 @@ defineExpose({
         .title {
           margin: 0;
           min-height: 38px;
-          color: #18191c;
+          color: var(--font-primary-1);
           font-size: 15px;
           line-height: 19px;
           transition: color 0.3s;
@@ -212,7 +212,7 @@ defineExpose({
           height: 100%;
           display: inline-flex;
           align-items: center;
-          color: #9499a0;
+          color: var(--font-primary-3);
           font-size: 13px;
           cursor: pointer;
           margin: 2px 0;
@@ -224,7 +224,7 @@ defineExpose({
           }
 
           .name {
-            color: #9499a0;
+            color: var(--font-primary-3);
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
@@ -232,7 +232,7 @@ defineExpose({
         }
 
         .play-info {
-          color: #9499a0;
+          color: var(--font-primary-3);
           display: inline-flex;
           align-items: center;
 

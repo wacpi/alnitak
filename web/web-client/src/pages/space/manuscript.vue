@@ -86,6 +86,7 @@ onBeforeUnmount(() => {
     font-size: 18px;
     margin-top: 20px;
     padding-left: 10px;
+    color: var(--font-primary-1);
   }
 
   .pagination {
@@ -127,7 +128,7 @@ onBeforeUnmount(() => {
 
     .title {
       font-size: 12px;
-      color: #222222;
+      color: var(--font-primary-1);
       display: block;
       line-height: 20px;
       height: 38px;
@@ -143,7 +144,7 @@ onBeforeUnmount(() => {
     .meta {
       display: flex;
       align-items: center;
-      color: #999;
+      color: var(--font-primary-3);
       white-space: nowrap;
       margin-top: 5px;
       height: 16px;
@@ -155,13 +156,13 @@ onBeforeUnmount(() => {
         align-items: center;
 
         .clicks {
-          color: #999;
+          color: var(--font-primary-3);
           font-size: 12px;
         }
       }
 
       .date {
-        color: #999;
+        color: var(--font-primary-3);
         font-size: 12px;
       }
     }

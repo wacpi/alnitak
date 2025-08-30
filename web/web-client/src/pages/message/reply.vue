@@ -69,7 +69,7 @@ onBeforeMount(() => {
   padding: 0 18px 0;
   height: 100%;
   box-sizing: border-box;
-  background-color: #fff;
+  background-color: var(--bg-elev-1);
 
   .reply-title {
     font-size: 18px;
@@ -97,7 +97,7 @@ onBeforeMount(() => {
     display: flex;
     align-items: center;
     padding: 12px 0 16px;
-    border-bottom: 1px solid #e1e2e3;
+      border-bottom: 1px solid var(--border-color);
 
     .item-left {
       width: 55px;
@@ -117,7 +117,7 @@ onBeforeMount(() => {
 
       .title {
         font-size: 14px;
-        color: #222;
+        color: var(--font-primary-1);
         line-height: 18px;
         margin: 2px 0 8px;
 
@@ -126,7 +126,7 @@ onBeforeMount(() => {
           font-weight: 600;
 
           &:visited {
-            color: #222;
+            color: var(--font-primary-1);
           }
 
           &:hover {
@@ -136,22 +136,22 @@ onBeforeMount(() => {
       }
 
       .content {
-        color: #222;
+        color: var(--font-primary-1);
         font-size: 14px;
         margin: 10px 0 6px;
       }
 
       .target-content {
-        color: #999;
+        color: var(--font-primary-3);
         font-size: 12px;
         margin: 5px 0;
         padding-left: 6px;
-        border-left: 2px solid #e7e7e7;
+        border-left: 2px solid var(--border-color);
       }
 
       .msg-time {
         font-size: 12px;
-        color: #999;
+        color: var(--font-primary-3);
       }
     }
 
@@ -162,7 +162,7 @@ onBeforeMount(() => {
       .root-content {
         width: 90px;
         font-size: 14px;
-        color: #999;
+        color: var(--font-primary-3);
         overflow: hidden;
         text-overflow: ellipsis;
         word-break: break-word;

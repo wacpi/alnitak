@@ -5,7 +5,9 @@
       <el-progress v-if="uploading" type="circle" :percentage="percent" />
       <div class="upload-tips" v-else>
         <div class="tips-icon">
-          <upload-icon size="48"></upload-icon>
+          <client-only>
+            <upload-icon size="48"></upload-icon>
+          </client-only>
         </div>
         <p class="upload-title">点击或拖拽视频到此处上传视频</p>
         <p class="upload-limit">上传文件大小需小于{{ globalConfig.maxVideoSize }}M,仅支持.mp4格式文件</p>
@@ -95,18 +97,18 @@ const changeUpload = (status: string, data?: any) => {
     padding: 24px;
 
     .tips-icon {
-      color: #000;
-      opacity: 0.38;
+      color: var(--font-primary-2);
+      opacity: 0.6;
       margin-bottom: 12px;
     }
 
     .upload-title {
-      color: #333639;
+      color: var(--font-primary-1);
       font-size: 16px
     }
 
     .upload-limit {
-      color: #767c82;
+      color: var(--font-primary-3);
       font-size: 14px;
       margin: 8px 0 0 0;
     }

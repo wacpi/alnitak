@@ -99,7 +99,7 @@ onBeforeMount(() => {
   align-items: center;
   height: 70px;
   position: relative;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .info-box {
@@ -108,7 +108,7 @@ onBeforeMount(() => {
 
   .follow-name {
     display: block;
-    color: #333;
+    color: var(--font-primary-1);
     font-size: 14px;
     margin-bottom: 6px;
     cursor: pointer;
@@ -120,11 +120,12 @@ onBeforeMount(() => {
 
   .follow-sign {
     font-size: 12px;
-    color: #666;
+    color: var(--font-primary-3);
     overflow: hidden;
     text-overflow: ellipsis;
     display: -webkit-box;
     -webkit-line-clamp: 1;
+    line-clamp: 1;
     -webkit-box-orient: vertical;
   }
 }

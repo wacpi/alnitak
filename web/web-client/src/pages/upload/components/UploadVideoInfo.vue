@@ -209,7 +209,7 @@ onMounted(async () => {
     position: relative;
     width: 80px;
     font-size: 14px;
-    color: #606266;
+    color: var(--font-primary-2);
     margin-left: 130px;
 
     &::before {
@@ -238,18 +238,18 @@ onMounted(async () => {
     width: 169px;
     height: 127px;
     border-radius: 3px;
-    background-color: #f0f2f5;
+    background-color: var(--fill-1, #f0f2f5);
   }
 }
 
-.tags-box {
+  .tags-box {
   width: 100%;
   height: 32px;
   box-sizing: border-box;
   padding: 0 10px;
   border-radius: 4px;
-  background-color: #f5f7fa;
-  box-shadow: 0 0 0 1px #e4e7ed inset;
+    background-color: var(--input-bg-color);
+    box-shadow: 0 0 0 1px var(--border-color) inset;
 
   .tag {
     margin-right: 6px;
@@ -276,16 +276,16 @@ onMounted(async () => {
   }
 }
 
-.required {
+  .required {
   position: relative;
 
-  &::before {
+    &::before {
     position: absolute;
     font-size: 12px;
     left: -8px;
     top: 6px;
     content: "*";
-    color: #ff3b30;
+      color: #ff3b30;
   }
 }
 </style>

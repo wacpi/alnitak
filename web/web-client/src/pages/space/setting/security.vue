@@ -29,12 +29,12 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      border-bottom: 1px solid #e5e9ef;
+      border-bottom: 1px solid var(--border-color);
 
       .item-title {
         box-sizing: border-box;
         font-size: 14px;
-        color: #222;
+        color: var(--font-primary-1);
         width: 30%;
         padding: 0 16px;
       }
@@ -42,7 +42,7 @@
       .item-value {
         box-sizing: border-box;
         font-size: 12px;
-        color: #6d757a;
+        color: var(--font-primary-3);
         flex: 1;
         padding: 0 16px;
       }

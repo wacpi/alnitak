@@ -92,15 +92,16 @@ const changeUpload = (status: string, data: any) => {
     align-items: center;
     justify-content: center;
     flex-direction: column;
-    background-color: #f4f5f7;
+    /* 浅色：更明显的灰色占位；深色：见下方覆盖规则 */
+    background-color: var(--hover-bg);
 
     .tips-icon {
-      color: #99a2aa;
+      color: var(--font-primary-3);
       margin-bottom: 12px;
     }
 
     .upload-title {
-      color: #99a2aa;
+      color: var(--font-primary-3);
       font-size: 12px;
       margin: 0;
     }
@@ -113,5 +114,10 @@ const changeUpload = (status: string, data: any) => {
 
 :deep(.el-upload-dragger:hover) {
   border-color: var(--primary-color);
+}
+
+/* 深色模式下，让占位更亮一些以突出层次 */
+:global([data-theme="dark"] .upload-cover .placeholder) {
+  background-color: var(--panel-bg);
 }
 </style>

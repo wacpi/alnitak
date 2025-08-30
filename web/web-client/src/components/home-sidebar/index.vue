@@ -97,7 +97,7 @@ if ((data.value as any).code === statusCode.OK) {
   width: 220px;
   white-space: nowrap;
   overflow-x: hidden;
-  background-color: #fff;
+  background-color: var(--bg-elev-1);
 
   .scrollbar {
     width: 220px;
@@ -110,7 +110,7 @@ if ((data.value as any).code === statusCode.OK) {
 
 
 .menu-group {
-  border-bottom: 1px solid rgba(0, 0, 0, .1);
+  border-bottom: 1px solid var(--border-color);
 
   .menu-item {
     display: block;
@@ -120,7 +120,7 @@ if ((data.value as any).code === statusCode.OK) {
     line-height: 30px;
     border-radius: 6px;
     cursor: pointer;
-    color: #18191c;
+    color: var(--font-primary-1);
 
     &-with-icon {
       display: flex;
@@ -132,22 +132,22 @@ if ((data.value as any).code === statusCode.OK) {
     }
 
     &-icon {
-      color: #808080;
+      color: var(--font-primary-3);
       padding-left: 6px;
       margin-right: 10px;
     }
 
     &:hover {
-      background-color: rgba(0, 0, 0, .1);
+      background-color: var(--hover-bg);
     }
   }
 
   .menu-active {
-    background-color: rgba(0, 0, 0, .1);
+    background-color: var(--hover-bg);
   }
 
   .menu-text {
-    color: #18191c;
+    color: var(--font-primary-1);
   }
 }
 
@@ -156,13 +156,13 @@ if ((data.value as any).code === statusCode.OK) {
 }
 
 .menu-footer {
-  color: #666;
+  color: var(--font-primary-3);
   box-sizing: border-box;
   width: 100%;
   padding: 6px 10px;
 
   a {
-    color: #666;
+    color: var(--font-primary-3);
     text-decoration: none;
 
     &:hover {
@@ -194,7 +194,7 @@ if ((data.value as any).code === statusCode.OK) {
 // 侧边栏折叠
 .sidebar-content-fold {
   .fold-menu-icon-btn {
-    color: #808080;
+    color: var(--font-primary-3);
     display: block;
     margin: 10px 6px;
     padding: 8px;
@@ -202,7 +202,7 @@ if ((data.value as any).code === statusCode.OK) {
     cursor: pointer;
 
     &:hover {
-      background-color: rgba(0, 0, 0, .1);
+      background-color: var(--hover-bg);
     }
   }
 }

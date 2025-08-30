@@ -237,7 +237,7 @@ const getUploadVideo = async () => {
   position: relative;
   width: 100%;
   height: 220px;
-  background-color: #9196a1;
+  background-color: var(--hover-bg);
 
   .upload-btn {
     position: absolute;
@@ -245,7 +245,7 @@ const getUploadVideo = async () => {
     right: 20px;
     width: 120px;
     height: 32px;
-    color: #fff;
+    color: var(--primary-text-color);
     background-color: rgba(0, 0, 0, .45);
     cursor: pointer;
     border-radius: 6px;
@@ -260,6 +260,7 @@ const getUploadVideo = async () => {
     width: 100%;
     height: 100%;
     object-fit: cover;
+    display: block;
   }
 
   .header-inner {
@@ -296,7 +297,7 @@ const getUploadVideo = async () => {
 
       .sign {
         font-size: 12px;
-        color: #ccd0d7;
+        color: var(--font-primary-3);
         margin: 6px 0 0 0;
       }
     }
@@ -306,7 +307,7 @@ const getUploadVideo = async () => {
       display: flex;
 
       div {
-        color: #fff;
+        color: var(--font-primary-6);
         width: 78px;
         text-align: center;
 
@@ -315,7 +316,7 @@ const getUploadVideo = async () => {
         }
 
         .data-content {
-          color: #fff;
+          color: var(--font-primary-6);
           margin: 12px 0;
           display: block;
           cursor: pointer;
@@ -331,7 +332,7 @@ const getUploadVideo = async () => {
 
   .space-menu {
     width: 200px;
-    background-color: #f8f8f8;
+    background-color: var(--bg-elev-1);
 
     .menu-item {
       position: relative;
@@ -346,9 +347,7 @@ const getUploadVideo = async () => {
       text-decoration: none;
       color: var(--font-primary-1);
 
-      &:hover {
-        background-color: #f3f3f5;
-      }
+      &:hover { background-color: var(--hover-bg); }
 
       .menu-icon {
         width: 18px;
@@ -367,7 +366,7 @@ const getUploadVideo = async () => {
     margin-left: 10px;
     width: calc(100% - 210px);
     min-height: 630px;
-    background-color: #fff;
+    background-color: var(--bg-elev-1);
   }
 }
 

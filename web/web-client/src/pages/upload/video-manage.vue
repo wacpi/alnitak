@@ -170,7 +170,7 @@ onBeforeMount(() => {
   padding: 0 18px 0;
   height: 100%;
   box-sizing: border-box;
-  background-color: #fff;
+  background-color: var(--bg-elev-1);
 
   .title {
     font-size: 18px;
@@ -195,7 +195,7 @@ onBeforeMount(() => {
       width: 100%;
       height: 80px;
       margin-bottom: 12px;
-      border-bottom: 1px solid #e6e6e6;
+    border-bottom: 1px solid var(--border-color);
       padding-bottom: 12px;
 
       .item-left {
@@ -207,7 +207,7 @@ onBeforeMount(() => {
           border-radius: 2px;
           width: 100%;
           height: 100%;
-          background-color: #f1f2f3;
+          background-color: var(--fill-1, #f1f2f3);
 
           img {
             width: 100%;
@@ -222,7 +222,7 @@ onBeforeMount(() => {
 
         .item-title {
           font-size: 14px;
-          color: #212121;
+          color: var(--font-primary-1);
           line-height: 18px;
           margin: 0 0 26px;
           cursor: pointer;
@@ -230,6 +230,7 @@ onBeforeMount(() => {
           text-overflow: ellipsis;
           display: -webkit-box;
           -webkit-line-clamp: 1;
+          line-clamp: 1;
           -webkit-box-orient: vertical;
 
           &:hover {
@@ -239,11 +240,12 @@ onBeforeMount(() => {
 
         .desc {
           font-size: 12px;
-          color: #999;
+          color: var(--font-primary-3);
           overflow: hidden;
           text-overflow: ellipsis;
           display: -webkit-box;
           -webkit-line-clamp: 1;
+          line-clamp: 1;
           -webkit-box-orient: vertical;
         }
 
@@ -272,13 +274,13 @@ onBeforeMount(() => {
 
   .delete-dialog-title {
     font-size: 16px;
-    color: #1f2328;
+  color: var(--font-primary-1);
     text-align: center;
     margin: 20px 0;
   }
 
   .delete-dialog-desc {
-    color: #666;
+  color: var(--font-primary-3);
     font-size: 13px;
     text-align: center;
 

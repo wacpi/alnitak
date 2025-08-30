@@ -118,14 +118,61 @@ onBeforeUnmount(() => {
 
 <style lang="scss" scoped>
 .alnitak-editor {
-  border: 1px solid #ccc;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px 0 var(--shadow-weak);
 
   .toolbar {
-    border-bottom: 1px solid #ccc;
+    border-bottom: 1px solid var(--border-color);
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+    /* 工具栏背景/文字颜色（深浅色自适应） */
+    :deep(.w-e-toolbar) {
+      background-color: var(--panel-bg);
+      color: var(--font-primary-1);
+      box-shadow: 0 2px 8px 0 var(--shadow-weak);
+    }
+    :deep(.w-e-toolbar .w-e-menu) {
+      color: var(--font-primary-1);
+      border-radius: 6px;
+      transition: background-color .15s ease, color .15s ease;
+    }
+    :deep(.w-e-toolbar .w-e-menu:hover) {
+      color: var(--primary-hover-color);
+      background-color: var(--primary-color-active);
+    }
+    :deep(.w-e-toolbar .w-e-active) {
+      color: var(--primary-color);
+      background-color: var(--primary-color-active);
+    }
+
+    /* 工具栏下拉/弹层菜单样式 */
+    :deep(.w-e-panel-container) {
+      background-color: var(--bg-elev-1);
+      border: 1px solid var(--border-color);
+      box-shadow: 0 6px 16px 0 var(--shadow-weak);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    :deep(.w-e-panel-content) { color: var(--font-primary-1); }
+    :deep(.w-e-panel-content li),
+    :deep(.w-e-select-list li) {
+      color: var(--font-primary-1);
+      transition: background-color .15s ease, color .15s ease;
+    }
+    :deep(.w-e-panel-content li:hover),
+    :deep(.w-e-select-list li:hover) {
+      background-color: var(--hover-bg);
+      color: var(--font-primary-1);
+    }
   }
 }
 
 :deep(.w-e-text-container) {
   min-height: 300px !important;
+  background-color: var(--bg-elev-1);
+  color: var(--font-primary-1);
+  border-bottom-left-radius: 8px;
+  border-bottom-right-radius: 8px;
 }
 </style>

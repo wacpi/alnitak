@@ -86,7 +86,7 @@ onBeforeMount(() => {
   padding: 0 18px 0;
   height: 100%;
   box-sizing: border-box;
-  background-color: #fff;
+  background-color: var(--bg-elev-1);
 
   .at-title {
     font-size: 18px;
@@ -115,7 +115,7 @@ onBeforeMount(() => {
     display: flex;
     align-items: center;
     padding: 8px 0 12px;
-    border-bottom: 1px solid #e1e2e3;
+      border-bottom: 1px solid var(--border-color);
 
     .item-left {
       width: 55px;
@@ -134,7 +134,7 @@ onBeforeMount(() => {
 
       .title {
         font-size: 14px;
-        color: #222;
+        color: var(--font-primary-1);
         line-height: 18px;
         margin: 2px 0 8px;
 
@@ -143,7 +143,7 @@ onBeforeMount(() => {
           font-weight: 600;
 
           &:visited {
-            color: #222;
+            color: var(--font-primary-1);
           }
 
           &:hover {
@@ -154,7 +154,7 @@ onBeforeMount(() => {
 
       .msg-time {
         font-size: 12px;
-        color: #999;
+        color: var(--font-primary-3);
       }
     }
 
@@ -172,12 +172,13 @@ onBeforeMount(() => {
       .content-title {
         width: 90px;
         font-size: 14px;
-        color: #999;
+        color: var(--font-primary-3);
         overflow: hidden;
         text-overflow: ellipsis;
         word-break: break-word;
         display: -webkit-box;
         -webkit-line-clamp: 3;
+        line-clamp: 3;
         -webkit-box-orient: vertical;
       }
     }

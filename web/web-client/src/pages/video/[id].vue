@@ -427,9 +427,11 @@ useHead({
 }
 //左侧内容区域
 .left-column {
-  width: 1200px;       // 设置固定宽度900px
-  margin-top: 20px;    // 向下移动21像素
-  //margin: 0 auto;    // 新增：居中
+  flex: 1;
+  max-width: 1200px;   // 新增：最大宽度900px
+ //width: 1200px;       // 设置固定宽度900px
+ margin-top: 20px;    // 向下移动21像素
+  //margin: 0 auto;     // 新增：居中
 //视频播放器
   .video-player {
     position: relative;
@@ -438,11 +440,26 @@ useHead({
     /*16:9*/
     min-width: 680px;
     min-height: 382px;
+    background-color: var(--bg-elev-1);
 
     .skeleton {
       width: 100%;
       padding-bottom: 56.25%;
-      background-color: #f0f2f5;
+      background-color: var(--bg-elev-1);
+      border: 1px solid var(--border-color);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .skeleton::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg,
+        transparent 0%,
+        rgba(255,255,255,0.06) 50%,
+        transparent 100%);
+      animation: skeleton-shimmer 1.2s infinite;
     }
   }
 //标题和版权信息
@@ -457,7 +474,7 @@ useHead({
       line-height: 28px;
       margin: 13px 0;
       font-size: 20px;
-      color: #18191C;
+      color: var(--font-primary-1);
       overflow: hidden;
       white-space: nowrap;
       text-overflow: ellipsis;
@@ -469,7 +486,7 @@ useHead({
       align-items: center;
       justify-content: flex-end;
       font-size: 13px;
-      color: #9499A0;
+      color: var(--font-primary-3);
 
       .icon {
         padding: 0 6px;
@@ -478,13 +495,13 @@ useHead({
   }
 
   .video-toolbar {
-    color: #9499A0;
+    color: var(--font-primary-3);
     font-size: 13px;
     padding-bottom: 12px;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    border-bottom: 1px solid #E3E5E7;
+    border-bottom: 1px solid var(--border-color);
 
     .toolbar-right {
       display: inline-block;
@@ -503,7 +520,7 @@ useHead({
     .basic-desc-info {
       white-space: pre-line;
       letter-spacing: 0;
-      color: #18191C;
+      color: var(--font-primary-1);
       font-size: 15px;
       line-height: 24px;
       overflow: hidden;
@@ -520,7 +537,7 @@ useHead({
 
       .toggle-btn-text {
         cursor: pointer;
-        color: #61666D;
+        color: var(--font-primary-2);
 
         &:hover {
           color: var(--primary-hover-color);
@@ -533,11 +550,11 @@ useHead({
   .tags-box {
     padding-bottom: 6px;
     margin: 16px 0 20px 0;
-    border-bottom: 1px solid #E3E5E7;
+    border-bottom: 1px solid var(--border-color);
 
     .tag {
-      color: #61666d;
-      background: #f1f2f3;
+      color: var(--font-primary-2);
+      background: var(--border-color);
       height: 28px;
       line-height: 28px;
       border-radius: 14px;
@@ -549,8 +566,18 @@ useHead({
       align-items: center;
       cursor: pointer;
       margin: 0 12px 8px 0;
+
+      &:hover {
+        background: var(--hover-bg);
+        color: var(--font-primary-1);
+      }
     }
   }
+}
+
+@keyframes skeleton-shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
 }
 //右侧内容区域
 .right-column {
