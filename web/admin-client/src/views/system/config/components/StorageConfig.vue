@@ -138,7 +138,7 @@ const getStorageConfig = async () => {
 const setStorageConfig = async () => {
   // 校验配置
   const msg = [];
-  if (storageForm.type !== "type") {
+  if (storageForm.type !== "local") {
     msg.push(...checkConfig({ 'bucket': storageForm.bucket, 'keyId': storageForm.keyId }));
   }
 
