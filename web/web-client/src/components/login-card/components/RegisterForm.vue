@@ -246,9 +246,9 @@ const emailRegister = async () => {
     width: calc(50% - 10px);
     height: 40px;
     cursor: pointer;
-    color: #18191c;
-    background: #fff;
-    border: 1px solid #e3e5e7;
+    color: var(--font-primary-1);
+    background: var(--bg-elev-1);
+    border: 1px solid var(--border-color);
     border-radius: 8px;
   }
 
@@ -257,19 +257,19 @@ const emailRegister = async () => {
     width: calc(50% - 10px);
     height: 40px;
     cursor: pointer;
-    color: #fff;
+    color: var(--primary-text-color);
     background: var(--primary-color);
     border-radius: 8px;
-    border: 1px solid #e3e5e7;
+    border: 1px solid var(--primary-color);
   }
 }
 
 .btn-disabled {
-  color: #9499a0 !important;
+  color: var(--font-primary-3) !important;
   cursor: not-allowed !important;
 
   &:hover {
-    color: #9499a0 !important;
+    color: var(--font-primary-3) !important;
   }
 }
 </style>

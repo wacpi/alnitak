@@ -33,6 +33,7 @@ const props = withDefaults(defineProps<{
 let player: any = null;
 const defaultQuality = ref('');
 const hls = shallowRef<Hls | null>(null);
+let hasEnded = false; // 新增：标记视频是否已播放结束
 const danmakuSendRef = ref<InstanceType<typeof DanmakuSend> | null>(null);
 const options: PlayerOptionsType = {
   container: null,
@@ -110,7 +111,17 @@ const setWatched = () => localStorage.setItem(getWatchedKey(), '1');
 const clearWatched = () => localStorage.removeItem(getWatchedKey());
 
 // ===== 分集切换与播放器实例化 =====
+// 添加播放结束回调
+const onEndedCallback = ref<(() => void) | null>(null);
+
+const setOnEnded = (callback: () => void) => {
+  onEndedCallback.value = callback;
+};
+
 const loadPart = async (part: number) => {
+  // 重置播放结束标记
+  hasEnded = false;
+  
   const el = document.getElementById('dplayer');
   if (el) {
     await loadResource(part);
@@ -119,28 +130,41 @@ const loadPart = async (part: number) => {
     options.container = el;
     player = new Wplayer(options);
     /* === 播放器销毁与重建实例化片段 end === */
-    hasReportedWatched = false; // 切换分集时重置“已看完”标记
-    clearWatched(); // 切换分集时清除本地已看完标记
+    hasReportedWatched = false;
+    clearWatched();
+    
     player.on('quality_start', (quality: PlayerQualityType) => {
       localStorage.setItem('default-video-quality', quality.name);
     })
     filterDanmaku({ disableLeave, disableType });
-    // 自动播放
+    
     if (player && typeof player.play === 'function') {
       player.play();
     }
+    
     // 监听播放完成事件，上报已看完并终止定时上报
-    player.on('ended', () => {
-      addHistoryAPI({ vid: props.videoInfo.vid, part: props.part, time: -1 }); // 上报已看完
-      hasReportedWatched = true; // 标记为已看完，定时上报将停止
-      setWatched(); // 本地写入已看完标记
+    player.on('ended', async () => {
+      hasEnded = true; // 标记为已结束
+      
+      try {
+        await addHistoryAPI({ vid: props.videoInfo.vid, part: props.part, time: -1 });
+      } catch (error) {
+        console.error('上报播放完成失败:', error);
+      }
+      
+      hasReportedWatched = true;
+      setWatched();
+      
+      if (onEndedCallback.value) {
+        onEndedCallback.value();
+      }
     });
+    
     // 监听进度条大跨度跳转
     let lastSeekTime = 0;
     player.on('seeked', () => {
       const current = player.video.currentTime;
-      // 只有未看完时才上报
-      if (Math.abs(current - lastSeekTime) > 10 && !isWatched()) {
+      if (Math.abs(current - lastSeekTime) > 10 && !isWatched() && !hasEnded) {
         addHistoryAPI({ vid: props.videoInfo.vid, part: props.part, time: current });
       }
       lastSeekTime = current;
@@ -150,12 +174,11 @@ const loadPart = async (part: number) => {
 
 // ===== 清晰度映射表与资源加载 =====
 const resourceNameMap = {
-  "640x360_500k_30": "360p",
-  "854x480_900k_30": "480p",
-  "1080x720_2000k_30": "720p",// 兼容之前的错误Add commentMore actions
-  "1280x720_2000k_30": "720p",
-  "1920x1080_3000k_30": "1080p",
-  "1920x1080_6000k_60": "1080p60",
+  "640x360_1000k_30": "360p",
+  "854x480_1500k_30": "480p",
+  "1280x720_3000k_30": "720p",
+  "1920x1080_6000k_30": "1080p",
+  "1920x1080_8000k_60": "1080p60",
 }
 
 const loadResource = async (part: number) => {
@@ -253,12 +276,24 @@ const isDisableType = (item: DanmakuType, disableType: Array<number>) => {
 
 // ===== 历史记录上报 =====
 const uploadHistory = async () => {
+  // 如果视频已播放结束，不再上报进度
+  if (hasEnded) {
+    console.log('视频已播放结束，跳过进度上报');
+    return;
+  }
   await addHistoryAPI({ vid: props.videoInfo.vid, part: props.part, time: player.video.currentTime });
 }
 
 // ===== 分集切换监听 =====
-watch(() => props.part, (val) => {
-  loadPart(val);
+watch(() => props.part, (newPart, oldPart) => {
+  if (newPart !== oldPart) {
+    // 切换前上报当前进度（如果未播放完）
+    if (!hasEnded && !isWatched()) {
+      uploadHistory();
+    }
+    // 加载新分集
+    loadPart(newPart);
+  }
 });
 
 onMounted(async () => {
@@ -288,7 +323,17 @@ onMounted(async () => {
   // 定时上报历史进度，若已看完则停止上报
   timer = window.setInterval(() => {
     if (!hasReportedWatched && !isWatched()) {
-      uploadHistory(); // 只要没看完就持续上报
+      // 检查视频是否正在播放，如果暂停或未播放则跳过上报
+      if (player && player.video) {
+        const isPlaying = !player.video.paused && !player.video.ended && player.video.currentTime > 0;
+        if (isPlaying) {
+          uploadHistory(); // 只有在播放时才上报
+        } else {
+          console.log('视频暂停或未播放，跳过定时上报');
+        }
+      } else {
+        console.log('播放器未初始化，跳过定时上报');
+      }
     }
   }, 10000)
 })
@@ -314,7 +359,8 @@ onBeforeUnmount(() => {
 defineExpose({
   setOnReady,
   uploadHistory,
-  setDanmaku
+  setDanmaku,
+  setOnEnded
 })
 </script>
 

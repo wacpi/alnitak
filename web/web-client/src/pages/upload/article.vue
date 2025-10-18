@@ -209,7 +209,7 @@ onBeforeMount(async () => {
 
 <style lang="scss" scoped>
 .article-upload {
-  background-color: #fff;
+  background-color: var(--bg-elev-1);
   width: 100%;
   min-height: 100%;
 
@@ -224,7 +224,7 @@ onBeforeMount(async () => {
     .title {
       margin: 0;
       font-size: 16px;
-      color: #212121;
+      color: var(--font-primary-1);
       font-weight: 600;
       line-height: 50px;
     }
@@ -244,7 +244,7 @@ onBeforeMount(async () => {
   .label {
     width: 80px;
     font-size: 14px;
-    color: #606266;
+    color: var(--font-primary-2);
     margin-left: 100px;
   }
 
@@ -262,7 +262,7 @@ onBeforeMount(async () => {
     width: 169px;
     height: 127px;
     border-radius: 3px;
-    background-color: #f0f2f5;
+    background-color: var(--fill-1, #f0f2f5);
   }
 }
 
@@ -272,8 +272,8 @@ onBeforeMount(async () => {
   box-sizing: border-box;
   padding: 0 10px;
   border-radius: 4px;
-  background-color: #f5f7fa;
-  box-shadow: 0 0 0 1px #e4e7ed inset;
+  background-color: var(--input-bg-color);
+  box-shadow: 0 0 0 1px var(--border-color) inset;
 
   .tag {
     margin-right: 6px;

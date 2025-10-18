@@ -91,7 +91,7 @@ const scrollLoad = () => {
       overflow: hidden;
       position: relative;
       cursor: pointer;
-      background-color: #f9f9f9;
+      background-color: var(--fill-1, #f9f9f9);
 
       .img {
         width: 100%;
@@ -101,7 +101,7 @@ const scrollLoad = () => {
 
     .title {
       font-size: 12px;
-      color: #222222;
+      color: var(--font-primary-1);
       display: block;
       line-height: 20px;
       height: 38px;
@@ -117,7 +117,7 @@ const scrollLoad = () => {
     .meta {
       display: flex;
       align-items: center;
-      color: #999;
+      color: var(--font-primary-3);
       white-space: nowrap;
       margin-top: 5px;
       height: 16px;
@@ -129,13 +129,13 @@ const scrollLoad = () => {
         align-items: center;
 
         .clicks {
-          color: #999;
+          color: var(--font-primary-3);
           font-size: 12px;
         }
       }
 
       .date {
-        color: #999;
+        color: var(--font-primary-3);
         font-size: 12px;
       }
     }

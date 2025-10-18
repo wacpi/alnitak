@@ -10,7 +10,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, onMounted, watch, onBeforeUnmount } from "vue";
 
 const emit = defineEmits(["tabChange"]);
 const props = defineProps<{
@@ -45,11 +45,24 @@ const resize = () => {
 }
 
 onMounted(() => {
-  if (props.tabs[0]) {
-    tabChange(props.tabs[0].key)
+  // 只设置当前标签页，不触发 tabChange 事件
+  if (props.current) {
+    currentTab.value = props.current;
+    resize();
+  } else if (props.tabs[0]) {
+    currentTab.value = props.tabs[0].key;
+    resize();
   }
   window.addEventListener("resize", resize);
 })
+
+// 监听 props.current 的变化，同步更新当前标签页
+watch(() => props.current, (newCurrent) => {
+  if (newCurrent && newCurrent !== currentTab.value) {
+    currentTab.value = newCurrent;
+    resize();
+  }
+}, { immediate: true });
 
 onBeforeUnmount(() => {
   window.removeEventListener("resize", resize);

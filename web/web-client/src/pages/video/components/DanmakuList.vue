@@ -73,7 +73,7 @@ defineExpose({
   .danmaku-header {
     height: 44px;
     border-radius: 6px;
-    background-color: #f1f2f3;
+    background-color: var(--hover-bg);
     padding: 0 10px 0 16px;
     display: flex;
     justify-content: space-between;
@@ -81,9 +81,7 @@ defineExpose({
     cursor: pointer;
     user-select: none;
 
-    &:hover {
-      background-color: #f6f7f8;
-    }
+    &:hover { background-color: var(--hover-bg); }
 
     .header-left {
       display: flex;
@@ -92,12 +90,12 @@ defineExpose({
       .title {
         font-size: 14px;
         font-weight: 500;
-        color: #18191c;
+        color: var(--font-primary-1);
       }
 
       .count {
         margin-left: 8px;
-        color: #9499a0;
+        color: var(--font-primary-3);
         font-size: 12px;
       }
     }
@@ -118,9 +116,9 @@ defineExpose({
     padding: 8px 16px;
     display: flex;
     align-items: center;
-    background-color: #fff;
+    background-color: var(--bg-elev-1);
     font-size: 12px;
-    color: #61666d;
+    color: var(--font-primary-2);
     font-weight: 500;
 
     .time {
@@ -144,7 +142,7 @@ defineExpose({
     font-size: 12px;
     align-items: center;
     height: 24px;
-    color: #61666d;
+    color: var(--font-primary-2);
     cursor: pointer;
 
     .time {
@@ -155,7 +153,7 @@ defineExpose({
     .text {
       flex: 1;
       margin: 0 12px;
-      color: #18191c;
+      color: var(--font-primary-1);
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -167,9 +165,7 @@ defineExpose({
       text-align: right;
     }
 
-    &:hover {
-      background-color: #f6f7f8;
-    }
+    &:hover { background-color: var(--hover-bg); }
   }
 }
 </style>

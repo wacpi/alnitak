@@ -51,7 +51,7 @@ onBeforeMount(() => {
   padding: 0 18px 0;
   height: 100%;
   box-sizing: border-box;
-  background-color: #fff;
+  background-color: var(--bg-elev-1);
 
   .announce-title {
     font-size: 18px;
@@ -77,7 +77,7 @@ onBeforeMount(() => {
 
   .announce-item {
     padding: 8px 0 16px;
-    border-bottom: 1px solid #e6e6e6;
+    border-bottom: 1px solid var(--border-color);
 
     .title {
       display: flex;
@@ -88,19 +88,19 @@ onBeforeMount(() => {
       .item-title {
         font-size: 15px;
         font-weight: 600;
-        color: #333;
+        color: var(--font-primary-1);
         width: calc(100% - 160px);
         margin: 0;
       }
 
       .item-time {
-        color: #999;
+        color: var(--font-primary-3);
         font-size: 12px;
       }
     }
 
     .announce-content {
-      color: #666;
+      color: var(--font-primary-2);
       font-size: 14px;
     }
 

@@ -170,7 +170,7 @@ onBeforeMount(() => {
   padding: 0 18px 0;
   height: 100%;
   box-sizing: border-box;
-  background-color: #fff;
+  background-color: var(--bg-elev-1);
 
   .header-box {
     display: flex;
@@ -206,7 +206,7 @@ onBeforeMount(() => {
       width: 100%;
       height: 80px;
       margin-bottom: 12px;
-      border-bottom: 1px solid #e6e6e6;
+      border-bottom: 1px solid var(--border-color);
       padding-bottom: 12px;
 
       .item-left {
@@ -226,13 +226,13 @@ onBeforeMount(() => {
 
         .title {
           font-size: 14px;
-          color: #222;
+          color: var(--font-primary-1);
           line-height: 18px;
           margin: 2px 0 8px;
 
           .user-name {
             cursor: pointer;
-            color: #767676;
+            color: var(--font-primary-3);
             margin-right: 3px;
 
             &:hover {
@@ -253,14 +253,14 @@ onBeforeMount(() => {
         }
 
         .content {
-          color: #222;
+          color: var(--font-primary-1);
           font-size: 14px;
           margin: 10px 0 6px;
         }
 
         .msg-time {
           font-size: 12px;
-          color: #999;
+          color: var(--font-primary-3);
         }
       }
 

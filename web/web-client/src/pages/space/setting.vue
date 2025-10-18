@@ -6,13 +6,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { ref } from 'vue';
 import BaseTabs from "@/components/base-tabs/index.vue";
 
 definePageMeta({
-  middleware: ['auth', (to) => {
-    if (to.name === 'space-setting') {
-      return navigateTo("/space/setting/info");
+  middleware: ['auth', (to, from) => {
+    // 只在直接访问 /space/setting 时重定向，避免循环重定向
+    if (to.name === 'space-setting' && from.name !== 'space-setting-info') {
+      return navigateTo({ name: 'space-setting-info' }, { replace: true });
     }
   }]
 })
@@ -23,8 +24,29 @@ const tabsOptions = [
   { key: 'space-setting-security', label: '账号安全' }
 ];
 
-const tabChange = (key: string) => {
-  navigateTo({ name: key });
+const router = useRouter();
+const isNavigating = ref(false);
+
+const tabChange = async (key: string) => {
+  // 防止重复点击导致的问题
+  if (isNavigating.value) {
+    return;
+  }
+
+  // 如果已经在目标页面，不需要跳转
+  if (route.name === key) {
+    return;
+  }
+
+  try {
+    isNavigating.value = true;
+    // 使用 router.push 而不是 navigateTo，避免页面刷新
+    await router.push({ name: key });
+  } catch (error) {
+    console.error('路由跳转失败:', error);
+  } finally {
+    isNavigating.value = false;
+  }
 }
 </script>
 

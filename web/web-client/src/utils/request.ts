@@ -8,7 +8,11 @@ import { storageData as storage } from "./storage-data";
 
 let requests: any[] = [];
 let isRefreshing = false;
-export const baseURL = config.domain ? `http${config.https ? 's' : ''}://${config.domain}` : '';
+// 开发环境仅在“浏览器端”通过前端代理，SSR/生产环境直连后端
+const isBrowser = typeof window !== 'undefined';
+export const baseURL = (process.dev && isBrowser)
+  ? ''
+  : (config.domain ? `http${config.https ? 's' : ''}://${config.domain}` : '');
 
 const service: AxiosInstance = axios.create({
   baseURL: `${baseURL}/api/`,

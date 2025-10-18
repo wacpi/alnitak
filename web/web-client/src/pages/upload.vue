@@ -86,7 +86,7 @@ const menuList = [
   height: 100%;
   position: fixed;
   overflow-y: scroll;
-  background: #f7f7f7;
+  background: var(--bg-page);
 
   .header-bar {
     position: fixed;
@@ -102,7 +102,7 @@ const menuList = [
       height: calc(100% - 80px);
       width: 220px;
       margin-left: 60px;
-      background-color: #fff;
+      background-color: var(--bg-elev-1);
 
       .menu-item {
         position: relative;
@@ -117,9 +117,7 @@ const menuList = [
         text-decoration: none;
         color: var(--font-primary-1);
 
-        &:hover {
-          background-color: #f3f3f5;
-        }
+        &:hover { background-color: var(--hover-bg); }
 
         .menu-icon {
           width: 18px;
@@ -137,11 +135,11 @@ const menuList = [
     .upload-router {
       width: calc(100% - 280px);
       height: 100%;
-      background: #fff;
+      background: var(--bg-elev-1);
       margin-left: 280px;
       box-sizing: border-box;
       padding: 0 60px 0 20px;
-      background: #fafafa;
+      background: var(--bg-page);
     }
   }
 }

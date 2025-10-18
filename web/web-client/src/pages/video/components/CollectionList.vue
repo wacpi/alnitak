@@ -183,10 +183,10 @@ onBeforeMount(async () => {
     width: 420px;
     height: 420px;
     padding: 6px 12px;
-    background-color: #fff;
+    background-color: var(--bg-elev-1);
     border-radius: 10px;
     animation: fadein .3s ease-in;
-    box-shadow: 16px 16px 50px -12px rgba(0, 0, 0, 0.8);
+    box-shadow: 16px 16px 50px -12px var(--shadow-weak);
   }
 }
 
@@ -196,14 +196,14 @@ onBeforeMount(async () => {
   height: 50px;
   line-height: 50px;
   font-size: 16px;
-  color: #18191C;
+  color: var(--font-primary-1);
   text-align: center;
 
   .close-icon {
     position: absolute;
     right: 20px;
     line-height: 50px;
-    color: #adadad;
+    color: var(--font-primary-3);
     width: 12px;
     height: 50px;
     cursor: pointer;
@@ -224,7 +224,7 @@ onBeforeMount(async () => {
       justify-content: space-between;
       padding-bottom: 24px;
       font-size: 14px;
-      color: #18191C;
+    color: var(--font-primary-1);
       cursor: pointer;
       list-style: none;
 
@@ -242,7 +242,7 @@ onBeforeMount(async () => {
         }
 
         .open {
-          color: #9499A0;
+          color: var(--font-primary-3);
         }
       }
 
@@ -266,11 +266,11 @@ onBeforeMount(async () => {
       height: 34px;
       line-height: 34px;
       padding: 0 12px;
-      border: 1px solid #9499A0;
+      border: 1px solid var(--border-color);
       border-radius: 4px;
       cursor: pointer;
       font-size: 12px;
-      color: #61666D;
+      color: var(--font-primary-2);
 
       .add-icon {
         margin-right: 3px;
@@ -297,10 +297,10 @@ onBeforeMount(async () => {
       margin: 0 10px;
     }
 
-    .create-btn {
+  .create-btn {
       border: none;
       cursor: pointer;
-      color: #fff;
+      color: var(--primary-text-color);
       font-size: 14px;
       width: 90px;
       height: 100%;
@@ -329,7 +329,7 @@ onBeforeMount(async () => {
     border: none;
     border-radius: 4px;
     background-color: var(--primary-color);
-    color: #fff;
+    color: var(--primary-text-color);
     cursor: pointer;
 
     &:hover {
@@ -339,8 +339,8 @@ onBeforeMount(async () => {
   }
 
   .submit-btn-disabled {
-    background-color: #E3E5E7;
-    color: #9499A0;
+    background-color: var(--hover-bg);
+    color: var(--font-primary-3);
 
     &:hover {
       background-color: #E3E5E7;

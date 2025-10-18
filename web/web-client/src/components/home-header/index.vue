@@ -30,6 +30,26 @@
               </div>
             </div>
             <div class="divider disabled-select"></div>
+            <!-- 主题入口（与通用 Header 保持一致，带二级菜单） -->
+            <div class="menu-item disabled-select theme">
+              <div class="link-title">
+                <theme-icon class="icon"></theme-icon>
+                <span>主题：</span>
+                <span class="theme-label">{{ themeLabel }}</span>
+              </div>
+              <right-icon class="right-icon"></right-icon>
+              <!-- 二级悬浮选项 -->
+              <div class="submenu">
+                <div class="submenu-item" @click.stop.prevent="setTheme('light')">
+                  <sun-icon class="icon" />
+                  <span>浅色</span>
+                </div>
+                <div class="submenu-item" @click.stop.prevent="setTheme('dark')">
+                  <moon-icon class="icon" />
+                  <span>深色</span>
+                </div>
+              </div>
+            </div>
             <nuxt-link class="menu-item disabled-select" to="/space">
               <div class="link-title">
                 <user-icon class="icon"></user-icon>
@@ -49,6 +69,29 @@
       </div>
       <div v-else class="avatar-box">
         <div class="login-btn" @click="showLogin = true">登录</div>
+        <div class="menu-container">
+          <div class="transition"></div>
+          <div class="header-menu">
+            <div class="menu-item disabled-select theme">
+              <div class="link-title">
+                <theme-icon class="icon"></theme-icon>
+                <span>主题：</span>
+                <span class="theme-label">{{ themeLabel }}</span>
+              </div>
+              <right-icon class="right-icon"></right-icon>
+              <div class="submenu">
+                <div class="submenu-item" @click.stop.prevent="setTheme('light')">
+                  <sun-icon class="icon" />
+                  <span>浅色</span>
+                </div>
+                <div class="submenu-item" @click.stop.prevent="setTheme('dark')">
+                  <moon-icon class="icon" />
+                  <span>深色</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
       <!-- 图形按钮 -->
       <nuxt-link class="icon-btn" to="/message/announce">
@@ -73,7 +116,7 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeMount, ref } from 'vue';
+import { onBeforeMount, onMounted, ref } from 'vue';
 import Cookies from "js-cookie";
 import { logoutAPI } from '@/api/auth';
 import { getUserInfoAPI } from '@/api/user';
@@ -81,7 +124,8 @@ import LoginDialog from "@/components/login-dialog/index.vue";
 import {
   HamburgerButton, Upload as UploadIcon, Search as SearchIcon,
   Message as MessageIcon, History as HistoryIcon,
-  User as UserIcon, Logout as LogoutIcon, Right as RightIcon
+  User as UserIcon, Logout as LogoutIcon, Right as RightIcon,
+  Theme as ThemeIcon, SunOne as SunIcon, Moon as MoonIcon
 } from '@icon-park/vue-next';
 
 const emits = defineEmits(["changeFold"]);
@@ -144,6 +188,35 @@ const loginSuccess = () => {
 onBeforeMount(() => {
   getUserInfo();
 })
+
+// 主题切换（与通用 Header 保持一致，使用相同存储键）
+type ThemeMode = 'light' | 'dark';
+const THEME_KEY = 'ui-theme-mode';
+const themeLabel = ref('浅色');
+
+const applyTheme = (mode: ThemeMode) => {
+  if (typeof window === 'undefined') return;
+  const root = document.documentElement;
+  root.setAttribute('data-theme', mode);
+  if (mode === 'dark') root.classList.add('dark');
+  else root.classList.remove('dark');
+};
+
+const setTheme = (mode: ThemeMode) => {
+  themeLabel.value = mode === 'light' ? '浅色' : '深色';
+  applyTheme(mode);
+  try { localStorage.setItem(THEME_KEY, mode); } catch {}
+};
+
+onMounted(() => {
+  let mode: ThemeMode = 'light';
+  try {
+    const saved = localStorage.getItem(THEME_KEY) as ThemeMode | null;
+    if (saved === 'dark' || saved === 'light') mode = saved;
+  } catch {}
+  themeLabel.value = mode === 'light' ? '浅色' : '深色';
+  applyTheme(mode);
+});
 </script>
 
 <style lang="scss" scoped>
@@ -154,7 +227,7 @@ onBeforeMount(() => {
   height: 60px;
   display: flex;
   align-items: center;
-  box-shadow: inset 0 -1px #f1f2f3;
+  box-shadow: inset 0 -1px var(--border-color);
 
   .sidebar-title {
     display: flex;
@@ -172,9 +245,7 @@ onBeforeMount(() => {
         height: 22px;
       }
 
-      &:hover {
-        background-color: rgba(0, 0, 0, .1);
-      }
+      &:hover { background-color: var(--hover-bg); }
     }
 
     .title {
@@ -194,7 +265,7 @@ onBeforeMount(() => {
       margin: 0 auto;
 
       .input {
-        border: 1px solid #e5e5e5;
+        border: 1px solid var(--border-color);
         outline: none;
         padding: 8px 30px 8px 11px;
         height: 36px;
@@ -307,10 +378,10 @@ onBeforeMount(() => {
     .header-menu {
       box-sizing: border-box;
       padding: 12px 12px 6px;
-      background-color: #fff;
+      background-color: var(--bg-elev-1);
       border-radius: 10px;
       animation: menu .3s ease-in;
-      box-shadow: 0 0 30px rgba(0, 0, 0, .1);
+      box-shadow: 0 0 30px var(--shadow-weak);
 
       .menu-info {
         display: flex;
@@ -341,7 +412,7 @@ onBeforeMount(() => {
         height: 1px;
         width: 100%;
         margin: 12px 0 6px;
-        background-color: #e5e5e5;
+        background-color: var(--border-color);
       }
 
       .menu-item {
@@ -372,10 +443,35 @@ onBeforeMount(() => {
           height: 18px;
         }
 
-        &:hover {
-          background-color: #e3e5e7;
-        }
+      &:hover { background-color: var(--hover-bg); }
+        &:hover { background-color: var(--hover-bg); }
       }
+
+      /* 主题二级菜单 */
+      .menu-item.theme { position: relative; }
+      .menu-item.theme:hover .submenu { display: block; }
+      .submenu {
+        display: none;
+        position: absolute;
+        top: 0;
+        right: -160px;
+        width: 150px;
+        background: var(--bg-elev-1);
+        border-radius: 8px;
+        box-shadow: 0 0 20px var(--shadow-weak);
+        padding: 6px;
+      }
+      .submenu-item {
+        display: flex;
+        align-items: center;
+        height: 32px;
+        border-radius: 4px;
+        padding: 0 8px;
+        color: var(--font-primary-2);
+        cursor: pointer;
+      }
+      .submenu-item .icon { width: 18px; height: 18px; margin-right: 8px; }
+      .submenu-item:hover { background: var(--hover-bg); }
     }
   }
 }

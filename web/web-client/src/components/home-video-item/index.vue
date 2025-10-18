@@ -54,7 +54,7 @@ const props = defineProps<{
       position: absolute;
       right: 12px;
       bottom: 10px;
-      color: #fff;
+      color: var(--font-primary-6);
       height: 20px;
       line-height: 20px;
       transition: opacity 0.3s;
@@ -71,7 +71,7 @@ const props = defineProps<{
 
     .title {
       height: 44px;
-      color: #18191c;
+      color: var(--font-primary-1);
       padding-right: 12px;
       font-size: 15px;
       line-height: 22px;
@@ -94,7 +94,7 @@ const props = defineProps<{
       display: flex;
       align-items: center;
       font-size: 13px;
-      color: #9499a0;
+      color: var(--font-primary-3);
       margin-top: 5px;
 
       .avatar {
@@ -108,7 +108,7 @@ const props = defineProps<{
         margin-left: 10px;
 
         .name {
-          color: #9499a0;
+          color: var(--font-primary-3);
 
           &:hover {
             color: var(--primary-color);

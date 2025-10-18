@@ -327,7 +327,7 @@ onBeforeUnmount(() => {
       align-items: center;
 
       .nav-title-text {
-        color: #18191c;
+        color: var(--font-primary-1);
         font-weight: 500;
       }
 
@@ -335,7 +335,7 @@ onBeforeUnmount(() => {
         font-size: 13px;
         margin: 0 36px 0 6px;
         font-weight: 400;
-        color: #9499a0;
+        color: var(--font-primary-3);
       }
     }
   }
@@ -392,15 +392,21 @@ onBeforeUnmount(() => {
 }
 
 .comment-container {
-  padding: 16px 0 0 80px;
+  position: relative;
+  min-height: 40px;
+  /* 40(头像) + 16(左右间距) = 72 */
+  padding: 16px 0 0 72px;
 
   .comment-avatar {
     display: flex;
     justify-content: center;
     position: absolute;
-    left: 0;
-    width: 80px;
+    top: 13px;//头像位移修复
+    left: 19px;
+    width: 40px;
+    height: 40px;
     cursor: pointer;
+    align-items: center;
   }
 
   .content-warp {
@@ -433,7 +439,7 @@ onBeforeUnmount(() => {
       font-weight: 400;
 
       .comment-content {
-        color: #18191c;
+        color: var(--font-primary-1);
         overflow: hidden;
         word-wrap: break-word;
         word-break: break-word;
@@ -444,14 +450,14 @@ onBeforeUnmount(() => {
       }
     }
 
-    .comment-info {
+      .comment-info {
       display: flex;
       align-items: center;
       position: relative;
       height: 24px;
       margin-top: 2px;
       font-size: 13px;
-      color: #9499a0;
+        color: var(--font-primary-3);
       font-weight: 400;
 
       .comment-time {
@@ -496,13 +502,13 @@ onBeforeUnmount(() => {
         line-height: 24px;
         font-weight: 500;
         margin-right: 5px;
-        color: #61666d;
+        color: var(--font-primary-2);
       }
     }
 
     .reply-content-container {
       .reply-content {
-        color: #18191c;
+        color: var(--font-primary-1);
         overflow: hidden;
         word-wrap: break-word;
         word-break: break-word;

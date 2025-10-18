@@ -145,7 +145,7 @@ onBeforeMount(() => {
   position: relative;
   width: 100%;
   height: 220px;
-  background-color: #9196a1;
+  background-color: var(--hover-bg);
 
   .cover {
     width: 100%;
@@ -188,7 +188,7 @@ onBeforeMount(() => {
 
       .sign {
         font-size: 12px;
-        color: #ccd0d7;
+        color: var(--font-primary-3);
         margin: 6px 0 0 0;
       }
     }
@@ -199,7 +199,7 @@ onBeforeMount(() => {
       margin-right: 20px;
       justify-content: space-between;
 
-      .btn {
+        .btn {
         width: 70px;
         box-sizing: border-box;
         padding: 0;
@@ -208,7 +208,7 @@ onBeforeMount(() => {
         border-radius: 6px;
         margin-top: 5px;
         text-align: center;
-        color: #fff;
+          color: var(--primary-text-color);
         font-size: 14px;
         cursor: pointer;
         border: 1px solid var(--primary-color);
@@ -225,7 +225,7 @@ onBeforeMount(() => {
 .user-menu {
   height: 46px;
   padding: 0 20px;
-  box-shadow: 0 0 0 1px #eee;
+  box-shadow: 0 0 0 1px var(--border-color);
 
   .menu-list {
     margin: 0;
@@ -236,7 +236,7 @@ onBeforeMount(() => {
     height: 100%;
 
     .menu-item {
-      color: #222;
+      color: var(--font-primary-1);
       box-sizing: border-box;
       height: 44px;
       line-height: 44px;
@@ -256,7 +256,7 @@ onBeforeMount(() => {
 .user-content {
   margin-top: 10px;
   min-height: 300px;
-  background-color: #fff;
+  background-color: var(--bg-elev-1);
 }
 
 @media (max-width: 1400px) {

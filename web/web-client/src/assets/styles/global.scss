@@ -1,3 +1,15 @@
+/*
+ * 全局主题变量（Global Theme Tokens）
+ * 规范：任何影响颜色/阴影/边框的新增变量，请在此文件内标注具体“组件归属”。
+ * 组件归属示例：HeaderBar 组件、CommentList 组件、VideoPlayer 组件等。
+ *
+ * HeaderBar 组件当前使用到的变量：
+ * - --bg-elev-1：顶栏背景、头像下拉背景
+ * - --shadow-weak：顶栏阴影、下拉阴影
+ * - --border-color：搜索输入边框、下拉分割线
+ * - --hover-bg：下拉菜单项悬浮背景
+ * - --font-primary-1/2/3：标题与文本颜色
+ */
 :root {
   --primary-color: #4668f3;
   --primary-hover-color: #4a7df0;
@@ -14,6 +26,52 @@
 
   --input-bg-color: #f2f3f5;
   --input-focus-bg-color: #fdfdfd;
+
+  /* 背景与边框（浅色） */
+  --bg-page: #f7f8fa;
+  --bg-elev-1: #ffffff; /* HeaderBar：顶栏背景、下拉背景 */
+  --border-color: #e5e5e5; /* HeaderBar：输入边框、下拉分割线 */
+  --hover-bg: #e3e5e7; /* HeaderBar：菜单项 hover 背景 */
+  --shadow-weak: rgba(0, 0, 0, 0.1); /* HeaderBar：阴影 */
+
+  /* 低强度填充背景（卡片内占位/分割用，较 bg-elev-1 更灰一点） */
+  --fill-1: #f1f2f3; /* Video PartList、CoverUploader 占位、列表分割填充 */
+
+  /* 提升层级的面板背景（编辑器工具栏等） */
+  --panel-bg: #ffffff;
+}
+
+.dark, [data-theme="dark"] {
+  /* 文本色 */
+  --font-primary-1: #e5e7eb;
+  --font-primary-2: #c2c8d1;
+  --font-primary-3: #9aa3af;
+  --font-primary-4: #8b93a0;
+  --font-primary-5: #6b7280;
+  --font-primary-6: #ffffff;
+
+  /* 输入背景 */
+  --input-bg-color: #1b1f24;
+  --input-focus-bg-color: #16181c;
+
+  /* 背景与边框（深色） */
+  --bg-page: #0f1113;
+  --bg-elev-1: #16181c; /* HeaderBar：顶栏背景、下拉背景 */
+  --border-color: #2a2f36; /* HeaderBar：输入边框、下拉分割线 */
+  --hover-bg: #1b1f24; /* HeaderBar：菜单项 hover 背景 */
+  --shadow-weak: rgba(0, 0, 0, 0.35); /* HeaderBar：阴影 */
+
+  /* 提升层级的面板背景（编辑器工具栏等，较 bg-elev-1 更亮一点） */
+  --panel-bg: #1d2126;
+
+  /* 低强度填充背景（深色），用于卡片内部轻微分层 */
+  --fill-1: #1a1e23; /* Video PartList、CoverUploader 占位、列表分割填充 */
+}
+
+/* UserSpace 组件（个人空间）封面深色适配 */
+[data-theme="dark"] .space-header .cover {
+  /* 深色下将自定义封面适度压暗，提升标题/签名可读性 */
+  filter: brightness(0.65);
 }
 
 .disabled-select {

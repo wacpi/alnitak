@@ -27,6 +27,27 @@
               </div>
             </div>
             <div class="divider disabled-select"></div>
+            <!-- 主题入口（基础占位，不含逻辑） -->
+            <div class="menu-item disabled-select theme">
+              <div class="link-title">
+                <theme-icon class="icon"></theme-icon>
+                <span>主题：</span>
+                <span class="theme-label">{{ themeLabel }}</span>
+              </div>
+              <right-icon class="right-icon"></right-icon>
+              <!-- 二级悬浮选项 -->
+              <div class="submenu">
+                <div class="submenu-item" @click.stop.prevent="setTheme('light')">
+                  <sun-icon class="icon" />
+                  <span>浅色</span>
+                </div>
+                <div class="submenu-item" @click.stop.prevent="setTheme('dark')">
+                  <moon-icon class="icon" />
+                  <span>深色</span>
+                </div>
+              </div>
+            </div>
+            
             <nuxt-link class="menu-item disabled-select" to="/space">
               <div class="link-title">
                 <user-icon class="icon"></user-icon>
@@ -46,6 +67,30 @@
       </div>
       <div v-else class="avatar-box">
         <nuxt-link class="login-btn" to="/login">登录</nuxt-link>
+        <div class="menu-container">
+          <div class="transition"></div>
+          <div class="header-menu">
+            <!-- 仅展示主题切换（未登录也可用） -->
+            <div class="menu-item disabled-select theme">
+              <div class="link-title">
+                <theme-icon class="icon"></theme-icon>
+                <span>主题：</span>
+                <span class="theme-label">{{ themeLabel }}</span>
+              </div>
+              <right-icon class="right-icon"></right-icon>
+              <div class="submenu">
+                <div class="submenu-item" @click.stop.prevent="setTheme('light')">
+                  <sun-icon class="icon" />
+                  <span>浅色</span>
+                </div>
+                <div class="submenu-item" @click.stop.prevent="setTheme('dark')">
+                  <moon-icon class="icon" />
+                  <span>深色</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
       <!-- 图形按钮 -->
       <nuxt-link class="icon-btn" to="/message/announce">
@@ -71,12 +116,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, onMounted } from 'vue';
 import {
   Search as SearchIcon, Message as MessageIcon,
   Upload as UploadIcon, History as HistoryIcon,
   User as UserIcon, Logout as LogoutIcon,
-  Right as RightIcon, FolderFocusOne as CollectIcon
+  Right as RightIcon, FolderFocusOne as CollectIcon,
+  Theme as ThemeIcon, SunOne as SunIcon, Moon as MoonIcon
 } from '@icon-park/vue-next';
 import Cookies from "js-cookie";
 import { logoutAPI } from '@/api/auth';
@@ -88,6 +134,39 @@ const route = useRoute();
 const isSearchPage = ref(route.name !== 'search-keywords');
 
 const keywords = ref('');
+
+type ThemeMode = 'light' | 'dark';
+const THEME_KEY = 'ui-theme-mode';
+const themeLabel = ref('浅色');
+
+const applyTheme = (mode: ThemeMode) => {
+  if (typeof window === 'undefined') return;
+  const root = document.documentElement;
+  // data-theme 提供给自定义样式变量使用
+  root.setAttribute('data-theme', mode);
+  // Element Plus 深色模式通过 html.dark 触发
+  if (mode === 'dark') {
+    root.classList.add('dark');
+  } else {
+    root.classList.remove('dark');
+  }
+};
+
+const setTheme = (mode: ThemeMode) => {
+  themeLabel.value = mode === 'light' ? '浅色' : '深色';
+  applyTheme(mode);
+  try { localStorage.setItem(THEME_KEY, mode); } catch {}
+};
+
+onMounted(() => {
+  let mode: ThemeMode = 'light';
+  try {
+    const saved = localStorage.getItem(THEME_KEY) as ThemeMode | null;
+    if (saved === 'dark' || saved === 'light') mode = saved;
+  } catch {}
+  themeLabel.value = mode === 'light' ? '浅色' : '深色';
+  applyTheme(mode);
+});
 const handelSearch = () => {
   if (!keywords.value) {
     ElMessage.warning("请先输入搜索内容");
@@ -138,10 +217,11 @@ onBeforeMount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background-color: #fff;
-  -webkit-box-shadow: 0px 0px 3px #c8c8c8;
-  -moz-box-shadow: 0px 0px 3px #c8c8c8;
-  box-shadow: 0px 0px 3px #c8c8c8;
+  /* HeaderBar 组件：顶栏容器背景与阴影（跟随主题） */
+  background-color: var(--bg-elev-1);
+  -webkit-box-shadow: 0px 0px 3px var(--shadow-weak);
+  -moz-box-shadow: 0px 0px 3px var(--shadow-weak);
+  box-shadow: 0px 0px 3px var(--shadow-weak);
 
   .header-left {
     display: flex;
@@ -167,7 +247,8 @@ onBeforeMount(() => {
       position: relative;
 
       .input {
-        border: 1px solid #e5e5e5;
+        /* HeaderBar 组件：搜索输入边框颜色（跟随主题） */
+        border: 1px solid var(--border-color);
         outline: none;
         padding: 8px 30px 8px 11px;
         height: 36px;
@@ -301,13 +382,14 @@ onBeforeMount(() => {
       height: 10px;
     }
 
-    .header-menu {
+      /* HeaderBar 组件：头像下拉菜单容器（背景/阴影跟随主题） */
+      .header-menu {
       box-sizing: border-box;
       padding: 12px 12px 6px;
-      background-color: #fff;
+        background-color: var(--bg-elev-1);
       border-radius: 10px;
       animation: menu .3s ease-in;
-      box-shadow: 0 0 30px rgba(0, 0, 0, .1);
+        box-shadow: 0 0 30px var(--shadow-weak);
 
       .menu-info {
         display: flex;
@@ -334,14 +416,15 @@ onBeforeMount(() => {
         }
       }
 
-      .divider {
+        /* HeaderBar 组件：下拉菜单分割线颜色（跟随主题） */
+        .divider {
         height: 1px;
         width: 100%;
         margin: 12px 0 6px;
-        background-color: #e5e5e5;
+          background-color: var(--border-color);
       }
 
-      .menu-item {
+        .menu-item {
         width: 100%;
         height: 36px;
         color: var(--font-primary-2);
@@ -369,10 +452,43 @@ onBeforeMount(() => {
           height: 18px;
         }
 
+        /* HeaderBar 组件：菜单项悬浮态背景（跟随主题） */
         &:hover {
-          background-color: #e3e5e7;
+          background-color: var(--hover-bg);
         }
       }
+
+        /* 主题二级菜单 */
+        .menu-item.theme {
+          position: relative;
+        }
+        .menu-item.theme:hover .submenu {
+          display: block;
+        }
+        /* HeaderBar 组件：二级菜单容器（背景/阴影跟随主题） */
+        .submenu {
+          display: none;
+          position: absolute;
+          top: 0;
+          right: -160px;
+          width: 150px;
+          background: var(--bg-elev-1);
+          border-radius: 8px;
+          box-shadow: 0 0 20px var(--shadow-weak);
+          padding: 6px;
+        }
+        .submenu-item {
+          display: flex;
+          align-items: center;
+          height: 32px;
+          border-radius: 4px;
+          padding: 0 8px;
+          color: var(--font-primary-2);
+          cursor: pointer;
+        }
+        .submenu-item .icon { width: 18px; height: 18px; margin-right: 8px; }
+        /* HeaderBar 组件：二级菜单项悬浮态（跟随主题） */
+        .submenu-item:hover { background: var(--hover-bg); }
     }
   }
 }

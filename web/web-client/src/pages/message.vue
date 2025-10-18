@@ -82,7 +82,7 @@ onBeforeMount(() => {
   height: 100%;
   position: fixed;
   overflow-y: scroll;
-  background: #f7f7f7;
+  background: var(--bg-page);
 
   .header-bar {
     position: fixed;
@@ -98,7 +98,7 @@ onBeforeMount(() => {
       height: calc(100% - 80px);
       width: 220px;
       margin-left: 60px;
-      background-color: #fff;
+      background-color: var(--bg-elev-1);
 
       .menu-item {
         position: relative;
@@ -114,7 +114,7 @@ onBeforeMount(() => {
         color: var(--font-primary-1);
 
         &:hover {
-          background-color: #f3f3f5;
+          background-color: var(--hover-bg);
         }
 
         .menu-icon {
@@ -136,7 +136,7 @@ onBeforeMount(() => {
       margin-left: 280px;
       box-sizing: border-box;
       padding: 0 60px 0 10px;
-      background: #fafafa;
+      background: var(--bg-page);
     }
   }
 }
