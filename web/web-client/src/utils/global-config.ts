@@ -1,6 +1,6 @@
 const title = "弹幕网站标题";
 const https = false;
-const domain = "10.0.0.177:9000";
+const domain = "127.0.0.1:9000";
 const mobile = "/mobile/";
 const icp = "icp备案信息";
 const security = "公网安备信息";

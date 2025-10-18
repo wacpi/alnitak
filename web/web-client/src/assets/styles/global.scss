@@ -29,19 +29,26 @@
 
   /* 背景与边框（浅色） */
   --bg-page: #f7f8fa;
-  --bg-elev-1: #ffffff; /* HeaderBar：顶栏背景、下拉背景 */
-  --border-color: #e5e5e5; /* HeaderBar：输入边框、下拉分割线 */
-  --hover-bg: #e3e5e7; /* HeaderBar：菜单项 hover 背景 */
-  --shadow-weak: rgba(0, 0, 0, 0.1); /* HeaderBar：阴影 */
+  --bg-page-1: #fff;
+  --bg-elev-1: #ffffff;
+  /* HeaderBar：顶栏背景、下拉背景 */
+  --border-color: #e5e5e5;
+  /* HeaderBar：输入边框、下拉分割线 */
+  --hover-bg: #e3e5e7;
+  /* HeaderBar：菜单项 hover 背景 */
+  --shadow-weak: rgba(0, 0, 0, 0.1);
+  /* HeaderBar：阴影 */
 
   /* 低强度填充背景（卡片内占位/分割用，较 bg-elev-1 更灰一点） */
-  --fill-1: #f1f2f3; /* Video PartList、CoverUploader 占位、列表分割填充 */
+  --fill-1: #f1f2f3;
+  /* Video PartList、CoverUploader 占位、列表分割填充 */
 
   /* 提升层级的面板背景（编辑器工具栏等） */
   --panel-bg: #ffffff;
 }
 
-.dark, [data-theme="dark"] {
+.dark,
+[data-theme="dark"] {
   /* 文本色 */
   --font-primary-1: #e5e7eb;
   --font-primary-2: #c2c8d1;
@@ -56,16 +63,22 @@
 
   /* 背景与边框（深色） */
   --bg-page: #0f1113;
-  --bg-elev-1: #16181c; /* HeaderBar：顶栏背景、下拉背景 */
-  --border-color: #2a2f36; /* HeaderBar：输入边框、下拉分割线 */
-  --hover-bg: #1b1f24; /* HeaderBar：菜单项 hover 背景 */
-  --shadow-weak: rgba(0, 0, 0, 0.35); /* HeaderBar：阴影 */
+  --bg-page-1: #0f1113;
+  --bg-elev-1: #16181c;
+  /* HeaderBar：顶栏背景、下拉背景 */
+  --border-color: #2a2f36;
+  /* HeaderBar：输入边框、下拉分割线 */
+  --hover-bg: #1b1f24;
+  /* HeaderBar：菜单项 hover 背景 */
+  --shadow-weak: rgba(0, 0, 0, 0.35);
+  /* HeaderBar：阴影 */
 
   /* 提升层级的面板背景（编辑器工具栏等，较 bg-elev-1 更亮一点） */
   --panel-bg: #1d2126;
 
   /* 低强度填充背景（深色），用于卡片内部轻微分层 */
-  --fill-1: #1a1e23; /* Video PartList、CoverUploader 占位、列表分割填充 */
+  --fill-1: #1a1e23;
+  /* Video PartList、CoverUploader 占位、列表分割填充 */
 }
 
 /* UserSpace 组件（个人空间）封面深色适配 */

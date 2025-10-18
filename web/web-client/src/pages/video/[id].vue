@@ -6,7 +6,8 @@
         <div class="left-column">
           <div class="video-player" ref="playerContainerRef">
             <client-only>
-              <video-player v-if="videoInfo && playerReady" ref="playerRef" :video-info="videoInfo" :part="currentPart" :progress="pendingProgress" :key="videoInfo?.vid + '-' + currentPart"></video-player>
+              <video-player v-if="videoInfo && playerReady" ref="playerRef" :video-info="videoInfo" :part="currentPart"
+                :progress="pendingProgress" :key="videoInfo?.vid + '-' + currentPart"></video-player>
             </client-only>
             <div v-if="!showPlayer" class="skeleton"></div>
           </div>
@@ -56,20 +57,12 @@
           </div>
           <!-- 视频分集 -->
           <div v-if="videoInfo && videoInfo.resources.length > 1">
-            <part-list 
-              ref="partListRef"
-              :resources="videoInfo.resources" 
-              :active="currentPart" 
-              @change="changePart"
-            ></part-list>
+            <part-list ref="partListRef" :resources="videoInfo.resources" :active="currentPart"
+              @change="changePart"></part-list>
           </div>
           <!-- 相关推荐 -->
-          <recommend-list 
-            ref="recommendListRef" 
-            v-if="videoInfo" 
-            :vid="videoInfo.vid"
-            :show-autoplay-control="!videoInfo || videoInfo.resources.length <= 1"
-          ></recommend-list>
+          <recommend-list ref="recommendListRef" v-if="videoInfo" :vid="videoInfo.vid"
+            :show-autoplay-control="!videoInfo || videoInfo.resources.length <= 1"></recommend-list>
         </div>
       </div>
     </div>
@@ -112,10 +105,10 @@ if ((data.value as any).code === statusCode.OK) {
 
 const playerContainerRef = ref<HTMLElement | null>(null)
 const danmakuListHeight = ref(300);
-const playerRef = ref<ComponentPublicInstance<{ 
-  seek: (time: number) => void; 
-  uploadHistory: () => void; 
-  setDanmaku: (data: any[]) => void; 
+const playerRef = ref<ComponentPublicInstance<{
+  seek: (time: number) => void;
+  uploadHistory: () => void;
+  setDanmaku: (data: any[]) => void;
   setOnReady: (cb: () => void) => void;
   setOnEnded: (cb: () => void) => void;
 }> | null>(null);
@@ -141,16 +134,16 @@ const partListRef = ref<InstanceType<typeof PartList> | null>(null);
 // 视频播放结束时的自动连播逻辑
 const onVideoEnded = () => {
   console.log('视频播放结束，检查自动连播状态');
-  
+
   // 判断是多分集还是单集
   const hasMultipleParts = videoInfo.value && videoInfo.value.resources.length > 1;
-  
+
   if (hasMultipleParts) {
     // 多分集：检查分集自动连播
     if (partListRef.value?.autonext) {
       const nextPart = partListRef.value.getNextPart?.();
       console.log('自动连播下一分集:', nextPart);
-      
+
       if (nextPart) {
         setTimeout(() => {
           changePart(nextPart);
@@ -172,7 +165,7 @@ const checkRecommendAutoplay = () => {
   if (recommendListRef.value?.autonext) {
     const nextVideo = recommendListRef.value.getNextVideo?.();
     console.log('自动连播下一个推荐视频:', nextVideo);
-    
+
     if (nextVideo) {
       setTimeout(() => {
         navigateTo(`/video/${nextVideo.vid}`);
@@ -194,7 +187,7 @@ const onPlayerReady = () => {
     playerRef.value.seek(pendingProgress.value);
     pendingProgress.value = null;
   }
-  
+
   // 新增：绑定播放结束事件
   if (playerRef.value && playerRef.value.setOnEnded) {
     playerRef.value.setOnEnded(onVideoEnded);
@@ -283,13 +276,8 @@ onMounted(async () => {
   if (videoInfo.value) {
     try {
       // 带 p 参数时也请求 getProgress?vid=xx&part=xx
-      let res;
-      if (!route.query.p) {
-        res = await getHistoryProgressAPI(videoInfo.value.vid);
-      } else {
-        res = await getHistoryProgressAPI(videoInfo.value.vid, Number(route.query.p));
-      }
-      if (res && res.data.code === 200 && res.data.data) {
+      const res = await getHistoryProgressAPI(videoInfo.value.vid, route.query.p ? Number(route.query.p) : undefined);
+      if (res.data.code === 200 && res.data.data) {
         const { part, progress } = res.data.data;
         if (part && part !== currentPart.value && videoInfo.value.resources[part - 1]) {
           currentPart.value = part;
@@ -345,7 +333,7 @@ const initWebSocket = () => {
 //数据接收
 const websocketOnmessage = (e: any) => {
   const res = JSON.parse(e.data);
-  
+
   // 收到后端 ping，立即回复 pong
   if (res.type === 'ping') {
     if (websocket && websocket.readyState === WebSocket.OPEN) {
@@ -353,7 +341,7 @@ const websocketOnmessage = (e: any) => {
     }
     return;
   }
-  
+
   // 处理在线人数
   if (typeof res.number === 'number') {
     onlineCount.value = res.number;
@@ -409,6 +397,7 @@ useHead({
 .header {
   position: fixed;
 }
+
 //视频主页面
 .video-main {
   padding-top: 80px;
@@ -416,6 +405,7 @@ useHead({
   min-width: 1200px;
   /* 保持最小宽度为 1200px */
 }
+
 //主内容区域
 .mian-content {
   display: flex;
@@ -425,14 +415,14 @@ useHead({
   margin: 0 auto;
   position: relative;
 }
+
 //左侧内容区域
 .left-column {
   flex: 1;
-  max-width: 1200px;   // 新增：最大宽度900px
- //width: 1200px;       // 设置固定宽度900px
- margin-top: 20px;    // 向下移动21像素
-  //margin: 0 auto;     // 新增：居中
-//视频播放器
+  max-width: 1200px; // 最大宽度900px
+  margin-top: 20px; // 向下移动21像素
+
+  //视频播放器
   .video-player {
     position: relative;
     margin: 0 auto;
@@ -440,7 +430,7 @@ useHead({
     /*16:9*/
     min-width: 680px;
     min-height: 382px;
-    background-color: var(--bg-elev-1);
+    // background-color: var(--bg-elev-1);
 
     .skeleton {
       width: 100%;
@@ -456,13 +446,14 @@ useHead({
       position: absolute;
       inset: 0;
       background: linear-gradient(90deg,
-        transparent 0%,
-        rgba(255,255,255,0.06) 50%,
-        transparent 100%);
+          transparent 0%,
+          rgba(255, 255, 255, 0.06) 50%,
+          transparent 100%);
       animation: skeleton-shimmer 1.2s infinite;
     }
   }
-//标题和版权信息
+
+  //标题和版权信息
   .video-title-box {
     width: 100%;
     height: 54px;
@@ -576,9 +567,15 @@ useHead({
 }
 
 @keyframes skeleton-shimmer {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(100%); }
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(100%);
+  }
 }
+
 //右侧内容区域
 .right-column {
   width: 340px;
@@ -590,6 +587,4 @@ useHead({
     margin-bottom: 18px;
   }
 }
-
-
 </style>

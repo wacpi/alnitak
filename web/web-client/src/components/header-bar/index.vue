@@ -375,7 +375,7 @@ onBeforeMount(() => {
     position: absolute;
     width: 230px;
     top: 40px;
-    left: -110px;
+    left: -95px;
     z-index: 999;
 
     .transition {

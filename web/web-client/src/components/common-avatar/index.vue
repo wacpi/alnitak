@@ -1,6 +1,10 @@
 <template>
   <div class="common-avatar" :style="{ width: `${size}px`, height: `${size}px` }">
-    <el-image v-if="url" class="img" :src="getResourceUrl(url)" lazy alt="头像"></el-image>
+    <el-image v-if="url" class="img" :src="getResourceUrl(url)" lazy alt="头像">
+      <template #error>
+        <div class="image-viewer-slot image-slot"></div>
+      </template>
+    </el-image>
   </div>
 </template>
 
