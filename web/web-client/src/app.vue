@@ -17,7 +17,7 @@ import zhCn from 'element-plus/dist/locale/zh-cn.mjs'
 body {
   margin: 0;
   padding: 0;
-  background-color: var(--bg-page-1);
+  background-color: var(--bg-page);
   color: var(--font-primary-1);
   font-family: PingFang SC, HarmonyOS Regular, Helvetica Neue, Microsoft YaHei, sans-serif;
 }

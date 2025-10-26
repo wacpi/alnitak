@@ -2,6 +2,9 @@
   <div class="space">
     <header-bar class="header-bar"></header-bar>
     <div class="space-container">
+      <div class="ban" v-if="userInfo?.status === 1">
+        <span>账号已封禁</span>
+      </div>
       <div class="space-header">
         <img class="cover" v-if="userInfo?.spaceCover" :src="getResourceUrl(userInfo.spaceCover)" alt="用户封面图" />
         <div class="header-inner">
@@ -141,11 +144,30 @@ onBeforeMount(() => {
   }
 }
 
+.ban {
+  height: 40px;
+  margin-bottom: 10px;
+  // background-color: var(--hover-bg);
+  background-color: rgba(208, 48, 80, 0.1);
+  border-radius: 4px;
+  text-align: center;
+
+
+  span {
+    // color: #9499A0;
+    color: #d03050;
+    font-size: 12px;
+    line-height: 40px;
+    font-weight: 500;
+  }
+}
+
 .space-header {
   position: relative;
   width: 100%;
   height: 220px;
   background-color: var(--hover-bg);
+  box-shadow: 0 0 0 1px var(--border-color);
 
   .cover {
     width: 100%;
@@ -185,7 +207,6 @@ onBeforeMount(() => {
         vertical-align: middle;
       }
 
-
       .sign {
         font-size: 12px;
         color: var(--font-primary-3);
@@ -199,7 +220,7 @@ onBeforeMount(() => {
       margin-right: 20px;
       justify-content: space-between;
 
-        .btn {
+      .btn {
         width: 70px;
         box-sizing: border-box;
         padding: 0;
@@ -208,7 +229,7 @@ onBeforeMount(() => {
         border-radius: 6px;
         margin-top: 5px;
         text-align: center;
-          color: var(--primary-text-color);
+        color: var(--primary-text-color);
         font-size: 14px;
         cursor: pointer;
         border: 1px solid var(--primary-color);

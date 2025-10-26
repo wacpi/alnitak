@@ -114,7 +114,7 @@ onBeforeUnmount(() => {
   .home-right {
     flex: 1;
     margin-top: 6px;
-  color: var(--font-primary-1);
+    color: var(--font-primary-1);
   }
 }
 

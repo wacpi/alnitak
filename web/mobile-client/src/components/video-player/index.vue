@@ -17,6 +17,7 @@ import DanmakuSend from "./components/DanmakuSend.vue";
 import { getResourceQualityApi, getVideoFileUrl } from "@/api/video";
 import { addHistoryAPI, getHistoryProgressAPI } from "@/api/history";
 import { statusCode } from "@/utils/status-code";
+import { useMessage } from "naive-ui";
 
 const props = withDefaults(defineProps<{
   videoInfo: VideoType;
@@ -24,6 +25,8 @@ const props = withDefaults(defineProps<{
 }>(), {
   part: 1
 })
+
+const message = useMessage();
 
 let player: any = null;
 const defaultQuality = ref('');
@@ -137,10 +140,14 @@ const sendDanmaku = (danmakuForm: DrawDanmakuType) => {
     return;
   }
 
-  player.danmaku.send(danmakuForm, (danmaku: AddDanmakuType) => {
+  player.danmaku.send(danmakuForm, async (danmaku: AddDanmakuType) => {
     danmaku.vid = props.videoInfo.vid;
     danmaku.part = props.part;
-    sendDanmakuAPI(danmaku);
+    console.log('111',111)
+    const res = await sendDanmakuAPI(danmaku);
+    if (res.data.code !== statusCode.OK) {
+      message.error(res.data.msg);
+    }
   })
 }
 

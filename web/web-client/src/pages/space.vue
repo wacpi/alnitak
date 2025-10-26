@@ -2,6 +2,9 @@
   <div class="space">
     <header-bar class="header-bar "></header-bar>
     <div class="space-container">
+      <div class="ban" v-if="userInfo?.status === 1">
+        <span>账号已封禁 解封时间: {{ formatDate(ban?.endTime || "") }} 封禁原因: {{ ban?.reason }}</span>
+      </div>
       <div class="space-header">
         <button class="upload-btn" @click="uploadCoverClick">上传封面图片</button>
         <img class="cover" v-if="userInfo?.spaceCover" :src="getResourceUrl(userInfo.spaceCover)" alt="用户封面图" />
@@ -125,6 +128,7 @@ const videoCountStore = useVideoCountStore();
 const { videoCount } = storeToRefs(videoCountStore);
 
 const userId = useCookie('user_id');
+const ban = ref<BanUserType>()
 const userInfo = ref<UserInfoType>();
 const { data } = await asyncGetUserBaseInfoAPI(userId.value!);
 if ((data.value as any).code === statusCode.OK) {
@@ -169,10 +173,13 @@ const changeUpload = async (status: string, data: any) => {
   cropperRef.value?.closeCropper();
 }
 
-const getUserInfo = async () => {
+const getUserInfo = async (banOnly: boolean = false) => {
   const res = await getUserInfoAPI();
   if (res.data.code === statusCode.OK) {
-    userInfo.value = res.data.data.userInfo;
+    if (!banOnly) {
+      userInfo.value = res.data.data.userInfo;
+    }
+    ban.value = res.data.data.ban;
   }
 }
 
@@ -182,6 +189,8 @@ onMounted(async () => {
     await getUserInfo();
 
     document.title = `${userInfo.value?.name}的个人中心`;
+  } else if (userInfo.value.status === 1) { // 有用户信息但是被封禁
+    await getUserInfo(true);
   }
 
   if (userInfo.value) {
@@ -230,6 +239,24 @@ const getUploadVideo = async () => {
   .space-container {
     width: 1300px;
     margin: 70px auto 0;
+  }
+}
+
+.ban {
+  height: 40px;
+  margin-bottom: 10px;
+  // background-color: var(--hover-bg);
+  background-color: rgba(208, 48, 80, 0.1);
+  border-radius: 4px;
+  text-align: center;
+
+
+  span {
+    // color: #9499A0;
+    color: #d03050;
+    font-size: 12px;
+    line-height: 40px;
+    font-weight: 500;
   }
 }
 
@@ -347,7 +374,9 @@ const getUploadVideo = async () => {
       text-decoration: none;
       color: var(--font-primary-1);
 
-      &:hover { background-color: var(--hover-bg); }
+      &:hover {
+        background-color: var(--hover-bg);
+      }
 
       .menu-icon {
         width: 18px;

@@ -260,7 +260,7 @@ const addComment = async () => {
     commentContent.value = "";
     return comment;
   } else {
-    message.error('发送失败');
+    message.error(res.data.msg);
     return 0;
   }
 }

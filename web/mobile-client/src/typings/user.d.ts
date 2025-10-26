@@ -9,4 +9,5 @@ interface UserInfoType {
   birthday?: string
   createdAt?: string
   role?: number
+  status?: number
 }

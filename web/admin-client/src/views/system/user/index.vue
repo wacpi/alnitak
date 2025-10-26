@@ -14,6 +14,7 @@
         <n-data-table class="table" remote :columns="columns" :data="tableData" :loading="loading"
           :pagination="pagination" flex-height />
         <table-action-modal v-model:visible="visible" :edit-data="editData" @refresh="getTableData" />
+        <table-action-drawer v-model:visible="visibleDrawer" :data="detailsData!"></table-action-drawer>
       </div>
     </n-card>
   </div>
@@ -21,7 +22,6 @@
 
 <script setup lang="ts">
 import { h, onBeforeMount, reactive, ref } from 'vue';
-import { formatTime } from '@/utils/format';
 import { Refresh } from "@vicons/ionicons5";
 import useLoading from '@/hooks/loading-hooks';
 import { statusCode } from '@/utils/status-code';
@@ -29,6 +29,7 @@ import { deleteUserAPI, editUserRoleAPI, getUserListAPI } from '@/api/user';
 import { getAllRoleListAPI } from '@/api/role';
 import CommonAvatar from "@/components/common-avatar/index.vue";
 import TableActionModal from './components/table-action-modal.vue';
+import TableActionDrawer from './components/table-action-drawer.vue';
 import type { DataTableColumns } from 'naive-ui';
 import { NCard, NIcon, NSelect, NButton, NDataTable, NPopconfirm, NSpace, useMessage } from 'naive-ui';
 
@@ -39,6 +40,11 @@ const message = useMessage();
 const visible = ref(false);
 const openModal = () => {
   visible.value = true;
+}
+
+const visibleDrawer = ref(false);
+const openDrawer = () => {
+  visibleDrawer.value = true;
 }
 
 const roleList = ref<Array<{ code: string, name: string }>>([])
@@ -54,6 +60,12 @@ const editData = ref<UserInfoType>();
 const editUser = (row: UserInfoType) => {
   editData.value = row;
   openModal();
+}
+
+const detailsData = ref<UserInfoType>();
+const showDetails = async (row: UserInfoType) => {
+  detailsData.value = row;
+  openDrawer();
 }
 
 // 删除用户
@@ -120,21 +132,25 @@ const columns: DataTableColumns<UserInfoType> = [
     }
   },
   {
-    key: 'createdAt',
-    title: '注册时间',
+    key: 'status',
+    title: '状态',
     align: 'center',
     render: row => {
-      return row.createdAt ? formatTime(row.createdAt) : ""
+      return row.status === 0 ? "正常" : "封禁"
     }
   },
   {
     key: 'actions',
     title: '操作',
     align: 'center',
-    width: 160,
+    width: 220,
     render: row => {
       return h(NSpace, { justify: 'center' }, {
         default: () => [
+          h(NButton, {
+            size: 'small',
+            onClick: () => showDetails(row)
+          }, { default: () => '详情' }),
           h(NButton, {
             size: 'small',
             onClick: () => editUser(row)
@@ -149,7 +165,6 @@ const columns: DataTableColumns<UserInfoType> = [
           })
         ]
       })
-
     }
   }
 ]

@@ -121,7 +121,7 @@ const setOnEnded = (callback: () => void) => {
 const loadPart = async (part: number) => {
   // 重置播放结束标记
   hasEnded = false;
-  
+
   const el = document.getElementById('dplayer');
   if (el) {
     await loadResource(part);
@@ -132,34 +132,34 @@ const loadPart = async (part: number) => {
     /* === 播放器销毁与重建实例化片段 end === */
     hasReportedWatched = false;
     clearWatched();
-    
+
     player.on('quality_start', (quality: PlayerQualityType) => {
       localStorage.setItem('default-video-quality', quality.name);
     })
     filterDanmaku({ disableLeave, disableType });
-    
+
     if (player && typeof player.play === 'function') {
       player.play();
     }
-    
+
     // 监听播放完成事件，上报已看完并终止定时上报
     player.on('ended', async () => {
       hasEnded = true; // 标记为已结束
-      
+
       try {
         await addHistoryAPI({ vid: props.videoInfo.vid, part: props.part, time: -1 });
       } catch (error) {
         console.error('上报播放完成失败:', error);
       }
-      
+
       hasReportedWatched = true;
       setWatched();
-      
+
       if (onEndedCallback.value) {
         onEndedCallback.value();
       }
     });
-    
+
     // 监听进度条大跨度跳转
     let lastSeekTime = 0;
     player.on('seeked', () => {
@@ -238,10 +238,13 @@ const sendDanmaku = (danmakuForm: DrawDanmakuType) => {
     return;
   }
 
-  player.danmaku.send(danmakuForm, (danmaku: AddDanmakuType) => {
+  player.danmaku.send(danmakuForm, async (danmaku: AddDanmakuType) => {
     danmaku.vid = props.videoInfo.vid;
     danmaku.part = props.part;
-    sendDanmakuAPI(danmaku);
+    const res = await sendDanmakuAPI(danmaku);
+    if (res.data.code !== statusCode.OK) {
+      ElMessage.error(res.data.msg);
+    }
   })
 }
 

@@ -5,6 +5,7 @@ interface UserInfoType {
   spaceCover?: string
   email?: string
   gender?: number
+  status?: number
   sign?: string
   birthday?: string
   createdAt?: string
@@ -30,4 +31,10 @@ interface ModifyPwdType {
   password: string;
   code: string; //验证码
   captchaId: string;
+}
+
+interface BanUserType {
+  uid: number;
+  endTime: string;
+  reason: string;
 }

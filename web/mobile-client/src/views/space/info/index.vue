@@ -36,6 +36,9 @@
         <div class="spread-btn" @click="handleSpread">{{ spread ? '收起' : '展开' }}</div>
       </div>
     </div>
+    <div class="ban" v-if="userInfo?.status === 1">
+      <span>账号已封禁</span>
+    </div>
     <video-list :videos="videoList"></video-list>
     <div v-show="loading" class="loading">
       <n-spin></n-spin>
@@ -239,6 +242,20 @@ onBeforeUnmount(() => {
       font-size: 3.46667vmin;
       color: var(--primary-color);
     }
+  }
+}
+
+.ban {
+  height: 40px;
+  margin-bottom: 10px;
+  background-color: #f6f7f8;
+
+  span {
+    color: #9499A0;
+    padding-left: 12px;
+    font-size: 14px;
+    line-height: 40px;
+    font-weight: 500;
   }
 }
 

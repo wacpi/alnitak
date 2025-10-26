@@ -21,7 +21,6 @@
 
 <script setup lang="ts">
 import { h, onBeforeMount, reactive, ref } from 'vue';
-import { formatTime } from '@/utils/format';
 import { Refresh } from "@vicons/ionicons5";
 import useLoading from '@/hooks/loading-hooks';
 import { statusCode } from '@/utils/status-code';
