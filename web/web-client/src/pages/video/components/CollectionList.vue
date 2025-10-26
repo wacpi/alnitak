@@ -28,7 +28,7 @@
             </div>
             <div v-else class="input-group">
               <!-- 使用mousedown触发而不是click触发，因为input的blur要早于click -->
-              <input class="input" v-model="collectionName" placeholder="最多可输入20个字" maxlength="20" @blur="changeAdd">
+              <input ref="addInput" class="input" v-model="collectionName" placeholder="最多可输入20个字" maxlength="20" @blur="changeAdd">
               <button class="create-btn" @mousedown="addCollection">新建</button>
             </div>
           </div>
