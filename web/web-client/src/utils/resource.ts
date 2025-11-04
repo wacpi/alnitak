@@ -6,7 +6,6 @@ export const getResourceUrl = (originalUrl: string) => {
     if (isUrl(originalUrl)) {
         return originalUrl;
     }
-
     // 开发环境：无论是SSR还是客户端，都返回相对路径，通过Vite代理访问（避免暴露后端地址）
     // 这样可以避免SSR时序列化完整URL到HTML中，导致刷新后暴露后端地址
     if (process.dev) {
