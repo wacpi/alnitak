@@ -99,7 +99,7 @@ const keyHighlight = (title: string) => {
 
     .title {
       height: 44px;
-      color: #18191c;
+      color: var(--font-primary-1);
       padding-right: 12px;
       font-size: 15px;
       line-height: 22px;

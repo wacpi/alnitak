@@ -41,6 +41,55 @@ const resourceNameMap: Record<string, string> = {
   "1920x1080_8000k_60": "1080p60",
 };
 
+/**
+ * 根据清晰度字符串动态生成显示名称
+ * 格式: "宽x高_码率k_帧率" 例如 "854x480_900k_30" 或 "1920x1080_6000k_60"
+ */
+const getQualityDisplayName = (qualityStr: string): string => {
+  // 如果映射表中存在，直接返回
+  if (resourceNameMap[qualityStr]) {
+    return resourceNameMap[qualityStr];
+  }
+
+  try {
+    // 解析格式: "宽x高_码率k_帧率"
+    const parts = qualityStr.split('_');
+    const resolution = parts[0]; // "854x480"
+    const fpsStr = parts[parts.length - 1]; // "30"、"60"、"24"、"50" 等任意帧率值
+    const fps = parseInt(fpsStr, 10); // 转换为数字
+
+    if (resolution.includes('x')) {
+      const [width, height] = resolution.split('x').map(Number);
+      
+      // 根据高度判断清晰度，并根据实际帧率动态生成后缀
+      // 标准帧率(30fps)不显示后缀，高帧率(>30)显示帧率后缀
+      const fpsSuffix = fps > 30 ? fps.toString() : '';
+      
+      if (height <= 360) {
+        return fpsSuffix ? `360p${fpsSuffix}` : '360p';
+      } else if (height <= 480) {
+        return fpsSuffix ? `480p${fpsSuffix}` : '480p';
+      } else if (height <= 720) {
+        return fpsSuffix ? `720p${fpsSuffix}` : '720p';
+      } else if (height <= 1080) {
+        return fpsSuffix ? `1080p${fpsSuffix}` : '1080p';
+      } else if (height <= 1440) {
+        return fpsSuffix ? `1440p${fpsSuffix}` : '1440p';
+      } else if (height <= 2160) {
+        return fpsSuffix ? `4K${fpsSuffix}` : '4K';
+      } else {
+        // 其他分辨率，显示实际分辨率或高度
+        return fpsSuffix ? `${height}p${fpsSuffix}` : `${height}p`;
+      }
+    }
+  } catch (error) {
+    console.warn('Failed to parse quality string:', qualityStr, error);
+  }
+
+  // 解析失败，返回原始字符串（去掉部分后缀使其更简洁）
+  return qualityStr.split('_')[0] || qualityStr;
+};
+
 const getQualities = (qualityList: string[], resourceId: number) => {
   console.log('[embed-player] getQualities', qualityList, resourceId);
   // 主站同款排序
@@ -53,7 +102,7 @@ const getQualities = (qualityList: string[], resourceId: number) => {
     return fpsB - fpsA;
   });
   const mapped = sorted.map((item) => ({
-    name: resourceNameMap[item] || item,
+    name: getQualityDisplayName(item),
     url: getVideoFileUrl(resourceId, item),
     type: 'hls',
   }));
