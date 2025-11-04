@@ -30,29 +30,29 @@ const searchParam = reactive<SearchVideoType>({
   keywords: "",
 })
 
-let noMore = false;
-let loading = false;
+const noMore = ref(false);
+const loading = ref(false);
 const videoList = ref<VideoType[]>([]);
 const searchVideo = async (init = false) => {
-  loading = true;
+  loading.value = true;
   if (init) {
     searchParam.page = 1;
     videoList.value = [];
-    noMore = false;
+    noMore.value = false;
   }
   const res = await searchVideoAPI(searchParam);
   if (res.data.code === statusCode.OK) {
     if (res.data.data.videos) {
       videoList.value.push(...res.data.data.videos);
       if (res.data.data.videos.length < 15) {
-        noMore = true;
+        noMore.value = true;
       }
     } else {
-      noMore = true;
+      noMore.value = true;
       ElMessage.error("获取失败");
     }
   }
-  loading = false;
+  loading.value = false;
 }
 
 //加载更多
@@ -61,7 +61,7 @@ const lazyLoading = () => {
   const clientHeight = document.documentElement.clientHeight;
   const scrollHeight = document.documentElement.scrollHeight;
   if (scrollTop + clientHeight >= (scrollHeight - 10)) {
-    if (!noMore && !loading) {
+    if (!noMore.value && !loading.value) {
       searchParam.page++;
       searchVideo();
     }

@@ -13,7 +13,7 @@
 // ===== 依赖与类型定义 =====
 import Hls from "hls.js";
 import Wplayer from 'wplayer-next';
-import { ref, onBeforeMount, watch, onMounted, onBeforeUnmount } from 'vue';
+import { ref, shallowRef, onBeforeMount, watch, onMounted, onBeforeUnmount } from 'vue';
 import { getDanmakuAPI, sendDanmakuAPI } from "@/api/danmaku";
 import DanmakuSend from "./components/DanmakuSend.vue";
 import { getResourceQualityApi, getVideoFileUrl } from "@/api/video";
@@ -33,7 +33,7 @@ const props = withDefaults(defineProps<{
 let player: any = null;
 const defaultQuality = ref('');
 const hls = shallowRef<Hls | null>(null);
-let hasEnded = false; // 新增：标记视频是否已播放结束
+const hasEnded = ref(false); // 标记视频是否已播放结束
 const danmakuSendRef = ref<InstanceType<typeof DanmakuSend> | null>(null);
 const options: PlayerOptionsType = {
   container: null,
@@ -120,7 +120,7 @@ const setOnEnded = (callback: () => void) => {
 
 const loadPart = async (part: number) => {
   // 重置播放结束标记
-  hasEnded = false;
+  hasEnded.value = false;
 
   const el = document.getElementById('dplayer');
   if (el) {
@@ -144,7 +144,7 @@ const loadPart = async (part: number) => {
 
     // 监听播放完成事件，上报已看完并终止定时上报
     player.on('ended', async () => {
-      hasEnded = true; // 标记为已结束
+      hasEnded.value = true; // 标记为已结束
 
       try {
         await addHistoryAPI({ vid: props.videoInfo.vid, part: props.part, time: -1 });
@@ -164,7 +164,7 @@ const loadPart = async (part: number) => {
     let lastSeekTime = 0;
     player.on('seeked', () => {
       const current = player.video.currentTime;
-      if (Math.abs(current - lastSeekTime) > 10 && !isWatched() && !hasEnded) {
+      if (Math.abs(current - lastSeekTime) > 10 && !isWatched() && !hasEnded.value) {
         addHistoryAPI({ vid: props.videoInfo.vid, part: props.part, time: current });
       }
       lastSeekTime = current;
@@ -264,9 +264,9 @@ const loadResource = async (part: number) => {
 }
 
 // ===== 弹幕相关方法 =====
-let originalDanmaku: DanmakuType[] = [];
+const originalDanmaku = shallowRef<DanmakuType[]>([]);
 const setDanmaku = (data: DanmakuType[]) => {
-  originalDanmaku = data;
+  originalDanmaku.value = data;
 }
 // 弹幕显示改变
 const changeShow = (val: boolean) => {
@@ -302,9 +302,9 @@ const filterDanmaku = (filter: FilterDanmakuType) => {
   localStorage.setItem('danmaku-disable-type', filter.disableType.toString());
   localStorage.setItem('danmaku-disable-leave', filter.disableLeave.toString());
 
-  const data = originalDanmaku.filter((item) => {
+  const data = originalDanmaku.value.filter((item: DanmakuType) => {
     return !isDisableType(item, filter.disableType) && (Math.floor(Math.random() * 10) + 1) > filter.disableLeave;
-  }).map((d) => { return { ...d } });
+  }).map((d: DanmakuType) => { return { ...d } });
 
   player.danmaku.update(data);
 
@@ -329,7 +329,7 @@ const isDisableType = (item: DanmakuType, disableType: Array<number>) => {
 // ===== 历史记录上报 =====
 const uploadHistory = async () => {
   // 如果视频已播放结束，不再上报进度
-  if (hasEnded) {
+  if (hasEnded.value) {
     console.log('视频已播放结束，跳过进度上报');
     return;
   }
@@ -340,7 +340,7 @@ const uploadHistory = async () => {
 watch(() => props.part, (newPart, oldPart) => {
   if (newPart !== oldPart) {
     // 切换前上报当前进度（如果未播放完）
-    if (!hasEnded && !isWatched()) {
+    if (!hasEnded.value && !isWatched()) {
       uploadHistory();
     }
     // 加载新分集
@@ -404,6 +404,16 @@ onBeforeUnmount(() => {
   reportOnLeave();
   if (typeof window !== 'undefined') {
     window.removeEventListener('beforeunload', reportOnLeave);
+  }
+  // 清理播放器实例
+  if (player) {
+    player.destroy();
+    player = null;
+  }
+  // 清理 HLS 实例
+  if (hls.value) {
+    hls.value.destroy();
+    hls.value = null;
   }
 });
 

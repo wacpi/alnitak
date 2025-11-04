@@ -33,10 +33,10 @@ const changeMenuFold = (val: boolean) => {
 }
 
 // 获取分区
-let page = 1;
-let pageSize = 10;
+const page = ref(1);
+const pageSize = 10;
 const videoList = ref<VideoType[]>([])
-const { data } = await asyncGetHotVideoAPI(page, pageSize);
+const { data } = await asyncGetHotVideoAPI(page.value, pageSize);
 if ((data.value as any).code === statusCode.OK) {
   videoList.value = (data.value as any).data.videos;
 }
@@ -45,7 +45,7 @@ const noMore = ref(false);
 const loading = ref(false);
 const getViedeoList = async () => {
   loading.value = true;
-  const res = await getHotVideoAPI(page, pageSize);
+  const res = await getHotVideoAPI(page.value, pageSize);
   if (res.data.code === statusCode.OK) {
     if (res.data.data.videos) {
       videoList.value = videoList.value.concat(res.data.data.videos);
@@ -64,7 +64,7 @@ const lazyLoading = (e: Event) => {
   const scrollHeight = document.documentElement.scrollHeight;
   if (scrollTop + clientHeight >= scrollHeight) {
     if (!noMore.value && !loading.value) {
-      page++;
+      page.value++;
       getViedeoList();
     }
   }

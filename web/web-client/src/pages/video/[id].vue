@@ -358,6 +358,13 @@ onBeforeUnmount(() => {
     websocket.close();
     websocket = null;
   }
+  // 清理组件引用,避免内存泄漏
+  playerRef.value = null;
+  recommendListRef.value = null;
+  partListRef.value = null;
+  danmakuListRef.value = null;
+  playerContainerRef.value = null;
+  descRef.value = undefined;
 })
 
 // 移除 needReportAfterSwitch 相关逻辑
