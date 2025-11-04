@@ -11,7 +11,12 @@
               </div>
             </div>
             <div class="item-center">
-              <nuxt-link class="item-title" :to="`/video/${item.vid}`">{{ item.title }}</nuxt-link>
+              <template v-if="item.status !== reviewCode.AUDIT_APPROVED">
+                <span class="item-title unlinked">{{ item.title }}</span>
+              </template>
+              <template v-else>
+                <nuxt-link class="item-title" :to="`/video/${item.vid}`">{{ item.title }}</nuxt-link>
+              </template>
               <span class="desc">简介：{{ item.desc }}</span>
               <div class="desc">
                 <span>创建于：{{ formatTime(item.createdAt) }}</span>
@@ -235,6 +240,15 @@ onBeforeMount(() => {
 
           &:hover {
             color: var(--primary-hover-color);
+          }
+
+          &.unlinked {
+            cursor: default;
+            color: var(--font-primary-3);
+            
+            &:hover {
+              color: var(--font-primary-3);
+            }
           }
         }
 
