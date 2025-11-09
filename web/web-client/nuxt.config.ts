@@ -59,6 +59,45 @@ export default defineNuxtConfig({
       __VUE_PROD_DEVTOOLS__: false,
       __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: false,
     },
+    optimizeDeps: {
+      include: [
+        // Element Plus 组件预构建
+        'element-plus/es/components/form/index',
+        'element-plus/es/components/input/index',
+        'element-plus/es/components/radio/index',
+        'element-plus/es/components/radio-button/index',
+        'element-plus/es/components/radio-group/index',
+        'element-plus/es/components/date-picker/index',
+        'element-plus/es/components/button/index',
+        'element-plus/es/components/pagination/index',
+        'element-plus/es/components/icon/index',
+        'element-plus/es/components/scrollbar/index',
+        'element-plus/es/components/dropdown/index',
+        'element-plus/es/components/dropdown-item/index',
+        'element-plus/es/components/dropdown-menu/index',
+        'element-plus/es/components/switch/index',
+        'element-plus/es/components/dialog/index',
+        'element-plus/es/components/progress/index',
+        'element-plus/es/components/upload/index',
+        'element-plus/es/components/tag/index',
+        'element-plus/es/components/tabs/index',
+        'element-plus/es/components/tab-pane/index',
+        'element-plus/es/components/popconfirm/index',
+        'element-plus/es/components/checkbox/index',
+        'element-plus/es/components/loading/index',
+        'element-plus/es/components/message/index',
+        'element-plus/es/components/message-box/index',
+        // 其他常用依赖
+        'moment',
+        'hls.js',
+        'wplayer-next',
+        'vue-picture-cropper',
+        'spark-md5',
+        '@icon-park/vue-next',
+        'axios',
+        'js-cookie'
+      ]
+    },
     server: {
       hmr: {
         overlay: false
