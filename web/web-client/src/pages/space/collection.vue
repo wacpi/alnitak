@@ -103,13 +103,13 @@ onBeforeMount(() => {
   .collection-item {
     display: flex;
     align-items: center;
-    border-bottom: 1px solid #eee;
+    border-bottom: 1px solid var(--border-color);
     padding: 20px 0;
 
     .cover {
       width: 160px;
       height: 100px;
-      background-color: #f1f2f3;
+      background-color: var(--fill-1);
       border-radius: 2px;
 
       img {
@@ -126,7 +126,7 @@ onBeforeMount(() => {
 
       .info-title {
         display: block;
-        color: #1f2225;
+        color: var(--font-primary-1);
         font-size: 16px;
         height: 20px;
         line-height: 20px;
