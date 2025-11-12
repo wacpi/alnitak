@@ -45,8 +45,10 @@ const videoListRef = ref<HTMLElement>();
 const getUploadVideo = async () => {
   const res = await getUploadVideoAPI(page.value, pageSize.value);
   if (res.data.code === statusCode.OK) {
-    total.value = res.data.data.total;
-    videoList.value = res.data.data.videos;
+    const approvedVideos = res.data.data.videos.filter((video: ManuscriptVideoType) => video.status === reviewCode.AUDIT_APPROVED);
+    videoList.value = approvedVideos;
+
+    total.value = approvedVideos.length;
     videoCountStore.setVideoCountState(total.value);
 
     showPagination.value = total.value > pageSize.value;
