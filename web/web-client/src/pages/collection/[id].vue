@@ -131,7 +131,7 @@ onBeforeMount(() => {
   bottom: 0;
   position: fixed;
   overflow-y: scroll;
-  background-color: #f5f6f7;
+  background-color: var(--background-color-secondary);
 }
 
 .collection-main {
@@ -145,7 +145,7 @@ onBeforeMount(() => {
   .collection-left {
     width: 100%;
     margin-right: 12px;
-    background-color: #fff;
+    background-color: var(--background-color-primary);
 
     .video-box {
       height: calc(100% - 40px);
@@ -164,7 +164,7 @@ onBeforeMount(() => {
         width: 100%;
         height: 80px;
         margin-bottom: 12px;
-        border-bottom: 1px solid #e6e6e6;
+        border-bottom: 1px solid var(--border-color);
         padding-bottom: 12px;
 
         .item-left {
@@ -176,7 +176,7 @@ onBeforeMount(() => {
             border-radius: 2px;
             width: 100%;
             height: 100%;
-            background-color: #f1f2f3;
+            background-color: var(--fill-1);
 
             img {
               width: 100%;
@@ -191,7 +191,7 @@ onBeforeMount(() => {
 
           .title {
             font-size: 14px;
-            color: #212121;
+            color: var(--font-primary-1);
             line-height: 18px;
             margin: 0 0 26px;
             cursor: pointer;
@@ -238,14 +238,14 @@ onBeforeMount(() => {
     height: 600px;
     min-width: 320px;
     padding: 10px;
-    background: #fff;
+    background: var(--background-color-primary);
 
     .cover {
       width: 100%;
       height: 180px;
       margin-bottom: 12px;
       border-radius: 2px;
-      background-color: #f1f2f3;
+      background-color: var(--fill-1);
 
       img {
         width: 100%;
@@ -259,7 +259,7 @@ onBeforeMount(() => {
         display: block;
         height: auto;
         font-size: 16px;
-        color: #212121;
+        color: var(--font-primary-1);
         line-height: 18px;
         margin-bottom: 20px;
       }

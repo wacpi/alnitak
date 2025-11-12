@@ -312,9 +312,16 @@ onMounted(async () => {
 })
 
 //websocket
-const onlineCount = ref(1);//在线人数
+const onlineCount = ref(0);//在线人数,初始值为0
 let SocketURL = "";
 let websocket: WebSocket | null = null;
+let reconnectTimer: number | null = null;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 10; // 增加重连次数
+let isManualClose = false; // 标记是否为手动关闭
+let heartbeatTimer: number | null = null; // 心跳定时器
+let lastMessageTime = 0; // 最后一次收到消息的时间
+
 //初始化weosocket
 const initWebSocket = () => {
   let clientId = localStorage.getItem("ws-client-id");
@@ -326,38 +333,151 @@ const initWebSocket = () => {
   const domain = globalConfig.domain || window.location.host;
   SocketURL = wsProtocol + domain + `/api/v1/online/video?vid=${videoId}&clientId=${clientId}`;
 
-  websocket = new WebSocket(SocketURL);
-  websocket.onmessage = websocketOnmessage;
+  // 清理旧的定时器
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
+
+  try {
+    console.log('[WebSocket] 开始连接:', SocketURL);
+    websocket = new WebSocket(SocketURL);
+
+    // 连接打开事件
+    websocket.onopen = () => {
+      console.log('[WebSocket] 连接成功');
+      reconnectAttempts = 0; // 重置重连次数
+      lastMessageTime = Date.now();
+
+      // 启动心跳检测
+      startHeartbeat();
+    };
+
+    // 消息接收事件
+    websocket.onmessage = websocketOnmessage;
+
+    // 错误处理
+    websocket.onerror = (error) => {
+      console.error('[WebSocket] 连接错误:', error);
+    };
+
+    // 连接关闭事件
+    websocket.onclose = (event) => {
+      console.log('[WebSocket] 连接关闭 - Code:', event.code, 'Reason:', event.reason, 'wasClean:', event.wasClean);
+      websocket = null;
+
+      // 停止心跳检测
+      if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+
+      // 只有在非手动关闭时才尝试重连
+      if (!isManualClose) {
+        // 1000是正常关闭,但我们仍然重连以保持在线状态
+        if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+          reconnectAttempts++;
+          const delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), 10000);
+          console.log(`[WebSocket] ${delay}ms 后尝试第 ${reconnectAttempts} 次重连...`);
+          reconnectTimer = window.setTimeout(() => {
+            initWebSocket();
+          }, delay);
+        } else {
+          console.error('[WebSocket] 已达到最大重连次数,停止重连');
+        }
+      }
+    };
+  } catch (error) {
+    console.error('[WebSocket] 创建连接失败:', error);
+  }
+}
+
+// 启动心跳检测
+const startHeartbeat = () => {
+  // 每15秒检查一次连接状态
+  heartbeatTimer = window.setInterval(() => {
+    if (websocket && websocket.readyState === WebSocket.OPEN) {
+      const now = Date.now();
+      // 如果超过45秒没收到消息,可能连接已断开,主动重连
+      if (now - lastMessageTime > 45000) {
+        console.warn('[WebSocket] 心跳超时,主动重连');
+        websocket.close();
+      }
+    } else if (websocket && websocket.readyState !== WebSocket.CONNECTING) {
+      // 连接已断开但未触发onclose,手动触发重连
+      console.warn('[WebSocket] 检测到连接异常,状态:', websocket.readyState);
+      websocket.close();
+    }
+  }, 15000);
+}
+
+// 监听页面可见性变化
+const handleVisibilityChange = () => {
+  if (document.hidden) {
+    console.log('[WebSocket] 页面进入后台');
+  } else {
+    console.log('[WebSocket] 页面回到前台');
+    // 页面回到前台时检查连接状态
+    if (!websocket || websocket.readyState !== WebSocket.OPEN) {
+      console.log('[WebSocket] 页面恢复时检测到连接断开,尝试重连');
+      reconnectAttempts = 0; // 重置重连次数
+      initWebSocket();
+    }
+  }
 }
 
 //数据接收
 const websocketOnmessage = (e: any) => {
-  const res = JSON.parse(e.data);
+  try {
+    // 更新最后一次收到消息的时间
+    lastMessageTime = Date.now();
 
-  // 收到后端 ping，立即回复 pong
-  if (res.type === 'ping') {
-    if (websocket && websocket.readyState === WebSocket.OPEN) {
-      websocket.send(JSON.stringify({ type: 'pong' }));
+    const res = JSON.parse(e.data);
+
+    // 处理在线人数
+    if (typeof res.number === 'number') {
+      onlineCount.value = res.number;
+      console.log('[WebSocket] 更新在线人数:', res.number);
     }
-    return;
-  }
-
-  // 处理在线人数
-  if (typeof res.number === 'number') {
-    onlineCount.value = res.number;
+  } catch (error) {
+    console.error('[WebSocket] 解析消息失败:', error);
   }
 }
 
 onBeforeMount(() => {
   initWebSocket();
+  // 监听页面可见性变化
+  document.addEventListener('visibilitychange', handleVisibilityChange);
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener("resize", handelResize);
+  document.removeEventListener('visibilitychange', handleVisibilityChange);
+
+  // 标记为手动关闭
+  isManualClose = true;
+
+  // 清理 WebSocket
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
   if (websocket) {
     websocket.close();
     websocket = null;
   }
+
+  // 清理组件引用,避免内存泄漏
+  playerRef.value = null;
+  recommendListRef.value = null;
+  partListRef.value = null;
+  danmakuListRef.value = null;
+  playerContainerRef.value = null;
+  descRef.value = undefined;
 })
 
 // 移除 needReportAfterSwitch 相关逻辑

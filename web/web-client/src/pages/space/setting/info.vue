@@ -13,9 +13,9 @@
       </el-form-item>
       <el-form-item label="性别:" label-for="gender-radio-group">
         <el-radio-group id="gender-radio-group" class="form-item" v-model="userInfo.gender">
-          <el-radio-button label="0">保密</el-radio-button>
-          <el-radio-button label="1">男</el-radio-button>
-          <el-radio-button label="2">女</el-radio-button>
+          <el-radio-button value="0">保密</el-radio-button>
+          <el-radio-button value="1">男</el-radio-button>
+          <el-radio-button value="2">女</el-radio-button>
         </el-radio-group>
       </el-form-item>
       <el-form-item label="生日:">

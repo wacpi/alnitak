@@ -1,4 +1,4 @@
-const title = "弹幕网站标题";
+const title = "anime弹幕";
 const https = false;
 const domain = "127.0.0.1:9000";
 const mobile = "/mobile/";

@@ -56,6 +56,10 @@ import { onBeforeMount, ref } from 'vue';
 import { getUploadVideoAPI, deleteVideoAPI } from '@/api/video';
 import { MoreOne as MoreIcon } from '@icon-park/vue-next';
 import { getVideoReviewRecordAPI } from '@/api/revies';
+import { reviewCode } from '@/utils/review-code';
+import { statusCode } from '@/utils/status-code';
+import { formatTime } from '@/utils/format';
+import { getResourceUrl } from '@/utils/resource';
 
 const page = ref(1);
 const total = ref(0);
@@ -122,9 +126,11 @@ const getStatusText = (status: number) => {
   switch (status) {
     // case reviewCode.CREATED_VIDEO:
     //   return "未提交"
-    case reviewCode.SUBMIT_REVIEW:
-    case reviewCode.WAITING_REVIEW:
-      return "审核中"
+    case reviewCode.VIDEO_PROCESSING: // 200 转码中
+    case reviewCode.SUBMIT_REVIEW: // 300 转码中
+      return "转码中"
+    case reviewCode.WAITING_REVIEW: // 500 转码完成，待审核
+      return "待审核"
     case reviewCode.REVIEW_FAILED:
       return "审核不通过"
     case reviewCode.PROCESSING_FAIL:
@@ -136,9 +142,11 @@ const getStatusTextColor = (status: number) => {
   switch (status) {
     case reviewCode.CREATED_VIDEO:
       return "#999"
-    case reviewCode.SUBMIT_REVIEW:
-    case reviewCode.WAITING_REVIEW:
-      return "var(--primary-hover-color)"
+    case reviewCode.VIDEO_PROCESSING: // 200 转码中
+    case reviewCode.SUBMIT_REVIEW: // 300 转码中
+      return "#ff9800" // 橙色表示处理中
+    case reviewCode.WAITING_REVIEW: // 500 待审核
+      return "var(--primary-hover-color)" // 主题色表示待审核
     case reviewCode.REVIEW_FAILED:
       return "#f56c6c"
     case reviewCode.PROCESSING_FAIL:
