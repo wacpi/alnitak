@@ -63,6 +63,11 @@ func GetResourceQuality(ctx *gin.Context) {
 
 // 获取视频资源支持的分辨率信息(后台管理)
 func GetResourceQualityManage(ctx *gin.Context) {
+	// 禁用缓存，确保审核时看到最新数据
+	ctx.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+	ctx.Header("Pragma", "no-cache")
+	ctx.Header("Expires", "0")
+
 	resourceId := utils.StringToUint(ctx.Query("resourceId"))
 
 	quality, err := service.GetResourceQualityManage(ctx, resourceId)

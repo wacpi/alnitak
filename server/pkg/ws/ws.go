@@ -64,12 +64,34 @@ func CreateWsConn(w http.ResponseWriter, r *http.Request) (*websocket.Conn, erro
 
 // 处理ws请求
 func WsHandler(conn *websocket.Conn, id, groupId interface{}, m chan interface{}, removeConn removeWsConn) {
+	// 设置pong处理器,当收到pong消息时更新最后活跃时间
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(time.Second * 60))
+		return nil
+	})
+
+	// 设置初始读取超时时间
+	conn.SetReadDeadline(time.Now().Add(time.Second * 60))
+
 	// 创建一个定时器用于服务端心跳
-	pingTicker := time.NewTicker(time.Second * 10)
+	pingTicker := time.NewTicker(time.Second * 30)
+	defer pingTicker.Stop()
+
+	// 启动一个goroutine来读取客户端消息(主要是为了处理pong响应)
+	go func() {
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				conn.Close()
+				return
+			}
+		}
+	}()
+
 	for {
 		select {
 		case content, ok := <-m:
 			// 从消息通道接收消息，然后推送给前端
+			conn.SetWriteDeadline(time.Now().Add(time.Second * 10))
 			if err := conn.WriteJSON(content); err != nil {
 				// 只有非正常断开才记录错误日志
 				if !isNormalCloseError(err) {
@@ -86,8 +108,8 @@ func WsHandler(conn *websocket.Conn, id, groupId interface{}, m chan interface{}
 				return
 			}
 		case <-pingTicker.C:
-			// 服务端心跳:每20秒ping一次客户端，查看其是否在线
-			conn.SetWriteDeadline(time.Now().Add(time.Second * 20))
+			// 服务端心跳:每30秒ping一次客户端，查看其是否在线
+			conn.SetWriteDeadline(time.Now().Add(time.Second * 10))
 			if err := conn.WriteMessage(websocket.PingMessage, []byte{}); err != nil {
 				// 只有非正常断开才记录错误日志
 				if !isNormalCloseError(err) {

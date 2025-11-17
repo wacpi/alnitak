@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:alnitak.interastral-peace.com)",
+      "Read(//e/server/alnitak/**)",
+      "Read(//e/server/**)",
+      "Read(//e/web/alnitak/**)",
+      "Bash(go build:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

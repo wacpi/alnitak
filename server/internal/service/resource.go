@@ -28,6 +28,10 @@ func ModifyResourceTitle(ctx *gin.Context, modifyTitleReq dto.ModifyResourceTitl
 		utils.ErrorLog("更新资源标题失败", "resource", err.Error())
 		return errors.New("更新资源标题失败")
 	}
+
+	// 清除视频信息缓存（因为视频信息中包含资源列表）
+	cache.DelVideoInfo(resource.Vid)
+
 	return nil
 }
 
@@ -51,9 +55,8 @@ func DeleteResource(ctx *gin.Context, id uint) error {
 		return errors.New("删除资源失败")
 	}
 
-	// 更新视频信息缓存
+	// 删除视频信息缓存（删除后让下次查询时重新从数据库加载）
 	cache.DelVideoInfo(resource.Vid)
-	VideoWriteCache(resource.Vid)
 
 	return nil
 }

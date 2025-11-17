@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 
+	"go.uber.org/zap"
 	"interastral-peace.com/alnitak/internal/cron"
 	"interastral-peace.com/alnitak/internal/global"
 	"interastral-peace.com/alnitak/internal/initialize"
@@ -18,6 +19,7 @@ import (
 
 func main() {
 	env := flag.String("env", "prod", "dev/prod")
+	clearCache := flag.Bool("clear-cache", false, "是否清空所有Redis缓存")
 	flag.Parse()
 
 	// 初始化配置文件
@@ -40,6 +42,13 @@ func main() {
 	global.VideoPartitionMap = service.GetPartitionMap(global.CONTENT_TYPE_VIDEO)
 	// 初始化缓存
 	global.Redis = redis.Init(global.Config.Redis)
+
+	// 如果指定了clear-cache参数，清空所有Redis缓存
+	if *clearCache {
+		global.Redis.FlushDB()
+		zap.L().Info("已清空所有Redis缓存", zap.String("module", "cache"))
+	}
+
 	initialize.InitCacheData()
 	// 初始化casbin
 	global.Casbin = casbin.InitCasbin()

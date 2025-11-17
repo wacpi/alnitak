@@ -59,6 +59,10 @@ func DelHotVideoId() {
 	global.Redis.Del(HOT_VIDEO_KEY)
 }
 
+func DelSingleHotVideoId(videoId uint) {
+	global.Redis.SRem(HOT_VIDEO_KEY, videoId)
+}
+
 func GetHotVideoId() []string {
 	return global.Redis.SMembers(HOT_VIDEO_KEY)
 }

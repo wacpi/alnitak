@@ -36,6 +36,11 @@ func GetVideoFile(ctx *gin.Context) {
 
 // 获取视频文件(后台管理)
 func GetVideoFileManage(ctx *gin.Context) {
+	// 禁用缓存，确保审核时看到最新视频文件
+	ctx.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+	ctx.Header("Pragma", "no-cache")
+	ctx.Header("Expires", "0")
+
 	quality := ctx.Query("quality")
 	resourceId := utils.StringToUint(ctx.Query("resourceId"))
 

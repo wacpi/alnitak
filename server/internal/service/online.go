@@ -96,7 +96,11 @@ func setMessageAllClient(groupId, content interface{}) {
 
 // 广播房间人数
 func BroadcastNumber(groupId interface{}) {
+	videoOnlineMux.Lock()
+	count := len(videoOnlineClient[groupId])
+	videoOnlineMux.Unlock()
+
 	setMessageAllClient(groupId, &vo.OnlineCountResp{
-		Number: len(videoOnlineClient[groupId]),
+		Number: count,
 	})
 }

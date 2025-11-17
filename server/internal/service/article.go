@@ -239,6 +239,9 @@ func DeleteArticleManage(ctx *gin.Context, id uint) error {
 		return errors.New("删除失败")
 	}
 
+	// 删除缓存中的文章ID信息
+	cache.DelArticleId(id)
+
 	return nil
 }
 

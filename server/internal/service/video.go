@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -46,6 +47,9 @@ func UploadVideoInfo(ctx *gin.Context, uploadVideoReq dto.UploadVideoReq) error 
 		utils.ErrorLog("修改视频失败", "video", err.Error())
 		return errors.New("修改失败")
 	}
+
+	// 上传视频信息后删除缓存，让下次查询时重新加载最新数据
+	cache.DelVideoInfo(uploadVideoReq.Vid)
 
 	return nil
 }
@@ -138,21 +142,35 @@ func EditVideoInfo(ctx *gin.Context, editVideoReq dto.EditVideoReq) error {
 		}
 	}
 
-	if err := global.Mysql.Model(&model.Video{}).Where("id = ?", editVideoReq.Vid).Updates(
-		map[string]interface{}{
-			"title":  editVideoReq.Title,
-			"cover":  editVideoReq.Cover,
-			"desc":   editVideoReq.Desc,
-			"tags":   editVideoReq.Tags,
-			"status": getVideoStatus(editVideoReq.Vid),
-		},
-	).Error; err != nil {
+	// 准备更新的字段
+	updateData := map[string]any{
+		"title": editVideoReq.Title,
+		"cover": editVideoReq.Cover,
+		"desc":  editVideoReq.Desc,
+		"tags":  editVideoReq.Tags,
+	}
+
+	// 重新计算视频状态（所有编辑都需要重新审核，防止替换违规内容）
+	newStatus := getVideoStatus(editVideoReq.Vid)
+
+	// 特殊处理：如果视频原本已审核通过，编辑后需要重新审核
+	// 设置为WAITING_REVIEW(500)而不是根据资源状态计算，避免因为有转码中资源而变成SUBMIT_REVIEW(300)
+	if oldVideo.Status == global.AUDIT_APPROVED {
+		newStatus = global.WAITING_REVIEW
+		utils.InfoLog(fmt.Sprintf("已发布视频被编辑，VideoID=%d，状态从AUDIT_APPROVED(0)改为WAITING_REVIEW(500)，需要重新审核", editVideoReq.Vid), "video")
+	}
+
+	updateData["status"] = newStatus
+
+	if err := global.Mysql.Model(&model.Video{}).Where("id = ?", editVideoReq.Vid).Updates(updateData).Error; err != nil {
 		utils.ErrorLog("修改视频失败", "video", err.Error())
 		return errors.New("修改失败")
 	}
 
-	// 删除缓存中的视频ID信息
-	cache.DelVideoId(oldVideo.PartitionId, oldVideo.ID)
+	// 如果是已发布视频被编辑，需要从分区列表中移除（因为状态变为待审核）
+	if oldVideo.Status == global.AUDIT_APPROVED {
+		cache.DelVideoId(oldVideo.PartitionId, oldVideo.ID)
+	}
 
 	// 删除视频信息缓存
 	cache.DelVideoInfo(editVideoReq.Vid)
@@ -173,10 +191,14 @@ func DeleteVideo(ctx *gin.Context, id uint) error {
 		return errors.New("删除视频失败")
 	}
 
-	// 删除缓存中的视频ID信息
+	// 清理所有相关缓存
+	// 1. 删除分区视频列表中的视频ID
 	cache.DelVideoId(video.PartitionId, video.ID)
 
-	// 删除视频信息缓存
+	// 2. 删除热门视频列表中的视频ID
+	cache.DelSingleHotVideoId(video.ID)
+
+	// 3. 删除视频信息缓存
 	cache.DelVideoInfo(id)
 
 	return nil
@@ -237,12 +259,25 @@ func GetVideoListManage(videoListReq dto.VideoListReq) (total int64, videos []vo
 
 // 删除视频(后台管理)
 func DeleteVideoManage(ctx *gin.Context, id uint) error {
+	// 先查询视频信息，用于删除缓存
+	var video model.Video
+	global.Mysql.Model(&model.Video{}).Where("id = ?", id).First(&video)
+
 	if err := global.Mysql.Where("id = ?", id).Delete(&model.Video{}).Error; err != nil {
 		utils.ErrorLog("删除视频失败", "video", err.Error())
 		return errors.New("删除视频失败")
 	}
 
-	// 删除视频信息缓存
+	// 清理所有相关缓存
+	if video.ID != 0 {
+		// 1. 删除分区视频列表中的视频ID
+		cache.DelVideoId(video.PartitionId, id)
+
+		// 2. 删除热门视频列表中的视频ID
+		cache.DelSingleHotVideoId(id)
+	}
+
+	// 3. 删除视频信息缓存
 	cache.DelVideoInfo(id)
 
 	return nil
@@ -381,10 +416,11 @@ func FindVideoById(id uint) (video model.Video, err error) {
 func GetVideoInfo(videoId uint) (video vo.VideoResp) {
 	video = cache.GetVideoInfo(videoId)
 	if video.ID == 0 {
+		// 缓存不存在，从数据库加载并写入缓存
 		video = VideoWriteCache(videoId)
-	} else {
-		video.Author = GetUserBaseInfo(video.Uid)
 	}
+	// 直接使用缓存中的完整数据，不再重新查询Resources和Author
+	// 如果需要最新数据，应该先调用cache.DelVideoInfo删除缓存，再调用本函数
 
 	return
 }
@@ -402,6 +438,10 @@ func VideoWriteCache(videoId uint) (video vo.VideoResp) {
 	video.Author = GetUserBaseInfo(video.Uid)
 	// 获取视频资源
 	video.Resources = GetVideoResourceByStatus(videoId, global.AUDIT_APPROVED)
+	// 确保Resources不是nil，如果是nil则初始化为空切片，避免JSON序列化为null
+	if video.Resources == nil {
+		video.Resources = []vo.ResourceResp{}
+	}
 
 	// 存到redis
 	cache.SetVideoInfo(video)
@@ -411,12 +451,24 @@ func VideoWriteCache(videoId uint) (video vo.VideoResp) {
 
 // 获取视频状态
 func getVideoStatus(videoId uint) int {
-	var count int64
-	global.Mysql.Model(&model.Resource{}).Where("vid = ? and status = ?", videoId, global.VIDEO_PROCESSING).Count(&count)
-	// 如果没有转码中的视频，则更新视频为待审核
-	if count == 0 {
-		return global.WAITING_REVIEW
+	var processingCount int64 // 转码中的资源数量
+	var failedCount int64      // 转码失败的资源数量
+	var totalCount int64       // 总资源数量
+
+	global.Mysql.Model(&model.Resource{}).Where("vid = ?", videoId).Count(&totalCount)
+	global.Mysql.Model(&model.Resource{}).Where("vid = ? and status = ?", videoId, global.VIDEO_PROCESSING).Count(&processingCount)
+	global.Mysql.Model(&model.Resource{}).Where("vid = ? and status = ?", videoId, global.PROCESSING_FAIL).Count(&failedCount)
+
+	// 如果所有资源都失败了，返回处理失败状态
+	if failedCount == totalCount && totalCount > 0 {
+		return global.PROCESSING_FAIL
 	}
 
-	return global.SUBMIT_REVIEW
+	// 如果还有转码中的资源，返回提交审核状态
+	if processingCount > 0 {
+		return global.SUBMIT_REVIEW
+	}
+
+	// 所有资源都完成了（至少有一个成功），返回待审核状态
+	return global.WAITING_REVIEW
 }
