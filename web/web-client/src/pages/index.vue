@@ -27,6 +27,10 @@ import HomeHeader from "@/components/home-header/index.vue";
 import HomeCarousel from '@/components/alnitak-carousel/index.vue';
 import { asyncGetHotVideoAPI, getHotVideoAPI } from "@/api/video";
 
+useHead({
+  title: globalConfig.title
+});
+
 const menuFold = ref(false);
 const changeMenuFold = (val: boolean) => {
   menuFold.value = val;
