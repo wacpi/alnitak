@@ -93,15 +93,22 @@ const initCarousel = () => {
     data.transform = "none";
     return;
   }
-  data.itemWidth = 100 / data.carouselCount;
-  data.containerWidth = 100 * data.carouselCount;
 
-  // 将最后一张图挪到最前面
-  data.playList = handelSequence(carouselList.value, data.carouselCount - 1);
+  // 每张图片的宽度
+  data.itemWidth = 100 / data.carouselCount;
+
+  // 创建无缝循环列表: 在原列表前后各添加一张
+  // 例如 [1,2] -> [2, 1, 2, 1]
+  const lastItem = carouselList.value[data.carouselCount - 1];
+  const firstItem = carouselList.value[0];
+  data.playList = [lastItem, ...carouselList.value, firstItem];
+
+  // 容器宽度 = (原数量 + 2) * itemWidth
+  data.containerWidth = (data.carouselCount + 2) * data.itemWidth;
 
   //设置初始状态
   nextTick(() => {
-    //设置初始偏移量
+    //设置初始偏移量,显示第一张真实图片(索引1)
     if (carouselContainer.value) {
       carouselContainer.value.style.transform = `translateX(-${data.itemWidth}%)`;
     }
@@ -113,47 +120,59 @@ const startInterval = () => {
   if (data.carouselCount <= 1) return; // 只有多于一张图才自动切换
   data.carouselTimer = window.setInterval(() => {
     changeCurrentImg(true);
-  }, 3000)
+  }, 5000)
 }
 
 //切换当前图片
 const changeCurrentImg = (isNext: boolean) => {
-  let translateX = 0;
   if (isNext) {
-    translateX = -data.itemWidth * 2;
+    // 下一张
     data.currentIndex = data.currentIndex + 1 >= data.carouselCount ? 0 : data.currentIndex + 1;
+
+    // 动画: 从索引1移动到索引2
+    data.transition = "transform 500ms cubic-bezier(0.4, 0, 0.2, 1) 0s";
+    data.transform = `translateX(-${data.itemWidth * 2}%)`;
+
+    setTimeout(() => {
+      // 瞬间跳回索引1,同时调整数组
+      data.transition = "none";
+      data.transform = `translateX(-${data.itemWidth}%)`;
+      const first = data.playList.shift()!;
+      data.playList.push(first);
+    }, 500);
   } else {
+    // 上一张
     data.currentIndex = data.currentIndex - 1 < 0 ? data.carouselCount - 1 : data.currentIndex - 1;
+
+    // 动画: 从索引1移动到索引0
+    data.transition = "transform 500ms cubic-bezier(0.4, 0, 0.2, 1) 0s";
+    data.transform = `translateX(0%)`;
+
+    setTimeout(() => {
+      // 瞬间跳回索引1,同时调整数组
+      data.transition = "none";
+      data.transform = `translateX(-${data.itemWidth}%)`;
+      const last = data.playList.pop()!;
+      data.playList.unshift(last);
+    }, 500);
   }
-  data.transition = "transform 300ms ease 0s";
-  data.transform = `translateX(${translateX}%)`;
-
-  setTimeout(() => {
-    data.transition = "transform 0ms ease 0s";
-    data.transform = `translateX(-${data.itemWidth}%)`;
-    if (isNext) {
-      //将第一张房到最后
-      data.playList = handelSequence(data.playList, 1);
-    } else {
-      //将最后一张放最前面
-      data.playList = handelSequence(data.playList, data.carouselCount - 1);
-    }
-
-  }, 300)
 }
 
 //根据index切换图片
 const changeCurrentIndex = (i: number) => {
   if (i === data.currentIndex) return;
   manualSwitching(() => {
-    if (i === 0) {
-      // 将最后一张图挪到最前面
-      data.playList = handelSequence(carouselList.value, data.carouselCount - 1);
-    } else {
-      // 当前图片前一张在最前面，其他图片依次排列
-      data.playList = handelSequence(carouselList.value, i - 1);
-    }
+    // 重新构建列表,使目标图片在索引1
+    const reordered = [
+      ...carouselList.value.slice(i),
+      ...carouselList.value.slice(0, i)
+    ];
+    data.playList = [reordered[reordered.length - 1], ...reordered, reordered[0]];
     data.currentIndex = i;
+
+    // 瞬间定位到索引1
+    data.transition = "none";
+    data.transform = `translateX(-${data.itemWidth}%)`;
   });
 }
 
@@ -170,7 +189,7 @@ const arrowClick = (() => {
 
     timer = window.setTimeout(() => {
       timer = null;
-    }, 300);
+    }, 500);
   }
 })();
 
@@ -214,10 +233,12 @@ onBeforeMount(async () => {
 
 .carousel-container {
   height: 100%;
+  display: flex;
+  flex-wrap: nowrap;
 }
 
 .carousel-item {
-  float: left;
+  flex-shrink: 0;
   position: relative;
   height: 100%;
 
@@ -231,6 +252,7 @@ onBeforeMount(async () => {
     width: 100%;
     height: 320px;
     object-fit: cover;
+    display: block;
   }
 
   .carousel-mask {
