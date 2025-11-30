@@ -29,10 +29,10 @@ type TranscodingTarget struct {
 var (
 	transcodingSemaphore chan struct{} // 信号量，控制同时转码的任务数
 	semaphoreOnce        sync.Once
-	gpuAvailable         = true        // GPU是否可用
-	gpuCheckMutex        sync.RWMutex  // 保护GPU状态的读写锁
-	gpuFailCount         = 0           // GPU连续失败次数
-	maxGpuFailCount      = 3           // 最大允许GPU失败次数
+	gpuAvailable         = true       // GPU是否可用
+	gpuCheckMutex        sync.RWMutex // 保护GPU状态的读写锁
+	gpuFailCount         = 0          // GPU连续失败次数
+	maxGpuFailCount      = 3          // 最大允许GPU失败次数
 )
 
 // 初始化转码并发控制（根据CPU核心数或配置）
@@ -128,25 +128,25 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 			defer func() { <-transcodingSemaphore }() // 释放资源锁
 
 			fileName := c.Resolution + "_" + c.BitrateRate + "_" + c.FpsName
-			tsFileName := transcodingInfo.OutputDir + fileName + ".ts"
 
-			utils.InfoLog(fmt.Sprintf("【开始转码】%s", fileName), "transcoding")
+			utils.InfoLog(fmt.Sprintf("【开始HLS一步式转码】%s", fileName), "transcoding")
 
 			// 智能选择转码方式：GPU优先，失败时自动降级到CPU
+			var m3u8File string
 			var err error
 			useGpu := global.Config.Transcoding.UseGpu && checkGPUAvailable()
 
 			if useGpu {
-				utils.InfoLog(fmt.Sprintf("【使用GPU转码】%s", fileName), "transcoding")
-				err = pressingVideoGPU(transcodingInfo.InputFile, tsFileName, c.Resolution, c.BitrateRate, c.FPS)
+				utils.InfoLog(fmt.Sprintf("【使用GPU一步式转码】%s", fileName), "transcoding")
+				m3u8File, err = pressingVideoGPU(transcodingInfo.InputFile, transcodingInfo.OutputDir, fileName, c.Resolution, c.BitrateRate, c.FPS)
 
 				if err != nil {
 					utils.ErrorLog(fmt.Sprintf("【GPU转码失败】%s，尝试切换到CPU", fileName), "transcoding", err.Error())
 					handleGPUFailure()
 
 					// GPU失败后尝试使用CPU
-					utils.InfoLog(fmt.Sprintf("【降级到CPU转码】%s", fileName), "transcoding")
-					err = pressingVideo(transcodingInfo.InputFile, tsFileName, c.Resolution, c.BitrateRate, c.FPS)
+					utils.InfoLog(fmt.Sprintf("【降级到CPU一步式转码】%s", fileName), "transcoding")
+					m3u8File, err = pressingVideo(transcodingInfo.InputFile, transcodingInfo.OutputDir, fileName, c.Resolution, c.BitrateRate, c.FPS)
 				} else {
 					// GPU转码成功，重置失败计数
 					gpuCheckMutex.Lock()
@@ -158,41 +158,20 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 				}
 			} else {
 				if global.Config.Transcoding.UseGpu && !checkGPUAvailable() {
-					utils.InfoLog(fmt.Sprintf("【使用CPU转码】%s（GPU已禁用）", fileName), "transcoding")
+					utils.InfoLog(fmt.Sprintf("【使用CPU一步式转码】%s（GPU已禁用）", fileName), "transcoding")
 				} else {
-					utils.InfoLog(fmt.Sprintf("【使用CPU转码】%s", fileName), "transcoding")
+					utils.InfoLog(fmt.Sprintf("【使用CPU一步式转码】%s", fileName), "transcoding")
 				}
-				err = pressingVideo(transcodingInfo.InputFile, tsFileName, c.Resolution, c.BitrateRate, c.FPS)
+				m3u8File, err = pressingVideo(transcodingInfo.InputFile, transcodingInfo.OutputDir, fileName, c.Resolution, c.BitrateRate, c.FPS)
 			}
 
 			if err != nil {
-				utils.ErrorLog(fmt.Sprintf("【转码失败】%s", fileName), "transcoding", err.Error())
+				utils.ErrorLog(fmt.Sprintf("【HLS转码失败】%s", fileName), "transcoding", err.Error())
 				wg.Done()
 				return
 			}
 
-			utils.InfoLog(fmt.Sprintf("【转码完成】%s，等待文件锁释放", fileName), "transcoding")
-
-			// Windows文件锁问题：等待文件句柄完全释放
-			time.Sleep(100 * time.Millisecond)
-
-			// 验证文件是否存在且可读
-			if !utils.IsFileExists(tsFileName) {
-				utils.ErrorLog("ts文件不存在", "transcoding", tsFileName)
-				wg.Done()
-				return
-			}
-
-			// 切片
-			utils.InfoLog(fmt.Sprintf("【开始切片】%s", fileName), "transcoding")
-			m3u8File, err := generateVideoSlices(tsFileName, transcodingInfo.OutputDir, fileName)
-			if err != nil {
-				utils.ErrorLog(fmt.Sprintf("【切片失败】%s", fileName), "transcoding", err.Error())
-				wg.Done()
-				return
-			}
-
-			utils.InfoLog(fmt.Sprintf("【切片完成】%s，保存到数据库", fileName), "transcoding")
+			utils.InfoLog(fmt.Sprintf("【HLS转码完成】%s，保存到数据库", fileName), "transcoding")
 
 			// 读取m3u8写入数据库
 			err = saveM3u8File(transcodingInfo, fileName, m3u8File)
@@ -204,8 +183,7 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 
 			utils.InfoLog(fmt.Sprintf("【成功】%s 转码完成", fileName), "transcoding")
 
-			//删除临时文件
-			os.Remove(tsFileName)
+			// 删除临时m3u8文件（TS分段文件保留在磁盘）
 			os.Remove(m3u8File)
 
 			mu.Lock()
@@ -366,47 +344,80 @@ func getVideoInfo(input string) (info global.VideoInfo, err error) {
 	return info, nil
 }
 
-// CPU压缩视频
-func pressingVideo(inputFile, outputFile, quality, rate, fps string) error {
+// CPU一步式HLS转码：直接从源文件输出HLS分段
+// 参数说明：
+// - inputFile: 源视频文件 (如 upload.mp4)
+// - outputDir: 输出目录
+// - fileName: 文件名前缀 (如 "1920x1080_6000k_60")
+// - quality: 分辨率 (如 "1920x1080")
+// - rate: 视频码率 (如 "6000k")
+// - fps: 帧率 (如 "60000/1001")
+// 返回：m3u8文件路径
+func pressingVideo(inputFile, outputDir, fileName, quality, rate, fps string) (string, error) {
+	outputM3U8 := outputDir + fileName + ".m3u8"
+	outputTs := outputDir + fileName + "_%05d.ts"
+
 	command := []string{
-		"-i", inputFile,
-		"-crf", "20",
-		"-s", quality,
-		"-b:v", rate,
-		"-c:v", "libx264",
-		"-r", fps,
-		"-vsync", "cfr", // 确保恒定帧率，避免帧数不匹配
-		"-c:a", "copy",
-		//"-b:a", "320k", // 高质量音频码率 (原来默认128k,现在320k)
-		"-f", "mpegts",
-		"-copyts", // 保留原始时间戳
-		outputFile,
+		"-i", inputFile, // 输入源文件
+		"-crf", "20", // 恒定质量因子 (0-51，越小质量越高)
+		"-s", quality, // 输出分辨率
+		"-b:v", rate, // 视频码率
+		"-c:v", "libx264", // H.264编码器
+		"-r", fps, // 输出帧率
+		"-vsync", "cfr", // 恒定帧率模式
+		"-c:a", "copy", // 音频直接拷贝
+		"-muxdelay", "0", // Muxer延迟为0，避免时间戳偏移
+		"-muxpreload", "0", // 预加载为0
+		"-f", "hls", // 输出HLS格式（合并转码+切片）
+		"-hls_time", "10", // 每个切片约10秒
+		"-hls_list_size", "0", // m3u8包含所有切片（VOD模式）
+		"-hls_segment_type", "mpegts", // TS格式分段
+		"-hls_segment_filename", outputTs, // TS分段文件名模板
+		"-hls_flags", "independent_segments", // 每个切片独立解码
+		outputM3U8, // m3u8索引文件路径
 	}
 
 	_, err := utils.RunCmd(exec.Command("ffmpeg", command...))
 	if err != nil {
-		utils.ErrorLog("压缩视频失败", "transcoding", err.Error())
-		return err
+		utils.ErrorLog("HLS转码失败", "transcoding", err.Error())
+		return outputM3U8, err
 	}
 
-	return nil
+	return outputM3U8, nil
 }
 
-// GPU压缩视频
-func pressingVideoGPU(inputFile, outputFile, quality, rate, fps string) error {
+// GPU一步式HLS转码：直接从源文件输出HLS分段（使用NVIDIA硬件加速）
+// 参数说明：
+// - inputFile: 源视频文件 (如 upload.mp4)
+// - outputDir: 输出目录
+// - fileName: 文件名前缀 (如 "1920x1080_6000k_60")
+// - quality: 分辨率 (如 "1920x1080")
+// - rate: 视频码率 (如 "6000k")
+// - fps: 帧率 (如 "60000/1001")
+// 返回：m3u8文件路径
+func pressingVideoGPU(inputFile, outputDir, fileName, quality, rate, fps string) (string, error) {
+	outputM3U8 := outputDir + fileName + ".m3u8"
+	outputTs := outputDir + fileName + "_%05d.ts"
+
 	command := []string{
-		"-i", inputFile,
-		"-crf", "20",
-		"-s", quality,
-		"-preset", "p3",
-		"-b:v", rate,
-		"-c:v", "h264_nvenc",
-		"-r", fps,
-		"-vsync", "cfr", // 确保恒定帧率，避免帧数不匹配
-		"-c:a", "copy",  // ✅ GPU 版本同样直接拷贝音频流
-		"-f", "mpegts",
-		"-copyts", // 保留原始时间戳
-		outputFile,
+		"-i", inputFile, // 输入源文件
+		"-crf", "20", // 恒定质量因子
+		"-s", quality, // 输出分辨率
+		"-preset", "p3", // NVENC预设 (p1-p7，p3平衡质量和速度)
+		"-b:v", rate, // 视频码率
+		"-c:v", "h264_nvenc", // NVIDIA H.264硬件编码器
+		"-r", fps, // 输出帧率
+		"-vsync", "cfr", // 恒定帧率模式
+		"-c:a", "copy", // 音频直接拷贝
+		"-muxdelay", "0", // Muxer延迟为0，避免时间戳偏移
+		"-muxpreload", "0", // 预加载为0
+		"-f", "hls", // 输出HLS格式（合并转码+切片）
+		"-hls_time", "10", // 每个切片约10秒
+		"-hls_list_size", "0", // m3u8包含所有切片（VOD模式）
+		"-hls_segment_type", "mpegts", // TS格式分段
+		"-hls_segment_filename", outputTs, // TS分段文件名模板
+		"-hls_flags", "independent_segments", // 每个切片独立解码
+		outputM3U8, // m3u8索引文件路径
 	}
 
 	out, err := utils.RunCmd(exec.Command("ffmpeg", command...))
@@ -421,35 +432,10 @@ func pressingVideoGPU(inputFile, outputFile, quality, rate, fps string) error {
 			strings.Contains(outStr, "h264_nvenc") ||
 			strings.Contains(errMsg, "nvenc") {
 			utils.ErrorLog("GPU不可用或驱动异常", "transcoding", outStr)
-			return fmt.Errorf("GPU error: %s", outStr)
+			return outputM3U8, fmt.Errorf("GPU error: %s", outStr)
 		}
 
-		utils.ErrorLog("GPU压缩视频失败", "transcoding", errMsg)
-		return err
-	}
-
-	return nil
-}
-
-func generateVideoSlices(inputFile, outputDir, outputName string) (string, error) {
-	outputM3U8 := outputDir + outputName + ".m3u8"
-	outputTs := outputDir + outputName + "_%05d.ts"
-
-	command := []string{
-		"-i", inputFile,
-		"-c", "copy",
-		"-map", "0",
-		"-f", "segment",
-		"-segment_list", outputM3U8,
-		"-segment_time", "10",
-		"-segment_list_flags", "+live", // 确保最后一个片段被正确写入
-		"-break_non_keyframes", "1",    // 允许在非关键帧处切割，避免丢失尾部内容
-		outputTs,
-	}
-
-	_, err := utils.RunCmd(exec.Command("ffmpeg", command...))
-	if err != nil {
-		utils.ErrorLog("生成视频切片失败", "transcoding", err.Error())
+		utils.ErrorLog("GPU HLS转码失败", "transcoding", errMsg)
 		return outputM3U8, err
 	}
 
