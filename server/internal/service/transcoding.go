@@ -344,37 +344,31 @@ func getVideoInfo(input string) (info global.VideoInfo, err error) {
 	return info, nil
 }
 
-// CPU一步式HLS转码：直接从源文件输出HLS分段
-// 参数说明：
-// - inputFile: 源视频文件 (如 upload.mp4)
-// - outputDir: 输出目录
-// - fileName: 文件名前缀 (如 "1920x1080_6000k_60")
-// - quality: 分辨率 (如 "1920x1080")
-// - rate: 视频码率 (如 "6000k")
-// - fps: 帧率 (如 "60000/1001")
-// 返回：m3u8文件路径
+// CPU一步式HLS转码：边转码边切片
 func pressingVideo(inputFile, outputDir, fileName, quality, rate, fps string) (string, error) {
 	outputM3U8 := outputDir + fileName + ".m3u8"
 	outputTs := outputDir + fileName + "_%05d.ts"
 
 	command := []string{
-		"-i", inputFile, // 输入源文件
-		"-crf", "20", // 恒定质量因子 (0-51，越小质量越高)
-		"-s", quality, // 输出分辨率
-		"-b:v", rate, // 视频码率
-		"-c:v", "libx264", // H.264编码器
-		"-r", fps, // 输出帧率
-		"-vsync", "cfr", // 恒定帧率模式
-		"-c:a", "copy", // 音频直接拷贝
-		"-muxdelay", "0", // Muxer延迟为0，避免时间戳偏移
-		"-muxpreload", "0", // 预加载为0
-		"-f", "hls", // 输出HLS格式（合并转码+切片）
-		"-hls_time", "10", // 每个切片约10秒
+		"-i", inputFile,
+		"-crf", "20",
+		"-s", quality,
+		"-b:v", rate,
+		"-c:v", "libx264",
+		"-r", fps,
+		"-vsync", "cfr", // 确保恒定帧率，避免帧数不匹配
+		"-c:a", "copy",
+		//"-b:a", "320k", // 高质量音频码率 (原来默认128k,现在320k)
+		"-copyts",   // 保留原始时间戳
+		"-f", "hls", // 使用HLS muxer（边转码边切片）
+		"-hls_time", "10", // 每个切片10秒
 		"-hls_list_size", "0", // m3u8包含所有切片（VOD模式）
 		"-hls_segment_type", "mpegts", // TS格式分段
 		"-hls_segment_filename", outputTs, // TS分段文件名模板
-		"-hls_flags", "independent_segments", // 每个切片独立解码
-		outputM3U8, // m3u8索引文件路径
+		"-hls_playlist_type", "vod", // VOD类型
+		"-hls_flags", "append_list", // 确保最后片段被写入（对应+live）
+		"-break_non_keyframes", "1", // 允许在非关键帧处切割
+		outputM3U8,
 	}
 
 	_, err := utils.RunCmd(exec.Command("ffmpeg", command...))
@@ -386,38 +380,31 @@ func pressingVideo(inputFile, outputDir, fileName, quality, rate, fps string) (s
 	return outputM3U8, nil
 }
 
-// GPU一步式HLS转码：直接从源文件输出HLS分段（使用NVIDIA硬件加速）
-// 参数说明：
-// - inputFile: 源视频文件 (如 upload.mp4)
-// - outputDir: 输出目录
-// - fileName: 文件名前缀 (如 "1920x1080_6000k_60")
-// - quality: 分辨率 (如 "1920x1080")
-// - rate: 视频码率 (如 "6000k")
-// - fps: 帧率 (如 "60000/1001")
-// 返回：m3u8文件路径
+// GPU一步式HLS转码：边转码边切片（使用NVIDIA硬件加速）
 func pressingVideoGPU(inputFile, outputDir, fileName, quality, rate, fps string) (string, error) {
 	outputM3U8 := outputDir + fileName + ".m3u8"
 	outputTs := outputDir + fileName + "_%05d.ts"
 
 	command := []string{
-		"-i", inputFile, // 输入源文件
-		"-crf", "20", // 恒定质量因子
-		"-s", quality, // 输出分辨率
-		"-preset", "p3", // NVENC预设 (p1-p7，p3平衡质量和速度)
-		"-b:v", rate, // 视频码率
-		"-c:v", "h264_nvenc", // NVIDIA H.264硬件编码器
-		"-r", fps, // 输出帧率
-		"-vsync", "cfr", // 恒定帧率模式
-		"-c:a", "copy", // 音频直接拷贝
-		"-muxdelay", "0", // Muxer延迟为0，避免时间戳偏移
-		"-muxpreload", "0", // 预加载为0
-		"-f", "hls", // 输出HLS格式（合并转码+切片）
-		"-hls_time", "10", // 每个切片约10秒
+		"-i", inputFile,
+		"-crf", "20",
+		"-s", quality,
+		"-preset", "p3",
+		"-b:v", rate,
+		"-c:v", "h264_nvenc",
+		"-r", fps,
+		"-vsync", "cfr", // 确保恒定帧率，避免帧数不匹配
+		"-c:a", "copy", // ✅ GPU 版本同样直接拷贝音频流
+		"-copyts",   // 保留原始时间戳
+		"-f", "hls", // 使用HLS muxer（边转码边切片）
+		"-hls_time", "10", // 每个切片10秒
 		"-hls_list_size", "0", // m3u8包含所有切片（VOD模式）
 		"-hls_segment_type", "mpegts", // TS格式分段
 		"-hls_segment_filename", outputTs, // TS分段文件名模板
-		"-hls_flags", "independent_segments", // 每个切片独立解码
-		outputM3U8, // m3u8索引文件路径
+		"-hls_playlist_type", "vod", // VOD类型
+		"-hls_flags", "append_list", // 确保最后片段被写入（对应+live）
+		"-break_non_keyframes", "1", // 允许在非关键帧处切割
+		outputM3U8,
 	}
 
 	out, err := utils.RunCmd(exec.Command("ffmpeg", command...))
@@ -441,6 +428,33 @@ func pressingVideoGPU(inputFile, outputDir, fileName, quality, rate, fps string)
 
 	return outputM3U8, nil
 }
+
+/*
+func generateVideoSlices(inputFile, outputDir, outputName string) (string, error) {
+	outputM3U8 := outputDir + outputName + ".m3u8"
+	outputTs := outputDir + outputName + "_%05d.ts"
+
+	command := []string{
+		"-i", inputFile,
+		"-c", "copy",
+		"-map", "0",
+		"-f", "segment",
+		"-segment_list", outputM3U8,
+		"-segment_time", "10",
+		"-segment_list_flags", "+live", // 确保最后一个片段被正确写入
+		"-break_non_keyframes", "1",    // 允许在非关键帧处切割，避免丢失尾部内容
+		outputTs,
+	}
+
+	_, err := utils.RunCmd(exec.Command("ffmpeg", command...))
+	if err != nil {
+		utils.ErrorLog("生成视频切片失败", "transcoding", err.Error())
+		return outputM3U8, err
+	}
+
+	return outputM3U8, nil
+}
+*/
 
 // 保存m3u8文件
 func saveM3u8File(transcodingInfo *dto.TranscodingInfo, fileName, m3u8File string) error {
