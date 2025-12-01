@@ -578,75 +578,96 @@ func completeTransCoding(videoId, resourceId uint, status int) error {
 
 	tx := global.Mysql.Begin()
 
+	// 查询当前视频状态（需要提前查询,以便决定资源的最终状态）
+	var currentVideo model.Video
+	tx.Model(&model.Video{}).Where("id = ?", videoId).First(&currentVideo)
+	utils.InfoLog(fmt.Sprintf("【事务查询】VideoID=%d 当前status=%d", videoId, currentVideo.Status), "transcoding")
+
 	// 查询当前资源状态
 	var currentResource model.Resource
 	tx.Model(&model.Resource{}).Where("id = ?", resourceId).First(&currentResource)
 	utils.InfoLog(fmt.Sprintf("【事务查询】ResourceID=%d 当前status=%d", resourceId, currentResource.Status), "transcoding")
 
-	// 更新资源状态
-	result := tx.Model(&model.Resource{}).Where("id = ?", resourceId).Updates(
+	// 先检查是否所有资源都转码完成（包括当前这个资源）
+	var processingCount int64
+	tx.Model(&model.Resource{}).Where("vid = ? and status = ? and id != ?", videoId, global.VIDEO_PROCESSING, resourceId).Count(&processingCount)
+	utils.InfoLog(fmt.Sprintf("【事务查询】VideoID=%d 除当前资源外,仍在转码中(status=200)的资源数=%d", videoId, processingCount), "transcoding")
+
+	// 如果还有其他资源在转码中,当前资源保持VIDEO_PROCESSING状态,不更新
+	// 只有当所有资源都转码完成时,才统一更新所有资源状态
+	if processingCount > 0 {
+		utils.InfoLog(fmt.Sprintf("【跳过更新】还有%d个其他资源在转码中,当前资源保持VIDEO_PROCESSING(200)状态", processingCount), "transcoding")
+		// 不更新资源状态,直接提交事务
+		if err := tx.Commit().Error; err != nil {
+			utils.ErrorLog("【事务失败】提交事务失败", "transcoding", err.Error())
+			return err
+		}
+		utils.InfoLog("【事务提交】成功（资源状态未更新）", "transcoding")
+		cache.DelVideoInfo(videoId)
+		utils.InfoLog(fmt.Sprintf("【缓存清理】删除VideoID=%d的缓存", videoId), "transcoding")
+		utils.InfoLog("========== completeTransCoding 结束 ==========", "transcoding")
+		return nil
+	}
+
+	// 所有资源都转码完成了,现在统一更新状态
+	utils.InfoLog("【判断】所有资源转码已完成,准备统一更新所有资源状态", "transcoding")
+
+	// 如果视频已经审核通过,资源应该直接设为审核通过状态
+	if currentVideo.Status == global.AUDIT_APPROVED && status == global.WAITING_REVIEW {
+		status = global.AUDIT_APPROVED
+		utils.InfoLog("【状态修正】视频已审核通过,资源status从WAITING_REVIEW(500)改为AUDIT_APPROVED(0)", "transcoding")
+	}
+
+	// 统一更新所有转码中的资源状态(包括当前资源)
+	result := tx.Model(&model.Resource{}).Where("vid = ? and status = ?", videoId, global.VIDEO_PROCESSING).Updates(
 		map[string]any{
 			"status": status,
 		},
 	)
 	if result.Error != nil {
 		tx.Rollback()
-		utils.ErrorLog("【事务失败】更新资源状态失败", "transcoding", result.Error.Error())
+		utils.ErrorLog("【事务失败】批量更新资源状态失败", "transcoding", result.Error.Error())
 		return result.Error
 	}
-	utils.InfoLog(fmt.Sprintf("【事务执行】更新resource表 ResourceID=%d status=%d, 影响行数=%d", resourceId, status, result.RowsAffected), "transcoding")
+	utils.InfoLog(fmt.Sprintf("【事务执行】批量更新resource表 VideoID=%d所有资源 status=%d, 影响行数=%d", videoId, status, result.RowsAffected), "transcoding")
 
-	// 获取转码中资源的数量
-	var count int64
-	tx.Model(&model.Resource{}).Where("vid = ? and status = ?", videoId, global.VIDEO_PROCESSING).Count(&count)
-	utils.InfoLog(fmt.Sprintf("【事务查询】VideoID=%d 仍在转码中(status=200)的资源数=%d", videoId, count), "transcoding")
+	// 所有资源状态已更新完成,现在更新视频状态
+	utils.InfoLog("【判断】所有资源转码已完成，准备更新video状态", "transcoding")
 
-	// 如果没有转码中的视频，则更新视频状态为待审核
-	if count == 0 {
-		utils.InfoLog("【判断】所有资源转码已完成，准备更新video状态", "transcoding")
+	// 检查所有资源是否都失败了
+	var totalCount int64
+	var failedCount int64
+	tx.Model(&model.Resource{}).Where("vid = ?", videoId).Count(&totalCount)
+	tx.Model(&model.Resource{}).Where("vid = ? and status = ?", videoId, global.PROCESSING_FAIL).Count(&failedCount)
+	utils.InfoLog(fmt.Sprintf("【事务查询】VideoID=%d 总资源数=%d, 失败资源数=%d", videoId, totalCount, failedCount), "transcoding")
 
-		// 检查所有资源是否都失败了
-		var totalCount int64
-		var failedCount int64
-		tx.Model(&model.Resource{}).Where("vid = ?", videoId).Count(&totalCount)
-		tx.Model(&model.Resource{}).Where("vid = ? and status = ?", videoId, global.PROCESSING_FAIL).Count(&failedCount)
-		utils.InfoLog(fmt.Sprintf("【事务查询】VideoID=%d 总资源数=%d, 失败资源数=%d", videoId, totalCount, failedCount), "transcoding")
-
-		var videoStatus int
-		if failedCount == totalCount {
-			// 所有资源都失败，视频状态设为处理失败
-			videoStatus = global.PROCESSING_FAIL
-			utils.InfoLog("【判断】全部资源失败，video status设为PROCESSING_FAIL(3000)", "transcoding")
-		} else {
-			// 至少有一个资源成功，视频状态设为待审核
-			videoStatus = global.WAITING_REVIEW
-			utils.InfoLog("【判断】至少一个资源成功，video status设为WAITING_REVIEW(500)", "transcoding")
-		}
-
-		// 查询当前视频状态
-		var currentVideo model.Video
-		tx.Model(&model.Video{}).Where("id = ?", videoId).First(&currentVideo)
-		utils.InfoLog(fmt.Sprintf("【事务查询】VideoID=%d 当前status=%d", videoId, currentVideo.Status), "transcoding")
-
-		// 更新视频状态（不限制为SUBMIT_REVIEW，允许从CREATED_VIDEO等状态更新）
-		videoResult := tx.Model(&model.Video{}).Where("id = ? and status NOT IN (?, ?)", videoId, global.AUDIT_APPROVED, global.REVIEW_FAILED).Updates(
-			map[string]any{
-				"status": videoStatus,
-			},
-		)
-		if videoResult.Error != nil {
-			tx.Rollback()
-			utils.ErrorLog("【事务失败】更新视频状态失败", "transcoding", videoResult.Error.Error())
-			return videoResult.Error
-		}
-		utils.InfoLog(fmt.Sprintf("【事务执行】更新video表 VideoID=%d status=%d, WHERE条件: status NOT IN (0,2000), 影响行数=%d",
-			videoId, videoStatus, videoResult.RowsAffected), "transcoding")
-
-		if videoResult.RowsAffected == 0 {
-			utils.InfoLog(fmt.Sprintf("【警告】video表更新影响0行！可能video.status已经是0或2000，当前status=%d", currentVideo.Status), "transcoding")
-		}
+	var videoStatus int
+	if failedCount == totalCount {
+		// 所有资源都失败，视频状态设为处理失败
+		videoStatus = global.PROCESSING_FAIL
+		utils.InfoLog("【判断】全部资源失败，video status设为PROCESSING_FAIL(3000)", "transcoding")
 	} else {
-		utils.InfoLog(fmt.Sprintf("【跳过】还有%d个资源在转码中，暂不更新video状态", count), "transcoding")
+		// 至少有一个资源成功，视频状态设为待审核
+		videoStatus = global.WAITING_REVIEW
+		utils.InfoLog("【判断】至少一个资源成功，video status设为WAITING_REVIEW(500)", "transcoding")
+	}
+
+	// 更新视频状态（不限制为SUBMIT_REVIEW，允许从CREATED_VIDEO等状态更新）
+	videoResult := tx.Model(&model.Video{}).Where("id = ? and status NOT IN (?, ?)", videoId, global.AUDIT_APPROVED, global.REVIEW_FAILED).Updates(
+		map[string]any{
+			"status": videoStatus,
+		},
+	)
+	if videoResult.Error != nil {
+		tx.Rollback()
+		utils.ErrorLog("【事务失败】更新视频状态失败", "transcoding", videoResult.Error.Error())
+		return videoResult.Error
+	}
+	utils.InfoLog(fmt.Sprintf("【事务执行】更新video表 VideoID=%d status=%d, WHERE条件: status NOT IN (0,2000), 影响行数=%d",
+		videoId, videoStatus, videoResult.RowsAffected), "transcoding")
+
+	if videoResult.RowsAffected == 0 {
+		utils.InfoLog(fmt.Sprintf("【警告】video表更新影响0行！可能video.status已经是0或2000，当前status=%d", currentVideo.Status), "transcoding")
 	}
 
 	if err := tx.Commit().Error; err != nil {
