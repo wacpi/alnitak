@@ -344,34 +344,65 @@ func getVideoInfo(input string) (info global.VideoInfo, err error) {
 	return info, nil
 }
 
-// CPU一步式HLS转码：边转码边切片
+// CPU一步式HLS转码：边转码边切片 (优化画质)
 func pressingVideo(inputFile, outputDir, fileName, quality, rate, fps string) (string, error) {
 	outputM3U8 := outputDir + fileName + ".m3u8"
 	outputTs := outputDir + fileName + "_%05d.ts"
 
+	// 解析 fps
+	fpsInt, err := strconv.Atoi(fps)
+	if err != nil {
+		fpsInt = 30 // 默认30fps
+	}
+
+	// 10秒切片
+	sliceSeconds := 10
+	gop := fpsInt * sliceSeconds
+
+	// 引入 Lanczos 高质量缩放滤镜
+	scaleFilter := fmt.Sprintf("scale=%s:flags=lanczos", quality)
+
 	command := []string{
 		"-i", inputFile,
+
+		// 1. 画质控制：CRF 保持 20，但建议测试 19 或 18 获得更高清晰度
 		"-crf", "20",
-		"-s", quality,
+		// 2. 缩放质量：移除低质量的 -s，使用高质量的 -vf scale + lanczos
+		"-vf", scaleFilter,
+
+		// 3. 编码效率：使用 slow 预设，大幅提升同码率下的画质
+		"-preset", "slow",
+		// 4. 心理视觉调优：让编码器保留更多细节和纹理，减少大色块
+		"-tune", "film",
+		// 5. 去块滤波优化：微调 deblock，减少画面过度平滑（模糊）
+		"-x264-params", "deblock=-1:-1:keyint-min=" + strconv.Itoa(gop),
+		// 6. 强制 Profile：使用 High profile，提升压缩效率
+		"-profile:v", "high",
+
 		"-b:v", rate,
 		"-c:v", "libx264",
 		"-r", fps,
-		"-vsync", "cfr", // 确保恒定帧率，避免帧数不匹配
-		"-c:a", "copy",
-		//"-b:a", "320k", // 高质量音频码率 (原来默认128k,现在320k)
-		"-copyts",   // 保留原始时间戳
-		"-f", "hls", // 使用HLS muxer（边转码边切片）
-		"-hls_time", "10", // 每个切片10秒
-		"-hls_list_size", "0", // m3u8包含所有切片（VOD模式）
-		"-hls_segment_type", "mpegts", // TS格式分段
-		"-hls_segment_filename", outputTs, // TS分段文件名模板
-		"-hls_playlist_type", "vod", // VOD类型
-		"-hls_flags", "append_list", // 确保最后片段被写入（对应+live）
-		"-break_non_keyframes", "1", // 允许在非关键帧处切割
+
+		// HLS 关键帧对齐 —— 保持不变
+		"-g", strconv.Itoa(gop),
+		// "-keyint_min", strconv.Itoa(gop), // 已整合到 -x264-params 中
+		"-sc_threshold", "0",
+		"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", sliceSeconds),
+
+		"-vsync", "cfr",
+		"-c:a", "copy", // 直接 copy 音频
+
+		"-f", "hls",
+		"-hls_time", strconv.Itoa(sliceSeconds),
+		"-hls_list_size", "0",
+		"-hls_segment_type", "mpegts",
+		"-hls_segment_filename", outputTs,
+		"-hls_playlist_type", "vod",
+
 		outputM3U8,
 	}
 
-	_, err := utils.RunCmd(exec.Command("ffmpeg", command...))
+	_, err = utils.RunCmd(exec.Command("ffmpeg", command...))
 	if err != nil {
 		utils.ErrorLog("HLS转码失败", "transcoding", err.Error())
 		return outputM3U8, err
@@ -380,33 +411,61 @@ func pressingVideo(inputFile, outputDir, fileName, quality, rate, fps string) (s
 	return outputM3U8, nil
 }
 
-// GPU一步式HLS转码：边转码边切片（使用NVIDIA硬件加速）
+// GPU一步式HLS转码：边转码边切片（使用NVIDIA硬件加速 - 优化画质）
 func pressingVideoGPU(inputFile, outputDir, fileName, quality, rate, fps string) (string, error) {
 	outputM3U8 := outputDir + fileName + ".m3u8"
 	outputTs := outputDir + fileName + "_%05d.ts"
 
+	fpsInt, err := strconv.Atoi(fps)
+	if err != nil {
+		fpsInt = 30
+	}
+
+	sliceSeconds := 10
+	gop := fpsInt * sliceSeconds
+
+	// 引入 Lanczos 高质量缩放滤镜
+	// 【优化 3】：移除 -s，使用 Lanczos 算法提升缩放质量，解决画面模糊
+	scaleFilter := fmt.Sprintf("scale=%s:flags=lanczos", quality)
+
 	command := []string{
 		"-i", inputFile,
-		"-crf", "20",
-		"-s", quality,
-		"-preset", "p3",
-		"-b:v", rate,
+
+		// 【优化 1.1】：移除不支持的 -crf，改用 NVENC 的恒定质量参数 -cq
+		"-cq", "22", // Constant Quality 22，通常是高质量与码率的平衡点
+
+		// 【优化 3】：使用 -vf 替代 -s 进行高质量缩放
+		"-vf", scaleFilter,
+
+		// 【优化 2.1】：将预设从 p3 (性能优先) 提高到 p6 (最高质量)
+		"-preset", "p6",
+		// 【优化 1.2】：强制使用高质量可变码率 (VBR_HQ)，确保复杂场景有足够码率
+		"-rc", "vbr_hq",
+
+		"-b:v", rate, // 作为最大码率限制 (MaxRate)
 		"-c:v", "h264_nvenc",
 		"-r", fps,
-		"-vsync", "cfr", // 确保恒定帧率，避免帧数不匹配
-		"-c:a", "copy", // ✅ GPU 版本同样直接拷贝音频流
-		"-copyts",   // 保留原始时间戳
-		"-f", "hls", // 使用HLS muxer（边转码边切片）
-		"-hls_time", "10", // 每个切片10秒
-		"-hls_list_size", "0", // m3u8包含所有切片（VOD模式）
-		"-hls_segment_type", "mpegts", // TS格式分段
-		"-hls_segment_filename", outputTs, // TS分段文件名模板
-		"-hls_playlist_type", "vod", // VOD类型
-		"-hls_flags", "append_list", // 确保最后片段被写入（对应+live）
-		"-break_non_keyframes", "1", // 允许在非关键帧处切割
+
+		// HLS 关键帧对齐（保持不变，保证 HLS 兼容性）
+		"-g", strconv.Itoa(gop),
+		"-keyint_min", strconv.Itoa(gop),
+		"-sc_threshold", "0",
+		"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", sliceSeconds),
+
+		"-vsync", "cfr",
+		"-c:a", "copy",
+
+		"-f", "hls",
+		"-hls_time", strconv.Itoa(sliceSeconds),
+		"-hls_list_size", "0",
+		"-hls_segment_type", "mpegts",
+		"-hls_segment_filename", outputTs,
+		"-hls_playlist_type", "vod",
+
 		outputM3U8,
 	}
 
+	// ... (错误处理逻辑保持不变)
 	out, err := utils.RunCmd(exec.Command("ffmpeg", command...))
 	if err != nil {
 		errMsg := err.Error()
