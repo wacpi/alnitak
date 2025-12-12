@@ -13,46 +13,49 @@ import (
 )
 
 func AddVideoComment(ctx *gin.Context, addCommentReq dto.AddCommentReq) (vo.AddCommentResp, error) {
-	userId := ctx.GetUint("userId")
+    userId := ctx.GetUint("userId")
 
-	// 处理@的用户
-	atUserIds := FindUserIdsByName(addCommentReq.At)
+    // 处理@的用户
+    atUserIds := FindUserIdsByName(addCommentReq.At)
 
-	// 保存到数据库
-	comment := model.Comment{
-		Cid:           addCommentReq.Cid,
-		Uid:           userId,
-		Content:       addCommentReq.Content,
-		AtUsernames:   strings.Join(addCommentReq.At, ","),
-		AtUserIds:     utils.UintJoin(atUserIds, ","),
-		ParentId:      addCommentReq.ParentID,
-		ReplyUserID:   addCommentReq.ReplyUserID,
-		ReplyUserName: addCommentReq.ReplyUserName,
-		Type:          global.CONTENT_TYPE_VIDEO,
-	}
-	if err := global.Mysql.Create(&comment).Error; err != nil {
-		utils.ErrorLog("创建评论失败", "comment", err.Error())
-		return vo.AddCommentResp{}, errors.New("评论失败")
-	}
+    // 保存到数据库
+    comment := model.Comment{
+        Cid:           addCommentReq.Cid,
+        Uid:           userId,
+        Content:       addCommentReq.Content,
+        AtUsernames:   strings.Join(addCommentReq.At, ","),
+        AtUserIds:     utils.UintJoin(atUserIds, ","),
+        ParentId:      addCommentReq.ParentID,
+        ReplyUserID:   addCommentReq.ReplyUserID,
+        ReplyUserName: addCommentReq.ReplyUserName,
+        Type:          global.CONTENT_TYPE_VIDEO,
+    }
 
-	// 发送回复通知
-	InsertReplyMessage(addCommentReq, comment.ID, userId, global.CONTENT_TYPE_VIDEO)
+    if err := global.Mysql.Create(&comment).Error; err != nil {
+        utils.ErrorLog("创建评论失败", "comment", err.Error())
+        return vo.AddCommentResp{}, errors.New("评论失败")
+    }
 
-	// 处理@通知
-	length := len(atUserIds)
-	newAtMsg := make([]model.AtMessage, length)
-	for i := 0; i < length; i++ {
-		newAtMsg[i].Uid = atUserIds[i]
-		newAtMsg[i].Cid = addCommentReq.Cid
-		newAtMsg[i].Sid = userId
-		newAtMsg[i].Type = global.CONTENT_TYPE_VIDEO
-	}
-	if err := global.Mysql.Create(&newAtMsg).Error; err != nil {
-		utils.ErrorLog("创建AT信息失败失败", "comment", err.Error())
-	}
+    // 发送回复通知
+    InsertReplyMessage(addCommentReq, comment.ID, userId, global.CONTENT_TYPE_VIDEO)
 
-	return vo.CommentToCommentResp(comment), nil
+    // 当有@用户时才创建AT通知
+    if len(atUserIds) > 0 {
+        newAtMsg := make([]model.AtMessage, len(atUserIds))
+        for i := range atUserIds {
+            newAtMsg[i].Uid = atUserIds[i]
+            newAtMsg[i].Cid = addCommentReq.Cid
+            newAtMsg[i].Sid = userId
+            newAtMsg[i].Type = global.CONTENT_TYPE_VIDEO
+        }
+        if err := global.Mysql.Create(&newAtMsg).Error; err != nil {
+            utils.ErrorLog("创建AT信息失败", "comment", err.Error())
+        }
+    }
+
+    return vo.CommentToCommentResp(comment), nil
 }
+
 
 // 获取视频评论
 func GetVideoComment(ctx *gin.Context, vid uint, page, pageSize int) ([]vo.CommentResp, int64, error) {
