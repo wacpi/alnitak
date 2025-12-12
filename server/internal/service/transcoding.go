@@ -344,7 +344,7 @@ func getVideoInfo(input string) (info global.VideoInfo, err error) {
 	return info, nil
 }
 
-// CPU一步式HLS转码：边转码边切片 (优化画质)
+// CPU一步式HLS转码：边转码边切片 (优化画质 + 音频接近无损重编码)
 func pressingVideo(inputFile, outputDir, fileName, quality, rate, fps string) (string, error) {
 	outputM3U8 := outputDir + fileName + ".m3u8"
 	outputTs := outputDir + fileName + "_%05d.ts"
@@ -365,33 +365,38 @@ func pressingVideo(inputFile, outputDir, fileName, quality, rate, fps string) (s
 	command := []string{
 		"-i", inputFile,
 
-		// 1. 画质控制：CRF 保持 20，但建议测试 19 或 18 获得更高清晰度
+		// --- 视频参数 ---
+		// 1. 画质控制：CRF 20 (建议值)
 		"-crf", "20",
-		// 2. 缩放质量：移除低质量的 -s，使用高质量的 -vf scale + lanczos
+		// 2. 缩放质量：Lanczos 算法
 		"-vf", scaleFilter,
-
-		// 3. 编码效率：使用 slow 预设，大幅提升同码率下的画质
+		// 3. 编码效率：slow (同码率下画质更好)
 		"-preset", "slow",
-		// 4. 心理视觉调优：让编码器保留更多细节和纹理，减少大色块
+		// 4. 心理视觉调优
 		"-tune", "film",
-		// 5. 去块滤波优化：微调 deblock，减少画面过度平滑（模糊）
+		// 5. 去块滤波优化
 		"-x264-params", "deblock=-1:-1:keyint-min=" + strconv.Itoa(gop),
-		// 6. 强制 Profile：使用 High profile，提升压缩效率
+		// 6. Profile
 		"-profile:v", "high",
-
 		"-b:v", rate,
 		"-c:v", "libx264",
 		"-r", fps,
 
-		// HLS 关键帧对齐 —— 保持不变
+		// --- HLS 关键帧对齐 ---
 		"-g", strconv.Itoa(gop),
-		// "-keyint_min", strconv.Itoa(gop), // 已整合到 -x264-params 中
 		"-sc_threshold", "0",
 		"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", sliceSeconds),
-
 		"-vsync", "cfr",
-		"-c:a", "copy", // 直接 copy 音频
 
+		// --- 音频参数 (修改部分) ---
+		// 行业标准高音质重编码：解决兼容性与时间戳问题，同时保持接近无损的听感
+		"-c:a", "aac", // 编码器：AAC (兼容性之王)
+		"-b:a", "320k", // 码率：320kbps (AAC的画质上限，听感透明)
+		"-ar", "48000", // 采样率：48kHz (视频标准)
+		"-ac", "2", // 声道：双声道 (立体声)
+		"-af", "aresample=async=1", // 音频滤镜：修正音频时间戳，防止音画不同步
+
+		// --- HLS 切片设置 ---
 		"-f", "hls",
 		"-hls_time", strconv.Itoa(sliceSeconds),
 		"-hls_list_size", "0",
@@ -411,7 +416,7 @@ func pressingVideo(inputFile, outputDir, fileName, quality, rate, fps string) (s
 	return outputM3U8, nil
 }
 
-// GPU一步式HLS转码：边转码边切片（使用NVIDIA硬件加速 - 优化画质）
+// GPU一步式HLS转码：边转码边切片（使用NVIDIA硬件加速 - 优化画质 + 音频接近无损重编码）
 func pressingVideoGPU(inputFile, outputDir, fileName, quality, rate, fps string) (string, error) {
 	outputM3U8 := outputDir + fileName + ".m3u8"
 	outputTs := outputDir + fileName + "_%05d.ts"
@@ -425,36 +430,41 @@ func pressingVideoGPU(inputFile, outputDir, fileName, quality, rate, fps string)
 	gop := fpsInt * sliceSeconds
 
 	// 引入 Lanczos 高质量缩放滤镜
-	// 【优化 3】：移除 -s，使用 Lanczos 算法提升缩放质量，解决画面模糊
 	scaleFilter := fmt.Sprintf("scale=%s:flags=lanczos", quality)
 
 	command := []string{
 		"-i", inputFile,
 
-		// 【优化 1.1】：移除不支持的 -crf，改用 NVENC 的恒定质量参数 -cq
-		"-cq", "22", // Constant Quality 22，通常是高质量与码率的平衡点
-
-		// 【优化 3】：使用 -vf 替代 -s 进行高质量缩放
+		// --- 视频参数 (NVENC) ---
+		// 1. 恒定质量控制
+		"-cq", "22",
+		// 2. 缩放
 		"-vf", scaleFilter,
-
-		// 【优化 2.1】：将预设从 p3 (性能优先) 提高到 p6 (最高质量)
+		// 3. 预设：最高质量 p6
 		"-preset", "p6",
-		// 【优化 1.2】：强制使用高质量可变码率 (VBR_HQ)，确保复杂场景有足够码率
+		// 4. 码率控制模式：VBR_HQ
 		"-rc", "vbr_hq",
 
-		"-b:v", rate, // 作为最大码率限制 (MaxRate)
+		"-b:v", rate, // MaxRate
 		"-c:v", "h264_nvenc",
 		"-r", fps,
 
-		// HLS 关键帧对齐（保持不变，保证 HLS 兼容性）
+		// --- HLS 关键帧对齐 ---
 		"-g", strconv.Itoa(gop),
 		"-keyint_min", strconv.Itoa(gop),
 		"-sc_threshold", "0",
 		"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", sliceSeconds),
-
 		"-vsync", "cfr",
-		"-c:a", "copy",
 
+		// --- 音频参数 (修改部分) ---
+		// 即使是 GPU 视频转码，音频通常也是由 CPU 处理的，参数同上
+		"-c:a", "aac",
+		"-b:a", "320k",
+		"-ar", "48000",
+		"-ac", "2",
+		"-af", "aresample=async=1", // 关键：防止 GPU 视频编码速度过快导致的音画同步问题
+
+		// --- HLS 切片设置 ---
 		"-f", "hls",
 		"-hls_time", strconv.Itoa(sliceSeconds),
 		"-hls_list_size", "0",
@@ -465,7 +475,7 @@ func pressingVideoGPU(inputFile, outputDir, fileName, quality, rate, fps string)
 		outputM3U8,
 	}
 
-	// ... (错误处理逻辑保持不变)
+	// 执行命令
 	out, err := utils.RunCmd(exec.Command("ffmpeg", command...))
 	if err != nil {
 		errMsg := err.Error()

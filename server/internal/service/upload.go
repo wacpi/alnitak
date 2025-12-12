@@ -24,7 +24,7 @@ func UploadImg(ctx *gin.Context, file *multipart.FileHeader) (string, error) {
 	objectKey := "image/" + fileName
 	filePath := "./upload/image/" + fileName
 	// 参数校验
-	if !utils.IsImgType(suffix) { // 文件后缀
+	if !utils.IsImgType(suffix, global.Config.File.AllowedImgExts) { // 文件后缀
 		return "", errors.New("文件类型错误")
 	}
 
@@ -119,7 +119,7 @@ func UploadVideoChunk(ctx *gin.Context, file *multipart.FileHeader) error {
 	totalChunks, _ := strconv.Atoi(ctx.PostForm("totalChunks"))
 
 	suffix := path.Ext(fileName)
-	if !utils.IsVideoType(suffix) { // 文件后缀
+	if !utils.IsVideoType(suffix, global.Config.File.AllowedVideoExts) { // 文件后缀
 		return errors.New("视频上传失败")
 	}
 
