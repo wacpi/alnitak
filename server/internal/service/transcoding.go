@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,14 +26,25 @@ type TranscodingTarget struct {
 	FpsName     string // 帧率名称
 }
 
+// 转码进程信息
+type TranscodingProcess struct {
+	VideoID    uint
+	ResourceID uint
+	Cmd        *exec.Cmd
+	CancelFunc context.CancelFunc
+	OutputDir  string
+}
+
 // 全局转码并发控制
 var (
 	transcodingSemaphore chan struct{} // 信号量，控制同时转码的任务数
 	semaphoreOnce        sync.Once
-	gpuAvailable         = true       // GPU是否可用
-	gpuCheckMutex        sync.RWMutex // 保护GPU状态的读写锁
-	gpuFailCount         = 0          // GPU连续失败次数
-	maxGpuFailCount      = 3          // 最大允许GPU失败次数
+	gpuAvailable         = true                                // GPU是否可用
+	gpuCheckMutex        sync.RWMutex                          // 保护GPU状态的读写锁
+	gpuFailCount         = 0                                   // GPU连续失败次数
+	maxGpuFailCount      = 3                                   // 最大允许GPU失败次数
+	transcodingProcesses = make(map[uint][]TranscodingProcess) // key: videoID, value: 该视频的所有转码进程
+	processMapMutex      sync.RWMutex                          // 保护进程映射的读写锁
 )
 
 // 初始化转码并发控制（根据CPU核心数或配置）
@@ -127,6 +139,10 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 			transcodingSemaphore <- struct{}{}
 			defer func() { <-transcodingSemaphore }() // 释放资源锁
 
+			// 创建可取消的context
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
 			fileName := c.Resolution + "_" + c.BitrateRate + "_" + c.FpsName
 
 			utils.InfoLog(fmt.Sprintf("【开始HLS一步式转码】%s", fileName), "transcoding")
@@ -138,7 +154,7 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 
 			if useGpu {
 				utils.InfoLog(fmt.Sprintf("【使用GPU一步式转码】%s", fileName), "transcoding")
-				m3u8File, err = pressingVideoGPU(transcodingInfo.InputFile, transcodingInfo.OutputDir, fileName, c.Resolution, c.BitrateRate, c.FPS)
+				m3u8File, err = pressingVideoGPU(ctx, transcodingInfo.VideoID, transcodingInfo.ResourceID, transcodingInfo.InputFile, transcodingInfo.OutputDir, fileName, c.Resolution, c.BitrateRate, c.FPS, cancel)
 
 				if err != nil {
 					utils.ErrorLog(fmt.Sprintf("【GPU转码失败】%s，尝试切换到CPU", fileName), "transcoding", err.Error())
@@ -146,7 +162,7 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 
 					// GPU失败后尝试使用CPU
 					utils.InfoLog(fmt.Sprintf("【降级到CPU一步式转码】%s", fileName), "transcoding")
-					m3u8File, err = pressingVideo(transcodingInfo.InputFile, transcodingInfo.OutputDir, fileName, c.Resolution, c.BitrateRate, c.FPS)
+					m3u8File, err = pressingVideo(ctx, transcodingInfo.VideoID, transcodingInfo.ResourceID, transcodingInfo.InputFile, transcodingInfo.OutputDir, fileName, c.Resolution, c.BitrateRate, c.FPS, cancel)
 				} else {
 					// GPU转码成功，重置失败计数
 					gpuCheckMutex.Lock()
@@ -162,7 +178,7 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 				} else {
 					utils.InfoLog(fmt.Sprintf("【使用CPU一步式转码】%s", fileName), "transcoding")
 				}
-				m3u8File, err = pressingVideo(transcodingInfo.InputFile, transcodingInfo.OutputDir, fileName, c.Resolution, c.BitrateRate, c.FPS)
+				m3u8File, err = pressingVideo(ctx, transcodingInfo.VideoID, transcodingInfo.ResourceID, transcodingInfo.InputFile, transcodingInfo.OutputDir, fileName, c.Resolution, c.BitrateRate, c.FPS, cancel)
 			}
 
 			if err != nil {
@@ -345,7 +361,7 @@ func getVideoInfo(input string) (info global.VideoInfo, err error) {
 }
 
 // CPU一步式HLS转码：边转码边切片 (优化画质 + 音频接近无损重编码)
-func pressingVideo(inputFile, outputDir, fileName, quality, rate, fps string) (string, error) {
+func pressingVideo(ctx context.Context, videoID, resourceID uint, inputFile, outputDir, fileName, quality, rate, fps string, cancelFunc context.CancelFunc) (string, error) {
 	outputM3U8 := outputDir + fileName + ".m3u8"
 	outputTs := outputDir + fileName + "_%05d.ts"
 
@@ -407,7 +423,20 @@ func pressingVideo(inputFile, outputDir, fileName, quality, rate, fps string) (s
 		outputM3U8,
 	}
 
-	_, err = utils.RunCmd(exec.Command("ffmpeg", command...))
+	// 使用CommandContext支持取消
+	cmd := exec.CommandContext(ctx, "ffmpeg", command...)
+
+	// 注册转码进程
+	if err := cmd.Start(); err != nil {
+		utils.ErrorLog("HLS转码启动失败", "transcoding", err.Error())
+		return outputM3U8, err
+	}
+
+	registerTranscodingProcess(videoID, resourceID, cmd, cancelFunc, outputDir)
+	defer unregisterTranscodingProcess(videoID, resourceID)
+
+	// 等待命令完成
+	err = cmd.Wait()
 	if err != nil {
 		utils.ErrorLog("HLS转码失败", "transcoding", err.Error())
 		return outputM3U8, err
@@ -417,7 +446,7 @@ func pressingVideo(inputFile, outputDir, fileName, quality, rate, fps string) (s
 }
 
 // GPU一步式HLS转码：边转码边切片（使用NVIDIA硬件加速 - 优化画质 + 音频接近无损重编码）
-func pressingVideoGPU(inputFile, outputDir, fileName, quality, rate, fps string) (string, error) {
+func pressingVideoGPU(ctx context.Context, videoID, resourceID uint, inputFile, outputDir, fileName, quality, rate, fps string, cancelFunc context.CancelFunc) (string, error) {
 	outputM3U8 := outputDir + fileName + ".m3u8"
 	outputTs := outputDir + fileName + "_%05d.ts"
 
@@ -475,20 +504,31 @@ func pressingVideoGPU(inputFile, outputDir, fileName, quality, rate, fps string)
 		outputM3U8,
 	}
 
-	// 执行命令
-	out, err := utils.RunCmd(exec.Command("ffmpeg", command...))
+	// 使用CommandContext支持取消
+	cmd := exec.CommandContext(ctx, "ffmpeg", command...)
+
+	// 注册转码进程
+	if err := cmd.Start(); err != nil {
+		utils.ErrorLog("GPU HLS转码启动失败", "transcoding", err.Error())
+		return outputM3U8, err
+	}
+
+	registerTranscodingProcess(videoID, resourceID, cmd, cancelFunc, outputDir)
+	defer unregisterTranscodingProcess(videoID, resourceID)
+
+	// 等待命令完成
+	err = cmd.Wait()
 	if err != nil {
 		errMsg := err.Error()
-		outStr := out.String()
 
 		// 检测是否是GPU相关错误
-		if strings.Contains(outStr, "No NVENC capable devices found") ||
-			strings.Contains(outStr, "Cannot load nvcuda.dll") ||
-			strings.Contains(outStr, "CUDA driver version is insufficient") ||
-			strings.Contains(outStr, "h264_nvenc") ||
+		if strings.Contains(errMsg, "No NVENC capable devices found") ||
+			strings.Contains(errMsg, "Cannot load nvcuda.dll") ||
+			strings.Contains(errMsg, "CUDA driver version is insufficient") ||
+			strings.Contains(errMsg, "h264_nvenc") ||
 			strings.Contains(errMsg, "nvenc") {
-			utils.ErrorLog("GPU不可用或驱动异常", "transcoding", outStr)
-			return outputM3U8, fmt.Errorf("GPU error: %s", outStr)
+			utils.ErrorLog("GPU不可用或驱动异常", "transcoding", errMsg)
+			return outputM3U8, fmt.Errorf("GPU error: %s", errMsg)
 		}
 
 		utils.ErrorLog("GPU HLS转码失败", "transcoding", errMsg)
@@ -752,5 +792,100 @@ func completeTransCoding(videoId, resourceId uint, status int) error {
 
 	utils.InfoLog("========== completeTransCoding 结束 ==========", "transcoding")
 
+	return nil
+}
+
+// 注册转码进程
+func registerTranscodingProcess(videoID, resourceID uint, cmd *exec.Cmd, cancelFunc context.CancelFunc, outputDir string) {
+	processMapMutex.Lock()
+	defer processMapMutex.Unlock()
+
+	process := TranscodingProcess{
+		VideoID:    videoID,
+		ResourceID: resourceID,
+		Cmd:        cmd,
+		CancelFunc: cancelFunc,
+		OutputDir:  outputDir,
+	}
+
+	transcodingProcesses[videoID] = append(transcodingProcesses[videoID], process)
+	utils.InfoLog(fmt.Sprintf("【注册转码进程】VideoID=%d, ResourceID=%d, PID=%d", videoID, resourceID, cmd.Process.Pid), "transcoding")
+}
+
+// 注销转码进程
+func unregisterTranscodingProcess(videoID, resourceID uint) {
+	processMapMutex.Lock()
+	defer processMapMutex.Unlock()
+
+	processes, exists := transcodingProcesses[videoID]
+	if !exists {
+		return
+	}
+
+	// 过滤掉指定的resourceID
+	newProcesses := make([]TranscodingProcess, 0)
+	for _, p := range processes {
+		if p.ResourceID != resourceID {
+			newProcesses = append(newProcesses, p)
+		}
+	}
+
+	if len(newProcesses) == 0 {
+		delete(transcodingProcesses, videoID)
+		utils.InfoLog(fmt.Sprintf("【注销转码进程】VideoID=%d 所有进程已清理", videoID), "transcoding")
+	} else {
+		transcodingProcesses[videoID] = newProcesses
+		utils.InfoLog(fmt.Sprintf("【注销转码进程】VideoID=%d, ResourceID=%d", videoID, resourceID), "transcoding")
+	}
+}
+
+// 停止视频的所有转码进程并清理文件
+func StopTranscodingAndCleanup(videoID uint) error {
+	processMapMutex.Lock()
+	processes, exists := transcodingProcesses[videoID]
+	if !exists || len(processes) == 0 {
+		processMapMutex.Unlock()
+		utils.InfoLog(fmt.Sprintf("【停止转码】VideoID=%d 没有正在运行的转码进程", videoID), "transcoding")
+		return nil
+	}
+
+	// 复制一份进程列表，避免在处理过程中持有锁
+	processesCopy := make([]TranscodingProcess, len(processes))
+	copy(processesCopy, processes)
+	delete(transcodingProcesses, videoID)
+	processMapMutex.Unlock()
+
+	utils.InfoLog(fmt.Sprintf("【停止转码】VideoID=%d 找到%d个转码进程，准备停止", videoID, len(processesCopy)), "transcoding")
+
+	for _, process := range processesCopy {
+		// 取消context（如果有）
+		if process.CancelFunc != nil {
+			process.CancelFunc()
+			utils.InfoLog(fmt.Sprintf("【取消Context】ResourceID=%d", process.ResourceID), "transcoding")
+		}
+
+		// 杀死进程
+		if process.Cmd != nil && process.Cmd.Process != nil {
+			pid := process.Cmd.Process.Pid
+			err := process.Cmd.Process.Kill()
+			if err != nil {
+				utils.ErrorLog(fmt.Sprintf("【杀死进程失败】PID=%d", pid), "transcoding", err.Error())
+			} else {
+				utils.InfoLog(fmt.Sprintf("【杀死进程成功】PID=%d", pid), "transcoding")
+			}
+		}
+
+		// 清理输出目录
+		if process.OutputDir != "" {
+			err := os.RemoveAll(process.OutputDir)
+			if err != nil {
+				utils.ErrorLog(fmt.Sprintf("【删除输出目录失败】%s", process.OutputDir), "transcoding", err.Error())
+			} else {
+				utils.InfoLog(fmt.Sprintf("【删除输出目录成功】%s", process.OutputDir), "transcoding")
+			}
+		}
+	}
+
+	utils.InfoLog(fmt.Sprintf("【停止转码完成】VideoID=%d", videoID), "transcoding")
 	return nil
 }

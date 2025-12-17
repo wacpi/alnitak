@@ -26,10 +26,11 @@ func AddHistory(ctx *gin.Context, historyReq dto.HistoryReq) error {
 
 	if history.ID == 0 {
 		if err := global.Mysql.Create(&model.History{
-			Uid:  userId,
-			Vid:  historyReq.Vid,
-			Time: historyReq.Time,
-			Part: historyReq.Part,
+			Uid:      userId,
+			Vid:      historyReq.Vid,
+			Time:     historyReq.Time,
+			Part:     historyReq.Part,
+			Duration: historyReq.Duration,
 		}).Error; err != nil {
 			utils.ErrorLog("保存历史记录失败", "history", err.Error())
 			return errors.New("保存失败")
@@ -37,6 +38,7 @@ func AddHistory(ctx *gin.Context, historyReq dto.HistoryReq) error {
 	} else {
 		history.Time = historyReq.Time
 		history.Part = historyReq.Part
+		history.Duration = historyReq.Duration
 		if err := global.Mysql.Save(&history).Error; err != nil {
 			utils.ErrorLog("保存历史记录失败", "history", err.Error())
 			return errors.New("保存失败")

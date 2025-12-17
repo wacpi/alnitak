@@ -186,6 +186,64 @@ func DeleteVideo(ctx *gin.Context, id uint) error {
 		return errors.New("视频不存在")
 	}
 
+	// 停止正在进行的转码进程并清理文件
+	StopTranscodingAndCleanup(id)
+
+	// 删除关联的资源记录
+	if err := global.Mysql.Where("vid = ?", id).Delete(&model.Resource{}).Error; err != nil {
+		utils.ErrorLog("删除视频关联资源失败", "video", err.Error())
+	}
+
+	// 删除关联的m3u8索引文件记录
+	if err := global.Mysql.Where("vid = ?", id).Delete(&model.VideoIndexFile{}).Error; err != nil {
+		utils.ErrorLog("删除视频关联m3u8索引文件失败", "video", err.Error())
+	}
+
+	// 删除关联的评论
+	if err := global.Mysql.Where("cid = ? and type = 0", id).Delete(&model.Comment{}).Error; err != nil {
+		utils.ErrorLog("删除视频关联评论失败", "video", err.Error())
+	}
+
+	// 删除关联的弹幕
+	if err := global.Mysql.Where("vid = ?", id).Delete(&model.Danmaku{}).Error; err != nil {
+		utils.ErrorLog("删除视频关联弹幕失败", "video", err.Error())
+	}
+
+	// 删除关联的收藏记录
+	if err := global.Mysql.Where("vid = ?", id).Delete(&model.CollectVideo{}).Error; err != nil {
+		utils.ErrorLog("删除视频关联收藏记录失败", "video", err.Error())
+	}
+
+	// 删除关联的点赞记录
+	if err := global.Mysql.Where("vid = ?", id).Delete(&model.LikeVideo{}).Error; err != nil {
+		utils.ErrorLog("删除视频关联点赞记录失败", "video", err.Error())
+	}
+
+	// 删除关联的历史记录
+	if err := global.Mysql.Where("vid = ?", id).Delete(&model.History{}).Error; err != nil {
+		utils.ErrorLog("删除视频关联历史记录失败", "video", err.Error())
+	}
+
+	// 删除关联的AT消息
+	if err := global.Mysql.Where("vid = ?", id).Delete(&model.AtMessage{}).Error; err != nil {
+		utils.ErrorLog("删除视频关联AT消息失败", "video", err.Error())
+	}
+
+	// 删除关联的视频文件记录（通过resource查找dirName）
+	var resources []model.Resource
+	global.Mysql.Unscoped().Where("vid = ?", id).Find(&resources)
+	for _, resource := range resources {
+		// 查找VideoIndexFile获取DirName
+		var indexFile model.VideoIndexFile
+		global.Mysql.Unscoped().Where("resource_id = ?", resource.ID).First(&indexFile)
+		if indexFile.DirName != "" {
+			// 删除video_file表中对应的记录
+			if err := global.Mysql.Where("dir_name = ?", indexFile.DirName).Delete(&model.VideoFile{}).Error; err != nil {
+				utils.ErrorLog("删除视频文件记录失败", "video", err.Error())
+			}
+		}
+	}
+
 	if err := global.Mysql.Where("id = ?", id).Delete(&model.Video{}).Error; err != nil {
 		utils.ErrorLog("删除视频失败", "video", err.Error())
 		return errors.New("删除视频失败")
@@ -262,6 +320,64 @@ func DeleteVideoManage(ctx *gin.Context, id uint) error {
 	// 先查询视频信息，用于删除缓存
 	var video model.Video
 	global.Mysql.Model(&model.Video{}).Where("id = ?", id).First(&video)
+
+	// 停止正在进行的转码进程并清理文件
+	StopTranscodingAndCleanup(id)
+
+	// 删除关联的资源记录
+	if err := global.Mysql.Where("vid = ?", id).Delete(&model.Resource{}).Error; err != nil {
+		utils.ErrorLog("删除视频关联资源失败", "video", err.Error())
+	}
+
+	// 删除关联的m3u8索引文件记录
+	if err := global.Mysql.Where("vid = ?", id).Delete(&model.VideoIndexFile{}).Error; err != nil {
+		utils.ErrorLog("删除视频关联m3u8索引文件失败", "video", err.Error())
+	}
+
+	// 删除关联的评论
+	if err := global.Mysql.Where("cid = ? and type = 0", id).Delete(&model.Comment{}).Error; err != nil {
+		utils.ErrorLog("删除视频关联评论失败", "video", err.Error())
+	}
+
+	// 删除关联的弹幕
+	if err := global.Mysql.Where("vid = ?", id).Delete(&model.Danmaku{}).Error; err != nil {
+		utils.ErrorLog("删除视频关联弹幕失败", "video", err.Error())
+	}
+
+	// 删除关联的收藏记录
+	if err := global.Mysql.Where("vid = ?", id).Delete(&model.CollectVideo{}).Error; err != nil {
+		utils.ErrorLog("删除视频关联收藏记录失败", "video", err.Error())
+	}
+
+	// 删除关联的点赞记录
+	if err := global.Mysql.Where("vid = ?", id).Delete(&model.LikeVideo{}).Error; err != nil {
+		utils.ErrorLog("删除视频关联点赞记录失败", "video", err.Error())
+	}
+
+	// 删除关联的历史记录
+	if err := global.Mysql.Where("vid = ?", id).Delete(&model.History{}).Error; err != nil {
+		utils.ErrorLog("删除视频关联历史记录失败", "video", err.Error())
+	}
+
+	// 删除关联的AT消息
+	if err := global.Mysql.Where("vid = ?", id).Delete(&model.AtMessage{}).Error; err != nil {
+		utils.ErrorLog("删除视频关联AT消息失败", "video", err.Error())
+	}
+
+	// 删除关联的视频文件记录（通过resource查找dirName）
+	var resources []model.Resource
+	global.Mysql.Unscoped().Where("vid = ?", id).Find(&resources)
+	for _, resource := range resources {
+		// 查找VideoIndexFile获取DirName
+		var indexFile model.VideoIndexFile
+		global.Mysql.Unscoped().Where("resource_id = ?", resource.ID).First(&indexFile)
+		if indexFile.DirName != "" {
+			// 删除video_file表中对应的记录
+			if err := global.Mysql.Where("dir_name = ?", indexFile.DirName).Delete(&model.VideoFile{}).Error; err != nil {
+				utils.ErrorLog("删除视频文件记录失败", "video", err.Error())
+			}
+		}
+	}
 
 	if err := global.Mysql.Where("id = ?", id).Delete(&model.Video{}).Error; err != nil {
 		utils.ErrorLog("删除视频失败", "video", err.Error())

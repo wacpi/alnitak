@@ -72,6 +72,11 @@ func DeleteCollection(ctx *gin.Context, id uint) error {
 		return errors.New("收藏夹不存在")
 	}
 
+	// 删除关联的收藏视频记录
+	if err := global.Mysql.Where("collection_id = ?", id).Delete(&model.CollectVideo{}).Error; err != nil {
+		utils.ErrorLog("删除收藏夹关联收藏记录失败", "collection", err.Error())
+	}
+
 	if err := global.Mysql.Where("id = ?", id).Delete(&model.Collection{}).Error; err != nil {
 		utils.ErrorLog("删除收藏夹失败", "collection", err.Error())
 		return errors.New("删除失败")

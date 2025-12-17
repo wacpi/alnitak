@@ -50,6 +50,10 @@ func DeleteResource(ctx *gin.Context, id uint) error {
 		return errors.New("至少需要一个视频")
 	}
 
+	// 先获取video_index_file记录以获取dir_name，用于删除video_file
+	var indexFile model.VideoIndexFile
+	global.Mysql.Where("resource_id = ?", id).First(&indexFile)
+
 	if err := global.Mysql.Where("id = ?", id).Delete(&model.Resource{}).Error; err != nil {
 		utils.ErrorLog("删除资源失败", "resource", err.Error())
 		return errors.New("删除资源失败")
@@ -58,7 +62,13 @@ func DeleteResource(ctx *gin.Context, id uint) error {
 	// 删除关联的m3u8索引文件记录
 	if err := global.Mysql.Where("resource_id = ?", id).Delete(&model.VideoIndexFile{}).Error; err != nil {
 		utils.ErrorLog("删除m3u8索引文件失败", "resource", err.Error())
-		// 不中断流程，仅记录错误
+	}
+
+	// 删除关联的视频文件记录
+	if indexFile.DirName != "" {
+		if err := global.Mysql.Where("dir_name = ?", indexFile.DirName).Delete(&model.VideoFile{}).Error; err != nil {
+			utils.ErrorLog("删除视频文件记录失败", "resource", err.Error())
+		}
 	}
 
 	// 删除视频信息缓存（删除后让下次查询时重新从数据库加载）

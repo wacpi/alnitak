@@ -387,6 +387,71 @@ func GetUserBanRecord(userId uint) (bans []vo.UserBanRecordResp) {
 
 // 删除用户
 func DeleteUser(ctx *gin.Context, id uint) error {
+	// 删除用户的所有视频（包括视频的所有关联数据）
+	var videos []model.Video
+	global.Mysql.Where("uid = ?", id).Find(&videos)
+	for _, video := range videos {
+		// 删除视频的所有关联资源
+		global.Mysql.Where("vid = ?", video.ID).Delete(&model.Resource{})
+		global.Mysql.Where("vid = ?", video.ID).Delete(&model.VideoIndexFile{})
+		global.Mysql.Where("cid = ? and type = 0", video.ID).Delete(&model.Comment{})
+		global.Mysql.Where("vid = ?", video.ID).Delete(&model.Danmaku{})
+		global.Mysql.Where("vid = ?", video.ID).Delete(&model.CollectVideo{})
+		global.Mysql.Where("vid = ?", video.ID).Delete(&model.LikeVideo{})
+		global.Mysql.Where("vid = ?", video.ID).Delete(&model.History{})
+		global.Mysql.Where("vid = ?", video.ID).Delete(&model.AtMessage{})
+		// 删除视频本身
+		global.Mysql.Where("id = ?", video.ID).Delete(&model.Video{})
+	}
+
+	// 删除用户的所有文章（包括文章的所有关联数据）
+	var articles []model.Article
+	global.Mysql.Where("uid = ?", id).Find(&articles)
+	for _, article := range articles {
+		global.Mysql.Where("cid = ? and type = 1", article.ID).Delete(&model.Comment{})
+		global.Mysql.Where("aid = ?", article.ID).Delete(&model.CollectArticle{})
+		global.Mysql.Where("aid = ?", article.ID).Delete(&model.LikeArticle{})
+		// 删除文章本身
+		global.Mysql.Where("id = ?", article.ID).Delete(&model.Article{})
+	}
+
+	// 删除用户的所有评论
+	global.Mysql.Where("uid = ?", id).Delete(&model.Comment{})
+
+	// 删除用户的所有收藏夹及其内容
+	var collections []model.Collection
+	global.Mysql.Where("uid = ?", id).Find(&collections)
+	for _, collection := range collections {
+		global.Mysql.Where("collection_id = ?", collection.ID).Delete(&model.CollectVideo{})
+		global.Mysql.Where("id = ?", collection.ID).Delete(&model.Collection{})
+	}
+
+	// 删除用户的点赞记录
+	global.Mysql.Where("uid = ?", id).Delete(&model.LikeVideo{})
+	global.Mysql.Where("uid = ?", id).Delete(&model.LikeArticle{})
+
+	// 删除用户的收藏记录
+	global.Mysql.Where("uid = ?", id).Delete(&model.CollectVideo{})
+	global.Mysql.Where("uid = ?", id).Delete(&model.CollectArticle{})
+
+	// 删除用户的历史记录
+	global.Mysql.Where("uid = ?", id).Delete(&model.History{})
+
+	// 删除用户的关注关系
+	global.Mysql.Where("uid = ? or fid = ?", id, id).Delete(&model.Relation{})
+
+	// 删除用户的消息记录
+	global.Mysql.Where("uid = ? or sid = ?", id, id).Delete(&model.AtMessage{})
+	global.Mysql.Where("uid = ? or sid = ?", id, id).Delete(&model.ReplyMessage{})
+	global.Mysql.Where("uid = ? or sid = ?", id, id).Delete(&model.LikeMessage{})
+	global.Mysql.Where("uid = ? or sid = ?", id, id).Delete(&model.Whisper{})
+
+	// 删除用户的封禁记录
+	global.Mysql.Where("uid = ?", id).Delete(&model.UserBan{})
+
+	// 删除用户的视频文件记录
+	global.Mysql.Where("uid = ?", id).Delete(&model.VideoFile{})
+
 	if err := global.Mysql.Where("id = ?", id).Delete(&model.User{}).Error; err != nil {
 		utils.ErrorLog("删除用户失败", "user", err.Error())
 		return errors.New("删除失败")

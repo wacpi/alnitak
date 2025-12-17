@@ -109,6 +109,11 @@ func DeleteArticleComment(ctx *gin.Context, id uint) error {
 	// 移除评论回复通知
 	RemoveReplyMessage(comment.ID)
 
+	// 删除子评论（所有parent_id等于当前评论id的评论）
+	if err := global.Mysql.Where("parent_id = ?", id).Delete(&model.Comment{}).Error; err != nil {
+		utils.ErrorLog("删除子评论失败", "comment", err.Error())
+	}
+
 	if err := global.Mysql.Where("id = ?", id).Delete(&model.Comment{}).Error; err != nil {
 		utils.ErrorLog("删除评论失败", "comment", err.Error())
 		return errors.New("删除失败")
