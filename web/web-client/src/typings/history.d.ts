@@ -1,7 +1,8 @@
 interface AddHistoryType {
   vid: number,
   part: number,
-  time: number
+  time: number,
+  duration: number
 }
 
 interface HistoryVideoType {

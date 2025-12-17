@@ -147,7 +147,8 @@ const loadPart = async (part: number) => {
       hasEnded.value = true; // 标记为已结束
 
       try {
-        await addHistoryAPI({ vid: props.videoInfo.vid, part: props.part, time: -1 });
+        const duration = player.video.duration || 0;
+        await addHistoryAPI({ vid: props.videoInfo.vid, part: props.part, time: -1, duration });
       } catch (error) {
         console.error('上报播放完成失败:', error);
       }
@@ -165,7 +166,8 @@ const loadPart = async (part: number) => {
     player.on('seeked', () => {
       const current = player.video.currentTime;
       if (Math.abs(current - lastSeekTime) > 10 && !isWatched() && !hasEnded.value) {
-        addHistoryAPI({ vid: props.videoInfo.vid, part: props.part, time: current });
+        const duration = player.video.duration || 0;
+        addHistoryAPI({ vid: props.videoInfo.vid, part: props.part, time: current, duration });
       }
       lastSeekTime = current;
     });
@@ -333,7 +335,8 @@ const uploadHistory = async () => {
     console.log('视频已播放结束，跳过进度上报');
     return;
   }
-  await addHistoryAPI({ vid: props.videoInfo.vid, part: props.part, time: player.video.currentTime });
+  const duration = player.video.duration || 0;
+  await addHistoryAPI({ vid: props.videoInfo.vid, part: props.part, time: player.video.currentTime, duration });
 }
 
 // ===== 分集切换监听 =====
@@ -393,7 +396,8 @@ onMounted(async () => {
 // ===== 页面关闭/离开时上报进度，已看完则不再上报 =====
 const reportOnLeave = () => {
   if (player && player.video && typeof player.video.currentTime === 'number' && !isWatched()) {
-    addHistoryAPI({ vid: props.videoInfo.vid, part: props.part, time: player.video.currentTime });
+    const duration = player.video.duration || 0;
+    addHistoryAPI({ vid: props.videoInfo.vid, part: props.part, time: player.video.currentTime, duration });
   }
 };
 if (typeof window !== 'undefined') {
