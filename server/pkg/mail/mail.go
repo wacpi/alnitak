@@ -50,7 +50,7 @@ func (m *Message) SetDialer(host string, port int, username, password string) {
 	m.Password = password
 }
 
-func (m *Message) DialAndSend(email string) error {
+func (m *Message) DialAndSend(fromEmail, toEmail string) error {
 	msg := []byte(m.GenerateMessage())
 	addr := fmt.Sprintf("%s:%d", m.Host, m.Port)
 
@@ -75,11 +75,12 @@ func (m *Message) DialAndSend(email string) error {
 		}
 	}
 
-	if err = c.Mail(m.Username); err != nil {
+	// 使用发件邮箱地址而不是登录用户名
+	if err = c.Mail(fromEmail); err != nil {
 		return err
 	}
 
-	if err = c.Rcpt(email); err != nil {
+	if err = c.Rcpt(toEmail); err != nil {
 		return err
 	}
 
@@ -124,13 +125,20 @@ func SendCaptcha(email string, code string) error {
  */
 func Send(email string, subject string, body string) error {
 	m := NewMessage()
-	m.SetHeader("From", global.Config.Mail.Addresser+" "+"<"+global.Config.Mail.User+">") //添加别名
-	m.SetHeader("To", email)                                                              //发送给多个用户
-	m.SetHeader("Subject", subject)                                                       //设置邮件主题
-	m.SetBody(body)                                                                       //设置邮件正文
+	// 使用独立的发件邮箱地址，如果未配置则回退到登录用户名
+	fromEmail := global.Config.Mail.From
+	if fromEmail == "" {
+		fromEmail = global.Config.Mail.User
+	}
+	m.SetHeader("From", global.Config.Mail.Addresser+" "+"<"+fromEmail+">")   //添加别名
+	m.SetHeader("To", email)                                                  //发送给多个用户
+	m.SetHeader("Subject", subject)                                           //设置邮件主题
+	m.SetHeader("MIME-Version", "1.0")                                        //MIME版本
+	m.SetHeader("Content-Type", "text/html; charset=UTF-8")                   //内容类型为HTML
+	m.SetBody(body)                                                           //设置邮件正文
 
 	m.SetDialer(global.Config.Mail.Host, global.Config.Mail.Port, global.Config.Mail.User, global.Config.Mail.Pass)
 
-	err := m.DialAndSend(email)
+	err := m.DialAndSend(fromEmail, email)
 	return err
 }
