@@ -47,12 +47,29 @@
               {{ result.cleanedImageFiles }} 条
             </n-tag>
           </n-descriptions-item>
+          <n-descriptions-item label="待清理Resource记录">
+            <n-tag :type="result.cleanedResources > 0 ? 'warning' : 'success'">
+              {{ result.cleanedResources }} 条
+            </n-tag>
+          </n-descriptions-item>
           <n-descriptions-item label="错误数量">
             <n-tag :type="result.errors.length > 0 ? 'error' : 'success'">
               {{ result.errors.length }} 个
             </n-tag>
           </n-descriptions-item>
         </n-descriptions>
+
+        <!-- 文件列表预览 -->
+        <div v-if="result.items && result.items.length > 0" style="margin-top: 16px;">
+          <n-divider>待清理文件列表</n-divider>
+          <n-data-table
+            :columns="itemColumns"
+            :data="result.items"
+            :max-height="300"
+            size="small"
+            :bordered="true"
+          />
+        </div>
 
         <n-alert v-if="result.errors.length > 0" type="error" title="错误信息" style="margin-top: 16px;">
           <ul style="margin: 0; padding-left: 20px;">
@@ -81,6 +98,9 @@
               <n-descriptions-item label="已清理图片文件记录">
                 <n-tag type="info">{{ cleanupResult.cleanedImageFiles }} 条</n-tag>
               </n-descriptions-item>
+              <n-descriptions-item label="已清理Resource记录">
+                <n-tag type="info">{{ cleanupResult.cleanedResources }} 条</n-tag>
+              </n-descriptions-item>
               <n-descriptions-item label="错误数量">
                 <n-tag :type="cleanupResult.errors.length > 0 ? 'error' : 'success'">
                   {{ cleanupResult.errors.length }} 个
@@ -106,8 +126,16 @@ import { statusCode } from "@/utils/status-code";
 import { getCleanupPreviewAPI, executeCleanupAPI } from '@/api/config';
 import {
   NAlert, NButton, NSpace, NCard, NDescriptions,
-  NDescriptionsItem, NTag, NResult, useMessage, useDialog
+  NDescriptionsItem, NTag, NResult, NDataTable, NDivider,
+  useMessage, useDialog
 } from "naive-ui";
+import type { DataTableColumns } from "naive-ui";
+
+interface CleanupItem {
+  type: string;
+  path: string;
+  reason: string;
+}
 
 interface CleanupResultType {
   cleanedVideoDirs: number;
@@ -115,8 +143,10 @@ interface CleanupResultType {
   cleanedVideoFiles: number;
   cleanedIndexFiles: number;
   cleanedImageFiles: number;
+  cleanedResources: number;
   errors: string[];
   dryRun: boolean;
+  items: CleanupItem[];
 }
 
 const message = useMessage();
@@ -131,11 +161,33 @@ const result = ref<CleanupResultType>({
   cleanedVideoFiles: 0,
   cleanedIndexFiles: 0,
   cleanedImageFiles: 0,
+  cleanedResources: 0,
   errors: [],
-  dryRun: true
+  dryRun: true,
+  items: []
 });
 
 const cleanupResult = ref<CleanupResultType | null>(null);
+
+// 文件列表表格列定义
+const itemColumns: DataTableColumns<CleanupItem> = [
+  {
+    title: '类型',
+    key: 'type',
+    width: 80,
+    render: (row) => row.type === 'video' ? '视频' : '图片'
+  },
+  {
+    title: '路径/文件名',
+    key: 'path',
+    ellipsis: { tooltip: true }
+  },
+  {
+    title: '清理原因',
+    key: 'reason',
+    width: 180
+  }
+];
 
 const hasPreview = computed(() => {
   return result.value.cleanedVideoDirs > 0 ||
@@ -188,8 +240,10 @@ const executeCleanup = async () => {
         cleanedVideoFiles: 0,
         cleanedIndexFiles: 0,
         cleanedImageFiles: 0,
+        cleanedResources: 0,
         errors: [],
-        dryRun: true
+        dryRun: true,
+        items: []
       };
       message.success("清理完成");
     } else {
