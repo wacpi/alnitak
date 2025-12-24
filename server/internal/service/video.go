@@ -189,14 +189,30 @@ func DeleteVideo(ctx *gin.Context, id uint) error {
 	// 停止正在进行的转码进程并清理文件
 	StopTranscodingAndCleanup(id)
 
+	// 先查询关联的资源记录，用于后续删除相关文件
+	var resources []model.Resource
+	global.Mysql.Where("vid = ?", id).Find(&resources)
+
+	// 删除关联的m3u8索引文件记录和视频文件记录（通过resource_id关联）
+	for _, resource := range resources {
+		// 查找VideoIndexFile获取DirName
+		var indexFile model.VideoIndexFile
+		global.Mysql.Where("resource_id = ?", resource.ID).First(&indexFile)
+		if indexFile.DirName != "" {
+			// 删除video_file表中对应的记录
+			if err := global.Mysql.Where("dir_name = ?", indexFile.DirName).Delete(&model.VideoFile{}).Error; err != nil {
+				utils.ErrorLog("删除视频文件记录失败", "video", err.Error())
+			}
+		}
+		// 删除VideoIndexFile记录
+		if err := global.Mysql.Where("resource_id = ?", resource.ID).Delete(&model.VideoIndexFile{}).Error; err != nil {
+			utils.ErrorLog("删除视频关联m3u8索引文件失败", "video", err.Error())
+		}
+	}
+
 	// 删除关联的资源记录
 	if err := global.Mysql.Where("vid = ?", id).Delete(&model.Resource{}).Error; err != nil {
 		utils.ErrorLog("删除视频关联资源失败", "video", err.Error())
-	}
-
-	// 删除关联的m3u8索引文件记录
-	if err := global.Mysql.Where("vid = ?", id).Delete(&model.VideoIndexFile{}).Error; err != nil {
-		utils.ErrorLog("删除视频关联m3u8索引文件失败", "video", err.Error())
 	}
 
 	// 删除关联的评论
@@ -224,24 +240,9 @@ func DeleteVideo(ctx *gin.Context, id uint) error {
 		utils.ErrorLog("删除视频关联历史记录失败", "video", err.Error())
 	}
 
-	// 删除关联的AT消息
-	if err := global.Mysql.Where("vid = ?", id).Delete(&model.AtMessage{}).Error; err != nil {
+	// 删除关联的AT消息（cid是内容ID，type=0表示视频）
+	if err := global.Mysql.Where("cid = ? and type = 0", id).Delete(&model.AtMessage{}).Error; err != nil {
 		utils.ErrorLog("删除视频关联AT消息失败", "video", err.Error())
-	}
-
-	// 删除关联的视频文件记录（通过resource查找dirName）
-	var resources []model.Resource
-	global.Mysql.Unscoped().Where("vid = ?", id).Find(&resources)
-	for _, resource := range resources {
-		// 查找VideoIndexFile获取DirName
-		var indexFile model.VideoIndexFile
-		global.Mysql.Unscoped().Where("resource_id = ?", resource.ID).First(&indexFile)
-		if indexFile.DirName != "" {
-			// 删除video_file表中对应的记录
-			if err := global.Mysql.Where("dir_name = ?", indexFile.DirName).Delete(&model.VideoFile{}).Error; err != nil {
-				utils.ErrorLog("删除视频文件记录失败", "video", err.Error())
-			}
-		}
 	}
 
 	if err := global.Mysql.Where("id = ?", id).Delete(&model.Video{}).Error; err != nil {
@@ -324,14 +325,30 @@ func DeleteVideoManage(ctx *gin.Context, id uint) error {
 	// 停止正在进行的转码进程并清理文件
 	StopTranscodingAndCleanup(id)
 
+	// 先查询关联的资源记录，用于后续删除相关文件
+	var resources []model.Resource
+	global.Mysql.Where("vid = ?", id).Find(&resources)
+
+	// 删除关联的m3u8索引文件记录和视频文件记录（通过resource_id关联）
+	for _, resource := range resources {
+		// 查找VideoIndexFile获取DirName
+		var indexFile model.VideoIndexFile
+		global.Mysql.Where("resource_id = ?", resource.ID).First(&indexFile)
+		if indexFile.DirName != "" {
+			// 删除video_file表中对应的记录
+			if err := global.Mysql.Where("dir_name = ?", indexFile.DirName).Delete(&model.VideoFile{}).Error; err != nil {
+				utils.ErrorLog("删除视频文件记录失败", "video", err.Error())
+			}
+		}
+		// 删除VideoIndexFile记录
+		if err := global.Mysql.Where("resource_id = ?", resource.ID).Delete(&model.VideoIndexFile{}).Error; err != nil {
+			utils.ErrorLog("删除视频关联m3u8索引文件失败", "video", err.Error())
+		}
+	}
+
 	// 删除关联的资源记录
 	if err := global.Mysql.Where("vid = ?", id).Delete(&model.Resource{}).Error; err != nil {
 		utils.ErrorLog("删除视频关联资源失败", "video", err.Error())
-	}
-
-	// 删除关联的m3u8索引文件记录
-	if err := global.Mysql.Where("vid = ?", id).Delete(&model.VideoIndexFile{}).Error; err != nil {
-		utils.ErrorLog("删除视频关联m3u8索引文件失败", "video", err.Error())
 	}
 
 	// 删除关联的评论
@@ -359,24 +376,9 @@ func DeleteVideoManage(ctx *gin.Context, id uint) error {
 		utils.ErrorLog("删除视频关联历史记录失败", "video", err.Error())
 	}
 
-	// 删除关联的AT消息
-	if err := global.Mysql.Where("vid = ?", id).Delete(&model.AtMessage{}).Error; err != nil {
+	// 删除关联的AT消息（cid是内容ID，type=0表示视频）
+	if err := global.Mysql.Where("cid = ? and type = 0", id).Delete(&model.AtMessage{}).Error; err != nil {
 		utils.ErrorLog("删除视频关联AT消息失败", "video", err.Error())
-	}
-
-	// 删除关联的视频文件记录（通过resource查找dirName）
-	var resources []model.Resource
-	global.Mysql.Unscoped().Where("vid = ?", id).Find(&resources)
-	for _, resource := range resources {
-		// 查找VideoIndexFile获取DirName
-		var indexFile model.VideoIndexFile
-		global.Mysql.Unscoped().Where("resource_id = ?", resource.ID).First(&indexFile)
-		if indexFile.DirName != "" {
-			// 删除video_file表中对应的记录
-			if err := global.Mysql.Where("dir_name = ?", indexFile.DirName).Delete(&model.VideoFile{}).Error; err != nil {
-				utils.ErrorLog("删除视频文件记录失败", "video", err.Error())
-			}
-		}
 	}
 
 	if err := global.Mysql.Where("id = ?", id).Delete(&model.Video{}).Error; err != nil {
