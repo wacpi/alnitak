@@ -78,3 +78,15 @@ func SetOtherConfig(ctx *gin.Context) {
 	// 返回给前端
 	resp.Ok(ctx)
 }
+
+// 获取资源清理预览
+func GetCleanupPreview(ctx *gin.Context) {
+	result := service.GetCleanupPreview()
+	resp.OkWithData(ctx, gin.H{"result": result})
+}
+
+// 执行资源清理
+func ExecuteCleanup(ctx *gin.Context) {
+	result := service.ExecuteCleanup()
+	resp.OkWithData(ctx, gin.H{"result": result})
+}

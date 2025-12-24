@@ -76,3 +76,11 @@ func (c *Casbin) AddPolicy(sub string, obj string, act string) bool {
 	}
 	return ok
 }
+
+// ReloadPolicy 重新从数据库加载策略
+func (c *Casbin) ReloadPolicy() error {
+	checkLock.Lock()
+	defer checkLock.Unlock()
+
+	return c.casbinEnforcer.LoadPolicy()
+}

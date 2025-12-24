@@ -13,7 +13,10 @@
       "Bash(done)",
       "Bash(go clean:*)",
       "Bash(go mod tidy:*)",
-      "Bash(go list:*)"
+      "Bash(go list:*)",
+      "Bash(grep:*)",
+      "Bash(dir:*)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": []
