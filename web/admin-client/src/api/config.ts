@@ -30,3 +30,13 @@ export const getEmailConfigAPI = () => {
 export const setEmailConfigAPI = (config: EmailConfigType) => {
   return request.post('v1/config/setEmailConfig', config);
 }
+
+//获取资源清理预览
+export const getCleanupPreviewAPI = () => {
+  return request.get('v1/config/getCleanupPreview');
+}
+
+//执行资源清理
+export const executeCleanupAPI = () => {
+  return request.post('v1/config/executeCleanup');
+}
