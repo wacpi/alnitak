@@ -38,7 +38,7 @@ const changeMenuFold = (val: boolean) => {
 
 // 获取分区
 const page = ref(1);
-const pageSize = 10;
+const pageSize = 12;
 const videoList = ref<VideoType[]>([])
 const { data } = await asyncGetHotVideoAPI(page.value, pageSize);
 if ((data.value as any).code === statusCode.OK) {
