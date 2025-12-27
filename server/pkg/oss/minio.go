@@ -66,7 +66,7 @@ func (m *MinIO) initMinIOClient(config Config) (*minio.Client, error) {
 	// 使用端点和访问/密钥初始化 MinIO 客户端
 	options := minio.Options{
 		Creds:  credentials.NewStaticV4(config.KeyID, config.KeySecret, ""),
-		Secure: config.Private,
+		Secure: config.UseSSL, // 是否使用HTTPS连接
 	}
 	client, err := minio.New(config.Endpoint, &options)
 	if err != nil {

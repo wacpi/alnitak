@@ -35,6 +35,7 @@ func InitStorage(c config.Storage) Storage {
 		Region:    c.Region,
 		Domain:    c.Domain,
 		Private:   c.Private,
+		UseSSL:    c.UseSSL,
 	}
 
 	s, err := initOss(c.OssType, config)

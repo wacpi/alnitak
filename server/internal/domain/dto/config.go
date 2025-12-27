@@ -10,25 +10,33 @@ type EmailConfigReq struct {
 }
 
 type StorageConfigReq struct {
-	MaxImgSize   int64
-	MaxVideoSize int64
+	MaxImgSize   int64 `json:"maxImgSize"`
+	MaxVideoSize int64 `json:"maxVideoSize"`
 
-	Type      string
-	KeyID     string
-	KeySecret string
-	Bucket    string
-	Endpoint  string
-	AppID     string
-	Region    string
-	Domain    string
-	Private   bool
+	Type      string `json:"type"`
+	KeyID     string `json:"keyId"`
+	KeySecret string `json:"keySecret"`
+	Bucket    string `json:"bucket"`
+	Endpoint  string `json:"endpoint"`
+	AppID     string `json:"appId"`
+	Region    string `json:"region"`
+	Domain    string `json:"domain"`
+	Private   bool   `json:"private"`
+	UseSSL    bool   `json:"useSSL"`
 
-	UploadMp4File bool
+	UploadMp4File bool `json:"uploadMp4File"`
 }
 
 type OtherConfigReq struct {
-	AllowOrigin     string
-	Prefix          string
-	Generate1080p60 bool
-	UseGpu          bool
+	AllowOrigin     string `json:"allowOrigin"`
+	Prefix          string `json:"prefix"`
+	Generate1080p60 bool   `json:"generate1080p60"`
+	UseGpu          bool   `json:"useGpu"`
+
+	// 服务器配置
+	ServerPort  string `json:"serverPort"`
+	SslEnabled  bool   `json:"sslEnabled"`
+	SslPort     string `json:"sslPort"`
+	SslCertFile string `json:"sslCertFile"`
+	SslKeyFile  string `json:"sslKeyFile"`
 }

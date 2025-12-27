@@ -2,12 +2,13 @@ package routes
 
 import (
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 	"interastral-peace.com/alnitak/internal/api/v1"
 	"interastral-peace.com/alnitak/internal/global"
 	"interastral-peace.com/alnitak/internal/middleware"
 )
 
-const port = "9000"
+const defaultPort = "9000"
 
 func InitRouter() {
 	// gin 模式
@@ -27,8 +28,34 @@ func InitRouter() {
 	// 收集添加路由
 	CollectRoutes(r)
 
-	// 运行
-	r.Run(":" + port)
+	// 获取HTTP端口
+	httpPort := global.Config.Server.Port
+	if httpPort == "" {
+		httpPort = defaultPort
+	}
+
+	// 检查是否启用HTTPS
+	sslConfig := global.Config.Server.Ssl
+	if sslConfig.Enabled {
+		// HTTPS模式
+		httpsPort := sslConfig.Port
+		if httpsPort == "" {
+			httpsPort = "443"
+		}
+
+		zap.L().Info("启动HTTPS服务器",
+			zap.String("port", httpsPort),
+			zap.String("cert", sslConfig.CertFile),
+			zap.String("key", sslConfig.KeyFile))
+
+		if err := r.RunTLS(":"+httpsPort, sslConfig.CertFile, sslConfig.KeyFile); err != nil {
+			zap.L().Fatal("HTTPS服务器启动失败", zap.Error(err))
+		}
+	} else {
+		// HTTP模式
+		zap.L().Info("启动HTTP服务器", zap.String("port", httpPort))
+		r.Run(":" + httpPort)
+	}
 }
 
 func CollectRoutes(r *gin.Engine) *gin.Engine {
