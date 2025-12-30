@@ -14,5 +14,8 @@ func StartCronTask() {
 	// 每天晚上12点解封用户
 	c.Every(1).Day().At("00:00").Do(UnbanUser)
 
+	// 每天凌晨3点清理孤立资源
+	c.Every(1).Day().At("03:00").Do(CleanupOrphanedResources)
+
 	<-c.Start()
 }

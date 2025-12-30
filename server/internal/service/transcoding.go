@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,14 +26,25 @@ type TranscodingTarget struct {
 	FpsName     string // 帧率名称
 }
 
+// 转码进程信息
+type TranscodingProcess struct {
+	VideoID    uint
+	ResourceID uint
+	Cmd        *exec.Cmd
+	CancelFunc context.CancelFunc
+	OutputDir  string
+}
+
 // 全局转码并发控制
 var (
 	transcodingSemaphore chan struct{} // 信号量，控制同时转码的任务数
 	semaphoreOnce        sync.Once
-	gpuAvailable         = true        // GPU是否可用
-	gpuCheckMutex        sync.RWMutex  // 保护GPU状态的读写锁
-	gpuFailCount         = 0           // GPU连续失败次数
-	maxGpuFailCount      = 3           // 最大允许GPU失败次数
+	gpuAvailable         = true                                // GPU是否可用
+	gpuCheckMutex        sync.RWMutex                          // 保护GPU状态的读写锁
+	gpuFailCount         = 0                                   // GPU连续失败次数
+	maxGpuFailCount      = 3                                   // 最大允许GPU失败次数
+	transcodingProcesses = make(map[uint][]TranscodingProcess) // key: videoID, value: 该视频的所有转码进程
+	processMapMutex      sync.RWMutex                          // 保护进程映射的读写锁
 )
 
 // 初始化转码并发控制（根据CPU核心数或配置）
@@ -127,26 +139,30 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 			transcodingSemaphore <- struct{}{}
 			defer func() { <-transcodingSemaphore }() // 释放资源锁
 
-			fileName := c.Resolution + "_" + c.BitrateRate + "_" + c.FpsName
-			tsFileName := transcodingInfo.OutputDir + fileName + ".ts"
+			// 创建可取消的context
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 
-			utils.InfoLog(fmt.Sprintf("【开始转码】%s", fileName), "transcoding")
+			fileName := c.Resolution + "_" + c.BitrateRate + "_" + c.FpsName
+
+			utils.InfoLog(fmt.Sprintf("【开始HLS一步式转码】%s", fileName), "transcoding")
 
 			// 智能选择转码方式：GPU优先，失败时自动降级到CPU
+			var m3u8File string
 			var err error
 			useGpu := global.Config.Transcoding.UseGpu && checkGPUAvailable()
 
 			if useGpu {
-				utils.InfoLog(fmt.Sprintf("【使用GPU转码】%s", fileName), "transcoding")
-				err = pressingVideoGPU(transcodingInfo.InputFile, tsFileName, c.Resolution, c.BitrateRate, c.FPS)
+				utils.InfoLog(fmt.Sprintf("【使用GPU一步式转码】%s", fileName), "transcoding")
+				m3u8File, err = pressingVideoGPU(ctx, transcodingInfo.VideoID, transcodingInfo.ResourceID, transcodingInfo.InputFile, transcodingInfo.OutputDir, fileName, c.Resolution, c.BitrateRate, c.FPS, cancel)
 
 				if err != nil {
 					utils.ErrorLog(fmt.Sprintf("【GPU转码失败】%s，尝试切换到CPU", fileName), "transcoding", err.Error())
 					handleGPUFailure()
 
 					// GPU失败后尝试使用CPU
-					utils.InfoLog(fmt.Sprintf("【降级到CPU转码】%s", fileName), "transcoding")
-					err = pressingVideo(transcodingInfo.InputFile, tsFileName, c.Resolution, c.BitrateRate, c.FPS)
+					utils.InfoLog(fmt.Sprintf("【降级到CPU一步式转码】%s", fileName), "transcoding")
+					m3u8File, err = pressingVideo(ctx, transcodingInfo.VideoID, transcodingInfo.ResourceID, transcodingInfo.InputFile, transcodingInfo.OutputDir, fileName, c.Resolution, c.BitrateRate, c.FPS, cancel)
 				} else {
 					// GPU转码成功，重置失败计数
 					gpuCheckMutex.Lock()
@@ -158,41 +174,20 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 				}
 			} else {
 				if global.Config.Transcoding.UseGpu && !checkGPUAvailable() {
-					utils.InfoLog(fmt.Sprintf("【使用CPU转码】%s（GPU已禁用）", fileName), "transcoding")
+					utils.InfoLog(fmt.Sprintf("【使用CPU一步式转码】%s（GPU已禁用）", fileName), "transcoding")
 				} else {
-					utils.InfoLog(fmt.Sprintf("【使用CPU转码】%s", fileName), "transcoding")
+					utils.InfoLog(fmt.Sprintf("【使用CPU一步式转码】%s", fileName), "transcoding")
 				}
-				err = pressingVideo(transcodingInfo.InputFile, tsFileName, c.Resolution, c.BitrateRate, c.FPS)
+				m3u8File, err = pressingVideo(ctx, transcodingInfo.VideoID, transcodingInfo.ResourceID, transcodingInfo.InputFile, transcodingInfo.OutputDir, fileName, c.Resolution, c.BitrateRate, c.FPS, cancel)
 			}
 
 			if err != nil {
-				utils.ErrorLog(fmt.Sprintf("【转码失败】%s", fileName), "transcoding", err.Error())
+				utils.ErrorLog(fmt.Sprintf("【HLS转码失败】%s", fileName), "transcoding", err.Error())
 				wg.Done()
 				return
 			}
 
-			utils.InfoLog(fmt.Sprintf("【转码完成】%s，等待文件锁释放", fileName), "transcoding")
-
-			// Windows文件锁问题：等待文件句柄完全释放
-			time.Sleep(100 * time.Millisecond)
-
-			// 验证文件是否存在且可读
-			if !utils.IsFileExists(tsFileName) {
-				utils.ErrorLog("ts文件不存在", "transcoding", tsFileName)
-				wg.Done()
-				return
-			}
-
-			// 切片
-			utils.InfoLog(fmt.Sprintf("【开始切片】%s", fileName), "transcoding")
-			m3u8File, err := generateVideoSlices(tsFileName, transcodingInfo.OutputDir, fileName)
-			if err != nil {
-				utils.ErrorLog(fmt.Sprintf("【切片失败】%s", fileName), "transcoding", err.Error())
-				wg.Done()
-				return
-			}
-
-			utils.InfoLog(fmt.Sprintf("【切片完成】%s，保存到数据库", fileName), "transcoding")
+			utils.InfoLog(fmt.Sprintf("【HLS转码完成】%s，保存到数据库", fileName), "transcoding")
 
 			// 读取m3u8写入数据库
 			err = saveM3u8File(transcodingInfo, fileName, m3u8File)
@@ -204,8 +199,7 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 
 			utils.InfoLog(fmt.Sprintf("【成功】%s 转码完成", fileName), "transcoding")
 
-			//删除临时文件
-			os.Remove(tsFileName)
+			// 删除临时m3u8文件（TS分段文件保留在磁盘）
 			os.Remove(m3u8File)
 
 			mu.Lock()
@@ -366,71 +360,185 @@ func getVideoInfo(input string) (info global.VideoInfo, err error) {
 	return info, nil
 }
 
-// CPU压缩视频
-func pressingVideo(inputFile, outputFile, quality, rate, fps string) error {
+// CPU一步式HLS转码：边转码边切片 (优化画质 + 音频接近无损重编码)
+func pressingVideo(ctx context.Context, videoID, resourceID uint, inputFile, outputDir, fileName, quality, rate, fps string, cancelFunc context.CancelFunc) (string, error) {
+	outputM3U8 := outputDir + fileName + ".m3u8"
+	outputTs := outputDir + fileName + "_%05d.ts"
+
+	// 解析 fps
+	fpsInt, err := strconv.Atoi(fps)
+	if err != nil {
+		fpsInt = 30 // 默认30fps
+	}
+
+	// 10秒切片
+	sliceSeconds := 10
+	gop := fpsInt * sliceSeconds
+
+	// 引入 Lanczos 高质量缩放滤镜
+	scaleFilter := fmt.Sprintf("scale=%s:flags=lanczos", quality)
+
 	command := []string{
 		"-i", inputFile,
+
+		// --- 视频参数 ---
+		// 1. 画质控制：CRF 20 (建议值)
 		"-crf", "20",
-		"-s", quality,
+		// 2. 缩放质量：Lanczos 算法
+		"-vf", scaleFilter,
+		// 3. 编码效率：slow (同码率下画质更好)
+		"-preset", "slow",
+		// 4. 心理视觉调优
+		"-tune", "film",
+		// 5. 去块滤波优化
+		"-x264-params", "deblock=-1:-1:keyint-min=" + strconv.Itoa(gop),
+		// 6. Profile
+		"-profile:v", "high",
 		"-b:v", rate,
 		"-c:v", "libx264",
 		"-r", fps,
-		"-vsync", "cfr", // 确保恒定帧率，避免帧数不匹配
-		"-c:a", "copy",
-		//"-b:a", "320k", // 高质量音频码率 (原来默认128k,现在320k)
-		"-f", "mpegts",
-		"-copyts", // 保留原始时间戳
-		outputFile,
+
+		// --- HLS 关键帧对齐 ---
+		"-g", strconv.Itoa(gop),
+		"-sc_threshold", "0",
+		"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", sliceSeconds),
+		"-vsync", "cfr",
+
+		// --- 音频参数 (修改部分) ---
+		// 行业标准高音质重编码：解决兼容性与时间戳问题，同时保持接近无损的听感
+		"-c:a", "aac", // 编码器：AAC (兼容性之王)
+		"-b:a", "320k", // 码率：320kbps (AAC的画质上限，听感透明)
+		"-ar", "48000", // 采样率：48kHz (视频标准)
+		"-ac", "2", // 声道：双声道 (立体声)
+		"-af", "aresample=async=1", // 音频滤镜：修正音频时间戳，防止音画不同步
+
+		// --- HLS 切片设置 ---
+		"-f", "hls",
+		"-hls_time", strconv.Itoa(sliceSeconds),
+		"-hls_list_size", "0",
+		"-hls_segment_type", "mpegts",
+		"-hls_segment_filename", outputTs,
+		"-hls_playlist_type", "vod",
+
+		outputM3U8,
 	}
 
-	_, err := utils.RunCmd(exec.Command("ffmpeg", command...))
+	// 使用CommandContext支持取消
+	cmd := exec.CommandContext(ctx, "ffmpeg", command...)
+
+	// 注册转码进程
+	if err := cmd.Start(); err != nil {
+		utils.ErrorLog("HLS转码启动失败", "transcoding", err.Error())
+		return outputM3U8, err
+	}
+
+	registerTranscodingProcess(videoID, resourceID, cmd, cancelFunc, outputDir)
+	defer unregisterTranscodingProcess(videoID, resourceID)
+
+	// 等待命令完成
+	err = cmd.Wait()
 	if err != nil {
-		utils.ErrorLog("压缩视频失败", "transcoding", err.Error())
-		return err
+		utils.ErrorLog("HLS转码失败", "transcoding", err.Error())
+		return outputM3U8, err
 	}
 
-	return nil
+	return outputM3U8, nil
 }
 
-// GPU压缩视频
-func pressingVideoGPU(inputFile, outputFile, quality, rate, fps string) error {
+// GPU一步式HLS转码：边转码边切片（使用NVIDIA硬件加速 - 优化画质 + 音频接近无损重编码）
+func pressingVideoGPU(ctx context.Context, videoID, resourceID uint, inputFile, outputDir, fileName, quality, rate, fps string, cancelFunc context.CancelFunc) (string, error) {
+	outputM3U8 := outputDir + fileName + ".m3u8"
+	outputTs := outputDir + fileName + "_%05d.ts"
+
+	fpsInt, err := strconv.Atoi(fps)
+	if err != nil {
+		fpsInt = 30
+	}
+
+	sliceSeconds := 10
+	gop := fpsInt * sliceSeconds
+
+	// 引入 Lanczos 高质量缩放滤镜
+	scaleFilter := fmt.Sprintf("scale=%s:flags=lanczos", quality)
+
 	command := []string{
 		"-i", inputFile,
-		"-crf", "20",
-		"-s", quality,
-		"-preset", "p3",
-		"-b:v", rate,
+
+		// --- 视频参数 (NVENC) ---
+		// 1. 恒定质量控制
+		"-cq", "22",
+		// 2. 缩放
+		"-vf", scaleFilter,
+		// 3. 预设：最高质量 p6
+		"-preset", "p6",
+		// 4. 码率控制模式：VBR_HQ
+		"-rc", "vbr_hq",
+
+		"-b:v", rate, // MaxRate
 		"-c:v", "h264_nvenc",
 		"-r", fps,
-		"-vsync", "cfr", // 确保恒定帧率，避免帧数不匹配
-		"-c:a", "copy",  // ✅ GPU 版本同样直接拷贝音频流
-		"-f", "mpegts",
-		"-copyts", // 保留原始时间戳
-		outputFile,
+
+		// --- HLS 关键帧对齐 ---
+		"-g", strconv.Itoa(gop),
+		"-keyint_min", strconv.Itoa(gop),
+		"-sc_threshold", "0",
+		"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", sliceSeconds),
+		"-vsync", "cfr",
+
+		// --- 音频参数 (修改部分) ---
+		// 即使是 GPU 视频转码，音频通常也是由 CPU 处理的，参数同上
+		"-c:a", "aac",
+		"-b:a", "320k",
+		"-ar", "48000",
+		"-ac", "2",
+		"-af", "aresample=async=1", // 关键：防止 GPU 视频编码速度过快导致的音画同步问题
+
+		// --- HLS 切片设置 ---
+		"-f", "hls",
+		"-hls_time", strconv.Itoa(sliceSeconds),
+		"-hls_list_size", "0",
+		"-hls_segment_type", "mpegts",
+		"-hls_segment_filename", outputTs,
+		"-hls_playlist_type", "vod",
+
+		outputM3U8,
 	}
 
-	out, err := utils.RunCmd(exec.Command("ffmpeg", command...))
+	// 使用CommandContext支持取消
+	cmd := exec.CommandContext(ctx, "ffmpeg", command...)
+
+	// 注册转码进程
+	if err := cmd.Start(); err != nil {
+		utils.ErrorLog("GPU HLS转码启动失败", "transcoding", err.Error())
+		return outputM3U8, err
+	}
+
+	registerTranscodingProcess(videoID, resourceID, cmd, cancelFunc, outputDir)
+	defer unregisterTranscodingProcess(videoID, resourceID)
+
+	// 等待命令完成
+	err = cmd.Wait()
 	if err != nil {
 		errMsg := err.Error()
-		outStr := out.String()
 
 		// 检测是否是GPU相关错误
-		if strings.Contains(outStr, "No NVENC capable devices found") ||
-			strings.Contains(outStr, "Cannot load nvcuda.dll") ||
-			strings.Contains(outStr, "CUDA driver version is insufficient") ||
-			strings.Contains(outStr, "h264_nvenc") ||
+		if strings.Contains(errMsg, "No NVENC capable devices found") ||
+			strings.Contains(errMsg, "Cannot load nvcuda.dll") ||
+			strings.Contains(errMsg, "CUDA driver version is insufficient") ||
+			strings.Contains(errMsg, "h264_nvenc") ||
 			strings.Contains(errMsg, "nvenc") {
-			utils.ErrorLog("GPU不可用或驱动异常", "transcoding", outStr)
-			return fmt.Errorf("GPU error: %s", outStr)
+			utils.ErrorLog("GPU不可用或驱动异常", "transcoding", errMsg)
+			return outputM3U8, fmt.Errorf("GPU error: %s", errMsg)
 		}
 
-		utils.ErrorLog("GPU压缩视频失败", "transcoding", errMsg)
-		return err
+		utils.ErrorLog("GPU HLS转码失败", "transcoding", errMsg)
+		return outputM3U8, err
 	}
 
-	return nil
+	return outputM3U8, nil
 }
 
+/*
 func generateVideoSlices(inputFile, outputDir, outputName string) (string, error) {
 	outputM3U8 := outputDir + outputName + ".m3u8"
 	outputTs := outputDir + outputName + "_%05d.ts"
@@ -455,6 +563,7 @@ func generateVideoSlices(inputFile, outputDir, outputName string) (string, error
 
 	return outputM3U8, nil
 }
+*/
 
 // 保存m3u8文件
 func saveM3u8File(transcodingInfo *dto.TranscodingInfo, fileName, m3u8File string) error {
@@ -578,75 +687,96 @@ func completeTransCoding(videoId, resourceId uint, status int) error {
 
 	tx := global.Mysql.Begin()
 
+	// 查询当前视频状态（需要提前查询,以便决定资源的最终状态）
+	var currentVideo model.Video
+	tx.Model(&model.Video{}).Where("id = ?", videoId).First(&currentVideo)
+	utils.InfoLog(fmt.Sprintf("【事务查询】VideoID=%d 当前status=%d", videoId, currentVideo.Status), "transcoding")
+
 	// 查询当前资源状态
 	var currentResource model.Resource
 	tx.Model(&model.Resource{}).Where("id = ?", resourceId).First(&currentResource)
 	utils.InfoLog(fmt.Sprintf("【事务查询】ResourceID=%d 当前status=%d", resourceId, currentResource.Status), "transcoding")
 
-	// 更新资源状态
-	result := tx.Model(&model.Resource{}).Where("id = ?", resourceId).Updates(
+	// 先检查是否所有资源都转码完成（包括当前这个资源）
+	var processingCount int64
+	tx.Model(&model.Resource{}).Where("vid = ? and status = ? and id != ?", videoId, global.VIDEO_PROCESSING, resourceId).Count(&processingCount)
+	utils.InfoLog(fmt.Sprintf("【事务查询】VideoID=%d 除当前资源外,仍在转码中(status=200)的资源数=%d", videoId, processingCount), "transcoding")
+
+	// 如果还有其他资源在转码中,当前资源保持VIDEO_PROCESSING状态,不更新
+	// 只有当所有资源都转码完成时,才统一更新所有资源状态
+	if processingCount > 0 {
+		utils.InfoLog(fmt.Sprintf("【跳过更新】还有%d个其他资源在转码中,当前资源保持VIDEO_PROCESSING(200)状态", processingCount), "transcoding")
+		// 不更新资源状态,直接提交事务
+		if err := tx.Commit().Error; err != nil {
+			utils.ErrorLog("【事务失败】提交事务失败", "transcoding", err.Error())
+			return err
+		}
+		utils.InfoLog("【事务提交】成功（资源状态未更新）", "transcoding")
+		cache.DelVideoInfo(videoId)
+		utils.InfoLog(fmt.Sprintf("【缓存清理】删除VideoID=%d的缓存", videoId), "transcoding")
+		utils.InfoLog("========== completeTransCoding 结束 ==========", "transcoding")
+		return nil
+	}
+
+	// 所有资源都转码完成了,现在统一更新状态
+	utils.InfoLog("【判断】所有资源转码已完成,准备统一更新所有资源状态", "transcoding")
+
+	// 如果视频已经审核通过,资源应该直接设为审核通过状态
+	if currentVideo.Status == global.AUDIT_APPROVED && status == global.WAITING_REVIEW {
+		status = global.AUDIT_APPROVED
+		utils.InfoLog("【状态修正】视频已审核通过,资源status从WAITING_REVIEW(500)改为AUDIT_APPROVED(0)", "transcoding")
+	}
+
+	// 统一更新所有转码中的资源状态(包括当前资源)
+	result := tx.Model(&model.Resource{}).Where("vid = ? and status = ?", videoId, global.VIDEO_PROCESSING).Updates(
 		map[string]any{
 			"status": status,
 		},
 	)
 	if result.Error != nil {
 		tx.Rollback()
-		utils.ErrorLog("【事务失败】更新资源状态失败", "transcoding", result.Error.Error())
+		utils.ErrorLog("【事务失败】批量更新资源状态失败", "transcoding", result.Error.Error())
 		return result.Error
 	}
-	utils.InfoLog(fmt.Sprintf("【事务执行】更新resource表 ResourceID=%d status=%d, 影响行数=%d", resourceId, status, result.RowsAffected), "transcoding")
+	utils.InfoLog(fmt.Sprintf("【事务执行】批量更新resource表 VideoID=%d所有资源 status=%d, 影响行数=%d", videoId, status, result.RowsAffected), "transcoding")
 
-	// 获取转码中资源的数量
-	var count int64
-	tx.Model(&model.Resource{}).Where("vid = ? and status = ?", videoId, global.VIDEO_PROCESSING).Count(&count)
-	utils.InfoLog(fmt.Sprintf("【事务查询】VideoID=%d 仍在转码中(status=200)的资源数=%d", videoId, count), "transcoding")
+	// 所有资源状态已更新完成,现在更新视频状态
+	utils.InfoLog("【判断】所有资源转码已完成，准备更新video状态", "transcoding")
 
-	// 如果没有转码中的视频，则更新视频状态为待审核
-	if count == 0 {
-		utils.InfoLog("【判断】所有资源转码已完成，准备更新video状态", "transcoding")
+	// 检查所有资源是否都失败了
+	var totalCount int64
+	var failedCount int64
+	tx.Model(&model.Resource{}).Where("vid = ?", videoId).Count(&totalCount)
+	tx.Model(&model.Resource{}).Where("vid = ? and status = ?", videoId, global.PROCESSING_FAIL).Count(&failedCount)
+	utils.InfoLog(fmt.Sprintf("【事务查询】VideoID=%d 总资源数=%d, 失败资源数=%d", videoId, totalCount, failedCount), "transcoding")
 
-		// 检查所有资源是否都失败了
-		var totalCount int64
-		var failedCount int64
-		tx.Model(&model.Resource{}).Where("vid = ?", videoId).Count(&totalCount)
-		tx.Model(&model.Resource{}).Where("vid = ? and status = ?", videoId, global.PROCESSING_FAIL).Count(&failedCount)
-		utils.InfoLog(fmt.Sprintf("【事务查询】VideoID=%d 总资源数=%d, 失败资源数=%d", videoId, totalCount, failedCount), "transcoding")
-
-		var videoStatus int
-		if failedCount == totalCount {
-			// 所有资源都失败，视频状态设为处理失败
-			videoStatus = global.PROCESSING_FAIL
-			utils.InfoLog("【判断】全部资源失败，video status设为PROCESSING_FAIL(3000)", "transcoding")
-		} else {
-			// 至少有一个资源成功，视频状态设为待审核
-			videoStatus = global.WAITING_REVIEW
-			utils.InfoLog("【判断】至少一个资源成功，video status设为WAITING_REVIEW(500)", "transcoding")
-		}
-
-		// 查询当前视频状态
-		var currentVideo model.Video
-		tx.Model(&model.Video{}).Where("id = ?", videoId).First(&currentVideo)
-		utils.InfoLog(fmt.Sprintf("【事务查询】VideoID=%d 当前status=%d", videoId, currentVideo.Status), "transcoding")
-
-		// 更新视频状态（不限制为SUBMIT_REVIEW，允许从CREATED_VIDEO等状态更新）
-		videoResult := tx.Model(&model.Video{}).Where("id = ? and status NOT IN (?, ?)", videoId, global.AUDIT_APPROVED, global.REVIEW_FAILED).Updates(
-			map[string]any{
-				"status": videoStatus,
-			},
-		)
-		if videoResult.Error != nil {
-			tx.Rollback()
-			utils.ErrorLog("【事务失败】更新视频状态失败", "transcoding", videoResult.Error.Error())
-			return videoResult.Error
-		}
-		utils.InfoLog(fmt.Sprintf("【事务执行】更新video表 VideoID=%d status=%d, WHERE条件: status NOT IN (0,2000), 影响行数=%d",
-			videoId, videoStatus, videoResult.RowsAffected), "transcoding")
-
-		if videoResult.RowsAffected == 0 {
-			utils.InfoLog(fmt.Sprintf("【警告】video表更新影响0行！可能video.status已经是0或2000，当前status=%d", currentVideo.Status), "transcoding")
-		}
+	var videoStatus int
+	if failedCount == totalCount {
+		// 所有资源都失败，视频状态设为处理失败
+		videoStatus = global.PROCESSING_FAIL
+		utils.InfoLog("【判断】全部资源失败，video status设为PROCESSING_FAIL(3000)", "transcoding")
 	} else {
-		utils.InfoLog(fmt.Sprintf("【跳过】还有%d个资源在转码中，暂不更新video状态", count), "transcoding")
+		// 至少有一个资源成功，视频状态设为待审核
+		videoStatus = global.WAITING_REVIEW
+		utils.InfoLog("【判断】至少一个资源成功，video status设为WAITING_REVIEW(500)", "transcoding")
+	}
+
+	// 更新视频状态（不限制为SUBMIT_REVIEW，允许从CREATED_VIDEO等状态更新）
+	videoResult := tx.Model(&model.Video{}).Where("id = ? and status NOT IN (?, ?)", videoId, global.AUDIT_APPROVED, global.REVIEW_FAILED).Updates(
+		map[string]any{
+			"status": videoStatus,
+		},
+	)
+	if videoResult.Error != nil {
+		tx.Rollback()
+		utils.ErrorLog("【事务失败】更新视频状态失败", "transcoding", videoResult.Error.Error())
+		return videoResult.Error
+	}
+	utils.InfoLog(fmt.Sprintf("【事务执行】更新video表 VideoID=%d status=%d, WHERE条件: status NOT IN (0,2000), 影响行数=%d",
+		videoId, videoStatus, videoResult.RowsAffected), "transcoding")
+
+	if videoResult.RowsAffected == 0 {
+		utils.InfoLog(fmt.Sprintf("【警告】video表更新影响0行！可能video.status已经是0或2000，当前status=%d", currentVideo.Status), "transcoding")
 	}
 
 	if err := tx.Commit().Error; err != nil {
@@ -662,5 +792,100 @@ func completeTransCoding(videoId, resourceId uint, status int) error {
 
 	utils.InfoLog("========== completeTransCoding 结束 ==========", "transcoding")
 
+	return nil
+}
+
+// 注册转码进程
+func registerTranscodingProcess(videoID, resourceID uint, cmd *exec.Cmd, cancelFunc context.CancelFunc, outputDir string) {
+	processMapMutex.Lock()
+	defer processMapMutex.Unlock()
+
+	process := TranscodingProcess{
+		VideoID:    videoID,
+		ResourceID: resourceID,
+		Cmd:        cmd,
+		CancelFunc: cancelFunc,
+		OutputDir:  outputDir,
+	}
+
+	transcodingProcesses[videoID] = append(transcodingProcesses[videoID], process)
+	utils.InfoLog(fmt.Sprintf("【注册转码进程】VideoID=%d, ResourceID=%d, PID=%d", videoID, resourceID, cmd.Process.Pid), "transcoding")
+}
+
+// 注销转码进程
+func unregisterTranscodingProcess(videoID, resourceID uint) {
+	processMapMutex.Lock()
+	defer processMapMutex.Unlock()
+
+	processes, exists := transcodingProcesses[videoID]
+	if !exists {
+		return
+	}
+
+	// 过滤掉指定的resourceID
+	newProcesses := make([]TranscodingProcess, 0)
+	for _, p := range processes {
+		if p.ResourceID != resourceID {
+			newProcesses = append(newProcesses, p)
+		}
+	}
+
+	if len(newProcesses) == 0 {
+		delete(transcodingProcesses, videoID)
+		utils.InfoLog(fmt.Sprintf("【注销转码进程】VideoID=%d 所有进程已清理", videoID), "transcoding")
+	} else {
+		transcodingProcesses[videoID] = newProcesses
+		utils.InfoLog(fmt.Sprintf("【注销转码进程】VideoID=%d, ResourceID=%d", videoID, resourceID), "transcoding")
+	}
+}
+
+// 停止视频的所有转码进程并清理文件
+func StopTranscodingAndCleanup(videoID uint) error {
+	processMapMutex.Lock()
+	processes, exists := transcodingProcesses[videoID]
+	if !exists || len(processes) == 0 {
+		processMapMutex.Unlock()
+		utils.InfoLog(fmt.Sprintf("【停止转码】VideoID=%d 没有正在运行的转码进程", videoID), "transcoding")
+		return nil
+	}
+
+	// 复制一份进程列表，避免在处理过程中持有锁
+	processesCopy := make([]TranscodingProcess, len(processes))
+	copy(processesCopy, processes)
+	delete(transcodingProcesses, videoID)
+	processMapMutex.Unlock()
+
+	utils.InfoLog(fmt.Sprintf("【停止转码】VideoID=%d 找到%d个转码进程，准备停止", videoID, len(processesCopy)), "transcoding")
+
+	for _, process := range processesCopy {
+		// 取消context（如果有）
+		if process.CancelFunc != nil {
+			process.CancelFunc()
+			utils.InfoLog(fmt.Sprintf("【取消Context】ResourceID=%d", process.ResourceID), "transcoding")
+		}
+
+		// 杀死进程
+		if process.Cmd != nil && process.Cmd.Process != nil {
+			pid := process.Cmd.Process.Pid
+			err := process.Cmd.Process.Kill()
+			if err != nil {
+				utils.ErrorLog(fmt.Sprintf("【杀死进程失败】PID=%d", pid), "transcoding", err.Error())
+			} else {
+				utils.InfoLog(fmt.Sprintf("【杀死进程成功】PID=%d", pid), "transcoding")
+			}
+		}
+
+		// 清理输出目录
+		if process.OutputDir != "" {
+			err := os.RemoveAll(process.OutputDir)
+			if err != nil {
+				utils.ErrorLog(fmt.Sprintf("【删除输出目录失败】%s", process.OutputDir), "transcoding", err.Error())
+			} else {
+				utils.InfoLog(fmt.Sprintf("【删除输出目录成功】%s", process.OutputDir), "transcoding")
+			}
+		}
+	}
+
+	utils.InfoLog(fmt.Sprintf("【停止转码完成】VideoID=%d", videoID), "transcoding")
 	return nil
 }

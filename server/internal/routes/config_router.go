@@ -24,6 +24,10 @@ func CollectConfigRoutes(r *gin.RouterGroup) {
 		configAuth.GET("getOtherConfig", api.GetOtherConfig)
 		// 修改其他配置
 		configAuth.POST("setOtherConfig", api.SetOtherConfig)
+		// 获取资源清理预览
+		configAuth.GET("getCleanupPreview", api.GetCleanupPreview)
+		// 执行资源清理
+		configAuth.POST("executeCleanup", api.ExecuteCleanup)
 	}
 
 }

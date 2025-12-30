@@ -5,7 +5,18 @@
       "Read(//e/server/alnitak/**)",
       "Read(//e/server/**)",
       "Read(//e/web/alnitak/**)",
-      "Bash(go build:*)"
+      "Bash(go build:*)",
+      "Bash(git checkout:*)",
+      "Bash(git restore:*)",
+      "Bash(while ps aux)",
+      "Bash(do sleep 5)",
+      "Bash(done)",
+      "Bash(go clean:*)",
+      "Bash(go mod tidy:*)",
+      "Bash(go list:*)",
+      "Bash(grep:*)",
+      "Bash(dir:*)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": []

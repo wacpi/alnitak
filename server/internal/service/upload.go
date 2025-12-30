@@ -1,8 +1,11 @@
 package service
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"os"
 	"path"
@@ -19,12 +22,10 @@ import (
 
 func UploadImg(ctx *gin.Context, file *multipart.FileHeader) (string, error) {
 	suffix := path.Ext(file.Filename)
-	fileName := generateImgFilename(suffix)
+	userId := ctx.GetUint("userId")
 
-	objectKey := "image/" + fileName
-	filePath := "./upload/image/" + fileName
 	// 参数校验
-	if !utils.IsImgType(suffix) { // 文件后缀
+	if !utils.IsImgType(suffix, global.Config.File.AllowedImgExts) { // 文件后缀
 		return "", errors.New("文件类型错误")
 	}
 
@@ -33,10 +34,38 @@ func UploadImg(ctx *gin.Context, file *multipart.FileHeader) (string, error) {
 		return "", errors.New("文件大小超出限制")
 	}
 
+	// 计算文件hash
+	fileHash, err := calculateFileHash(file)
+	if err != nil {
+		return "", errors.New("计算文件hash失败")
+	}
+
+	// 查询是否已存在相同hash的图片
+	var existingFile model.ImageFile
+	global.Mysql.Where("hash = ?", fileHash).First(&existingFile)
+	if existingFile.ID != 0 {
+		// 已存在相同图片，直接返回已有的URL
+		url := generateFileUrl("image/" + existingFile.FileName)
+		cache.SetUploadImage(url, userId)
+		return url, nil
+	}
+
+	// 生成新文件名并保存
+	fileName := generateImgFilename(suffix)
+	objectKey := "image/" + fileName
+	filePath := "./upload/image/" + fileName
+
 	//保存文件
 	if err := ctx.SaveUploadedFile(file, filePath); err != nil {
 		return "", errors.New("文件上传失败")
 	}
+
+	// 记录到数据库
+	global.Mysql.Create(&model.ImageFile{
+		Uid:      userId,
+		FileName: fileName,
+		Hash:     fileHash,
+	})
 
 	url := generateFileUrl(objectKey)
 	if global.Config.Storage.OssType != "local" {
@@ -45,10 +74,25 @@ func UploadImg(ctx *gin.Context, file *multipart.FileHeader) (string, error) {
 	}
 
 	// 缓存url
-	userId := ctx.GetUint("userId")
 	cache.SetUploadImage(url, userId)
 
 	return url, nil
+}
+
+// 计算上传文件的MD5 hash
+func calculateFileHash(file *multipart.FileHeader) (string, error) {
+	src, err := file.Open()
+	if err != nil {
+		return "", err
+	}
+	defer src.Close()
+
+	hash := md5.New()
+	if _, err := io.Copy(hash, src); err != nil {
+		return "", err
+	}
+
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func UploadVideoCreate(ctx *gin.Context, videoFileReq dto.VideoFileReq) (vo.ResourceResp, error) {
@@ -119,7 +163,7 @@ func UploadVideoChunk(ctx *gin.Context, file *multipart.FileHeader) error {
 	totalChunks, _ := strconv.Atoi(ctx.PostForm("totalChunks"))
 
 	suffix := path.Ext(fileName)
-	if !utils.IsVideoType(suffix) { // 文件后缀
+	if !utils.IsVideoType(suffix, global.Config.File.AllowedVideoExts) { // 文件后缀
 		return errors.New("视频上传失败")
 	}
 
