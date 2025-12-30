@@ -45,7 +45,8 @@ const videoListRef = ref<HTMLElement>();
 const getUploadVideo = async () => {
   const res = await getUploadVideoAPI(page.value, pageSize.value);
   if (res.data.code === statusCode.OK) {
-    const approvedVideos = res.data.data.videos.filter((video: ManuscriptVideoType) => video.status === reviewCode.AUDIT_APPROVED);
+    const videos = res.data.data.videos || [];
+    const approvedVideos = videos.filter((video: ManuscriptVideoType) => video.status === reviewCode.AUDIT_APPROVED);
     videoList.value = approvedVideos;
 
     total.value = approvedVideos.length;
