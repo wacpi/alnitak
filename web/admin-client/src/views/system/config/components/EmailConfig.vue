@@ -4,17 +4,20 @@
       <n-form-item label="发件人名称">
         <n-input placeholder="发件人名称" v-model:value="emailForm.addresser" />
       </n-form-item>
-      <n-form-item label="主机">
-        <n-input placeholder="主机" v-model:value="emailForm.host" />
+      <n-form-item label="SMTP主机">
+        <n-input placeholder="SMTP服务器地址" v-model:value="emailForm.host" />
       </n-form-item>
-      <n-form-item label="端口">
+      <n-form-item label="SMTP端口">
         <n-input-number placeholder="端口" v-model:value="emailForm.port" />
       </n-form-item>
-      <n-form-item label="邮箱地址">
-        <n-input placeholder="邮箱地址" v-model:value="emailForm.user" />
+      <n-form-item label="登录用户名">
+        <n-input placeholder="SMTP登录用户名" v-model:value="emailForm.user" />
+      </n-form-item>
+      <n-form-item label="发件邮箱">
+        <n-input placeholder="发件邮箱地址" v-model:value="emailForm.from" />
       </n-form-item>
       <n-form-item label="授权码">
-        <n-input placeholder="授权码" type="password" v-model:value="emailForm.pass" />
+        <n-input placeholder="SMTP密码/授权码" type="password" v-model:value="emailForm.pass" />
       </n-form-item>
       <div class="submit">
         <span>如不修改密码请留空</span>
@@ -35,6 +38,7 @@ const emailForm = reactive({
   host: '',
   port: 465,
   user: '',
+  from: '',
   pass: ''
 });
 
@@ -48,6 +52,7 @@ const getEmailConfig = async () => {
     emailForm.host = data.host;
     emailForm.port = data.port;
     emailForm.user = data.user;
+    emailForm.from = data.from;
   } else {
     message.error("加载邮箱配置失败");
   }
