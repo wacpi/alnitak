@@ -95,6 +95,13 @@ watch(
   },
   { immediate: true }
 );
+// ===== 工具函数 =====
+// 将进度转换为整数秒
+const toBizSecond = (v: number | null | undefined): number => {
+  if (typeof v !== 'number' || !isFinite(v) || v <= 0) return 0;
+  return Math.floor(v);
+};
+
 
 // ===== 播放器 ready 回调与定时上报历史 =====
 let timer: number | null = null;
@@ -147,7 +154,15 @@ const loadPart = async (part: number) => {
       hasEnded.value = true; // 标记为已结束
 
       try {
-        await addHistoryAPI({ vid: props.videoInfo.vid, part: props.part, time: -1 });
+        // ✅ 业务层统一使用“整数秒”
+        const duration = Math.floor(player.video.duration || 0);
+
+        await addHistoryAPI({
+          vid: props.videoInfo.vid,
+          part: props.part,
+          time: -1,        // 已看完统一用 -1
+          duration,        // 整数秒
+        });
       } catch (error) {
         console.error('上报播放完成失败:', error);
       }
@@ -160,12 +175,15 @@ const loadPart = async (part: number) => {
       }
     });
 
+
     // 监听进度条大跨度跳转
     let lastSeekTime = 0;
     player.on('seeked', () => {
       const current = player.video.currentTime;
       if (Math.abs(current - lastSeekTime) > 10 && !isWatched() && !hasEnded.value) {
-        addHistoryAPI({ vid: props.videoInfo.vid, part: props.part, time: current });
+        const current = Math.floor(player.video.currentTime || 0);
+        const duration = Math.floor(player.video.duration || 0);
+        addHistoryAPI({ vid: props.videoInfo.vid, part: props.part, time: current, duration });
       }
       lastSeekTime = current;
     });
@@ -333,8 +351,18 @@ const uploadHistory = async () => {
     console.log('视频已播放结束，跳过进度上报');
     return;
   }
-  await addHistoryAPI({ vid: props.videoInfo.vid, part: props.part, time: player.video.currentTime });
+
+  const duration = Math.floor(player.video.duration || 0); // 总时长取整
+  const currentTime = Math.floor(player.video.currentTime); // 当前进度取整
+
+  await addHistoryAPI({
+    vid: props.videoInfo.vid,
+    part: props.part,
+    time: currentTime >= duration ? -1 : currentTime, // 播放完了就上报 -1
+    duration,
+  });
 }
+
 
 // ===== 分集切换监听 =====
 watch(() => props.part, (newPart, oldPart) => {
@@ -393,7 +421,9 @@ onMounted(async () => {
 // ===== 页面关闭/离开时上报进度，已看完则不再上报 =====
 const reportOnLeave = () => {
   if (player && player.video && typeof player.video.currentTime === 'number' && !isWatched()) {
-    addHistoryAPI({ vid: props.videoInfo.vid, part: props.part, time: player.video.currentTime });
+    const duration = Math.floor(player.video.duration || 0); // 总时长取整
+    const currentTime = Math.floor(player.video.currentTime); // 当前进度取整
+    addHistoryAPI({ vid: props.videoInfo.vid, part: props.part, time: currentTime >= duration ? -1 : currentTime, duration });
   }
 };
 if (typeof window !== 'undefined') {
