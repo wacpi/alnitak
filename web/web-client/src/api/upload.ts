@@ -62,6 +62,11 @@ export const uploadFileChunkAPI = async ({ name, file, action, onProgress, onFin
     if (firstChunkRes.data.code === statusCode.OK) {
       uploadedChunks.push(0);
       tasks.splice(tasks.indexOf(0), 1);
+      // 检查是否完成所有分片上传（针对小文件只有一个分片的情况）
+      if (uploadedChunks.length === totalChunks) {
+        finishUploadAPI({ hash, action, onFinish, onError });
+        return { controllers: [controller] };
+      }
     } else {
       onError(firstChunkRes.data)
       return { controllers: [controller] };

@@ -72,17 +72,18 @@ const handleChange = (uploadFile: any) => {
 //上传变化的回调
 const uploaderKey = ref(0);
 const changeUpload = (status: string, data?: any) => {
-  uploaderKey.value = Date.now();
   switch (status) {
     case "success":
       emits("finish", data);
       ElMessage.success('上传完成');
+      uploaderKey.value = Date.now();
       break;
     case "uploading":
       percent.value = data;
       break;
     case "error":
       ElMessage.error('文件上传失败');
+      uploaderKey.value = Date.now();
       break;
   }
 }
