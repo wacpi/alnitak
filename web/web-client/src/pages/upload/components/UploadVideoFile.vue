@@ -22,14 +22,20 @@
             <el-input v-else ref="titleInput" v-model="modifyForm.title" maxlength="100" show-word-limit
               @blur="modifyTitle(item)" />
           </div>
-          <client-only>
-            <el-popconfirm title="是否移除该条视频？" confirm-button-text="确认" cancel-button-text="取消"
-              @confirm="deleteResource(item.id, index)">
-              <template #reference>
-                <span class="remove-btn" v-if="resourceList.length > 1">移除</span>
-              </template>
-            </el-popconfirm>
-          </client-only>
+          <div class="action-btns">
+            <el-upload :show-file-list="false" :before-upload="beforeUploadVideo"
+              @change="(file: any) => handleReplace(file, item, index)">
+              <span class="replace-btn" v-if="!item.uploading">替换</span>
+            </el-upload>
+            <client-only>
+              <el-popconfirm v-if="resourceList.length > 1" title="是否移除该条视频？" confirm-button-text="确认" cancel-button-text="取消"
+                @confirm="deleteResource(item.id, index)">
+                <template #reference>
+                  <span class="remove-btn">移除</span>
+                </template>
+              </el-popconfirm>
+            </client-only>
+          </div>
         </div>
         <div class="progress-box">
           <span class="upload-status">{{ item.uploading ? `上传中 ${item.percent}%` : getTagText(item.status) }}</span>
@@ -49,8 +55,9 @@ import { reviewCode } from '@/utils/review-code';
 import { ElIcon, ElButton, ElInput, ElPopconfirm } from "element-plus";
 import MonitorIcon from "@/components/icons/MonitorIcon.vue";
 import { submitReviewAPI, getVideoStatusAPI } from "@/api/video";
-import { deleteResourceAPI, modifyTitleAPI } from "@/api/resource";
+import { deleteResourceAPI, modifyTitleAPI, replaceResourceAPI, checkReplaceResourceAPI } from "@/api/resource";
 import { uploadFileChunkAPI } from "@/api/upload";
+import { getFileMD5 } from '@/utils/md5';
 
 const emit = defineEmits(["review"]);
 const props = defineProps<{
@@ -173,6 +180,61 @@ const handleChange = (uploadFile: any) => {
   })
 }
 
+// 替换资源的回调
+const handleReplace = async (uploadFile: any, resource: ResourceType | UploadResourceType, index: number) => {
+  if (!uploadFile.raw) return;
+
+  // 保存原始资源信息
+  const originalResource = { ...resource };
+  const resourceId = resource.id;
+
+  // 先计算新文件的hash
+  const hash = await getFileMD5(uploadFile.raw);
+
+  // 先检查hash是否相同
+  const checkRes = await checkReplaceResourceAPI(resourceId, hash);
+  if (checkRes.data.code !== statusCode.OK) {
+    // hash相同或其他错误，无需上传
+    ElMessage.info(checkRes.data.msg || '无需替换');
+    return;
+  }
+
+  // hash不同，需要上传新文件
+  // 设置上传状态
+  const uploadData: UploadResourceType = {
+    id: resourceId,
+    status: -1,
+    title: originalResource.title,
+    percent: 0,
+    uploading: true,
+  }
+  resourceList.value[index] = uploadData;
+
+  uploadFileChunkAPI({
+    name: "video",
+    action: `v1/resource/replaceResource?resourceId=${resourceId}`,
+    file: uploadFile.raw,
+    onProgress: (val: any) => {
+      uploadData.percent = val;
+      resourceList.value[index] = JSON.parse(JSON.stringify(uploadData));
+    },
+    onError: () => {
+      // 恢复原始资源
+      resourceList.value[index] = originalResource;
+      ElMessage.error('上传失败');
+    },
+    onFinish: async (data?: any) => {
+      if (data.code === statusCode.OK) {
+        resourceList.value[index] = data.data.resource;
+        ElMessage.success('替换成功，正在转码中');
+      } else {
+        resourceList.value[index] = originalResource;
+        ElMessage.error(data.msg || '替换失败');
+      }
+    },
+  })
+}
+
 watch(() => props.resources, (newVal) => {
   if (newVal) {
     resourceList.value = newVal;
@@ -217,6 +279,7 @@ watch(() => props.resources, (newVal) => {
     &:hover {
       .info-box {
         .file-info {
+          .replace-btn,
           .remove-btn {
             display: block;
           }
@@ -264,6 +327,13 @@ watch(() => props.resources, (newVal) => {
           }
         }
 
+        .action-btns {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+
+        .replace-btn,
         .remove-btn {
           display: none;
           font-size: 12px;
