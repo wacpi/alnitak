@@ -104,7 +104,6 @@ const getQualities = (qualityList: string[], resourceId: number) => {
   const mapped = sorted.map((item) => ({
     name: getQualityDisplayName(item),
     url: getVideoFileUrl(resourceId, item),
-    type: 'hls',
   }));
   console.log('[embed-player] qualities mapped:', mapped);
   return mapped;
