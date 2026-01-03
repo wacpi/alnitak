@@ -27,8 +27,19 @@ func init() {
 	}
 }
 
+// 跳过操作日志记录的高频接口路径
+var skipOperationPaths = map[string]bool{
+	"/api/v1/upload/chunkVideo": true, // 分片上传，一个视频可能有几百个分片
+}
+
 func OperationRecord() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// 跳过高频接口，避免日志表写入压力过大
+		if skipOperationPaths[c.Request.URL.Path] {
+			c.Next()
+			return
+		}
+
 		var body []byte
 		var userId int
 		if c.Request.Method != http.MethodGet {

@@ -126,3 +126,116 @@ func IsResourceExist(resourceId uint) bool {
 
 	return resource.ID != 0
 }
+
+// 检查资源是否需要替换（比较hash）
+func CheckReplaceResource(ctx *gin.Context, replaceReq dto.ReplaceResourceReq) error {
+	userId := ctx.GetUint("userId")
+
+	// 验证资源是否属于当前用户
+	var oldResource model.Resource
+	global.Mysql.Model(&model.Resource{}).Where("id = ? and uid = ?", replaceReq.ResourceID, userId).First(&oldResource)
+	if oldResource.ID == 0 {
+		return errors.New("资源不存在")
+	}
+
+	// 获取旧资源的索引文件信息
+	var oldIndexFile model.VideoIndexFile
+	global.Mysql.Where("resource_id = ?", replaceReq.ResourceID).First(&oldIndexFile)
+
+	// 检查哈希值是否相同
+	if oldIndexFile.DirName != "" {
+		var oldFileInfo model.VideoFile
+		global.Mysql.Where("dir_name = ?", oldIndexFile.DirName).First(&oldFileInfo)
+		if oldFileInfo.Hash == replaceReq.Hash {
+			// 哈希值相同，无需替换
+			return errors.New("视频文件相同，无需替换")
+		}
+	}
+
+	// hash不同，可以替换
+	return nil
+}
+
+// 替换资源
+func ReplaceResource(ctx *gin.Context, replaceReq dto.ReplaceResourceReq) (vo.ResourceResp, error) {
+	userId := ctx.GetUint("userId")
+
+	// 验证资源是否属于当前用户
+	var oldResource model.Resource
+	global.Mysql.Model(&model.Resource{}).Where("id = ? and uid = ?", replaceReq.ResourceID, userId).First(&oldResource)
+	if oldResource.ID == 0 {
+		return vo.ResourceResp{}, errors.New("资源不存在")
+	}
+
+	// 获取旧资源的索引文件信息
+	var oldIndexFile model.VideoIndexFile
+	global.Mysql.Where("resource_id = ?", replaceReq.ResourceID).First(&oldIndexFile)
+
+	// 获取新视频文件信息
+	var newFileInfo model.VideoFile
+	if err := global.Mysql.Where("hash = ? and uid = ?", replaceReq.Hash, userId).First(&newFileInfo).Error; err != nil || newFileInfo.ID == 0 {
+		utils.ErrorLog("新视频文件信息不存在", "resource", replaceReq.Hash)
+		return vo.ResourceResp{}, errors.New("视频文件不存在")
+	}
+
+	// 检查哈希值是否相同
+	if oldIndexFile.DirName != "" {
+		var oldFileInfo model.VideoFile
+		global.Mysql.Where("dir_name = ?", oldIndexFile.DirName).First(&oldFileInfo)
+		if oldFileInfo.Hash == replaceReq.Hash {
+			// 哈希值相同，无需替换
+			return vo.ResourceResp{}, errors.New("视频文件相同，无需替换")
+		}
+
+		// 检查旧视频文件是否被其他资源使用
+		var usageCount int64
+		global.Mysql.Model(&model.VideoIndexFile{}).Where("dir_name = ? and resource_id != ?", oldIndexFile.DirName, replaceReq.ResourceID).Count(&usageCount)
+		if usageCount == 0 {
+			// 没有其他资源使用这个视频文件，可以安全删除
+			// 标记旧视频文件记录为删除
+			if err := global.Mysql.Where("dir_name = ?", oldIndexFile.DirName).Delete(&model.VideoFile{}).Error; err != nil {
+				utils.ErrorLog("删除旧视频文件记录失败", "resource", err.Error())
+			}
+		}
+	}
+
+	// 删除旧的索引文件记录
+	if err := global.Mysql.Where("resource_id = ?", replaceReq.ResourceID).Delete(&model.VideoIndexFile{}).Error; err != nil {
+		utils.ErrorLog("删除旧m3u8索引文件失败", "resource", err.Error())
+	}
+
+	// 读取新视频信息
+	uploadVideoPath := "./upload/video/" + newFileInfo.DirName + "/upload.mp4"
+	transcodingInfo, err := ProcessVideoInfo(uploadVideoPath)
+	if err != nil {
+		return vo.ResourceResp{}, errors.New("读取视频信息失败")
+	}
+
+	// 更新资源记录
+	if err := global.Mysql.Model(&model.Resource{}).Where("id = ?", replaceReq.ResourceID).Updates(
+		map[string]interface{}{
+			"codec_name": transcodingInfo.CodecName,
+			"status":     global.VIDEO_PROCESSING,
+			"duration":   transcodingInfo.Duration,
+		},
+	).Error; err != nil {
+		utils.ErrorLog("更新资源记录失败", "resource", err.Error())
+		return vo.ResourceResp{}, errors.New("更新资源失败")
+	}
+
+	// 启动转码服务
+	transcodingInfo.VideoID = oldResource.Vid
+	transcodingInfo.DirName = newFileInfo.DirName
+	transcodingInfo.ResourceID = replaceReq.ResourceID
+	transcodingInfo.OutputDir = "./upload/video/" + newFileInfo.DirName + "/"
+	transcodingInfo.InputFile = transcodingInfo.OutputDir + "upload.mp4"
+	go VideoTransCoding(transcodingInfo)
+
+	// 清除视频信息缓存
+	cache.DelVideoInfo(oldResource.Vid)
+
+	// 返回更新后的资源信息
+	var updatedResource model.Resource
+	global.Mysql.First(&updatedResource, replaceReq.ResourceID)
+	return vo.ResourceToResourceResp(updatedResource), nil
+}

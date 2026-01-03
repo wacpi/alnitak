@@ -171,18 +171,25 @@ func UploadVideoChunk(ctx *gin.Context, file *multipart.FileHeader) error {
 		return errors.New("文件大小超出限制")
 	}
 
-	// 查询文件表如果哈希存在则
-	var dirName string
+	// 【并发安全】使用 FirstOrCreate 确保同一 hash+uid 只创建一条记录
+	// 避免并发上传时多个请求同时查询为空，各自创建不同目录的问题
 	var videoFileInfo model.VideoFile
-	global.Mysql.Where("uid = ? and hash = ?", userId, fileHash).First(&videoFileInfo)
-	if videoFileInfo.ID == 0 {
-		dirName = generateVideoFilename()
-		global.Mysql.Create(&model.VideoFile{Uid: userId, Hash: fileHash, DirName: dirName, OriginalName: fileName, ChunksCount: totalChunks})
-	} else {
-		dirName = videoFileInfo.DirName
+	result := global.Mysql.Where("uid = ? AND hash = ?", userId, fileHash).
+		Attrs(model.VideoFile{
+			Uid:          userId,
+			Hash:         fileHash,
+			DirName:      generateVideoFilename(),
+			OriginalName: fileName,
+			ChunksCount:  totalChunks,
+		}).
+		FirstOrCreate(&videoFileInfo)
+
+	if result.Error != nil {
+		utils.ErrorLog("创建视频文件记录失败", "upload", result.Error.Error())
+		return errors.New("文件上传失败")
 	}
 
-	fileDir := "./upload/video/" + dirName
+	fileDir := "./upload/video/" + videoFileInfo.DirName
 	chunksPath := fileDir + "/chunks/" + strconv.Itoa(chunkIndex) + ".part"
 	if err := ctx.SaveUploadedFile(file, chunksPath); err != nil {
 		return errors.New("文件上传失败")

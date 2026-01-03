@@ -398,10 +398,10 @@ func pressingVideo(ctx context.Context, videoID, resourceID uint, inputFile, out
 		"-c:v", "libx264",
 		"-r", fps,
 
-		// --- HLS 关键帧对齐 ---
+		// --- HLS 关键帧精准对齐 ---
 		"-g", strconv.Itoa(gop),
 		"-sc_threshold", "0",
-		"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", sliceSeconds),
+		"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", sliceSeconds), // 强制每N秒一个关键帧
 		"-vsync", "cfr",
 
 		// --- 音频参数 (修改部分) ---
@@ -419,6 +419,8 @@ func pressingVideo(ctx context.Context, videoID, resourceID uint, inputFile, out
 		"-hls_segment_type", "mpegts",
 		"-hls_segment_filename", outputTs,
 		"-hls_playlist_type", "vod",
+		"-hls_flags", "split_by_time", // 严格按时间切片，确保各清晰度分片对齐
+		"-start_number", "0", // 确保分片从0开始
 
 		outputM3U8,
 	}
@@ -478,11 +480,11 @@ func pressingVideoGPU(ctx context.Context, videoID, resourceID uint, inputFile, 
 		"-c:v", "h264_nvenc",
 		"-r", fps,
 
-		// --- HLS 关键帧对齐 ---
+		// --- HLS 关键帧精准对齐 ---
 		"-g", strconv.Itoa(gop),
 		"-keyint_min", strconv.Itoa(gop),
 		"-sc_threshold", "0",
-		"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", sliceSeconds),
+		"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", sliceSeconds), // 强制每N秒一个关键帧
 		"-vsync", "cfr",
 
 		// --- 音频参数 (修改部分) ---
@@ -500,6 +502,8 @@ func pressingVideoGPU(ctx context.Context, videoID, resourceID uint, inputFile, 
 		"-hls_segment_type", "mpegts",
 		"-hls_segment_filename", outputTs,
 		"-hls_playlist_type", "vod",
+		"-hls_flags", "split_by_time", // 严格按时间切片，确保各清晰度分片对齐
+		"-start_number", "0", // 确保分片从0开始
 
 		outputM3U8,
 	}

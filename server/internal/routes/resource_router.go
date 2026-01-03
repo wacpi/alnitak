@@ -14,5 +14,7 @@ func CollectResourceRoutes(r *gin.RouterGroup) {
 	{
 		resourceAuth.PUT("modifyTitle", api.ModifyResourceTitle)
 		resourceAuth.DELETE("deleteResource/:id", api.DeleteResource)
+		resourceAuth.POST("checkReplace", api.CheckReplaceResource)
+		resourceAuth.POST("replaceResource", api.ReplaceResource)
 	}
 }

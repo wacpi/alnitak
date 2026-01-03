@@ -79,3 +79,67 @@ func GetResourceQualityManage(ctx *gin.Context) {
 	// 返回给前端
 	resp.OkWithData(ctx, gin.H{"quality": quality})
 }
+
+// 检查资源是否需要替换
+func CheckReplaceResource(ctx *gin.Context) {
+	// 获取参数
+	var replaceReq dto.ReplaceResourceReq
+	if err := ctx.Bind(&replaceReq); err != nil {
+		resp.FailWithMessage(ctx, "请求参数有误")
+		return
+	}
+
+	// 参数校验
+	if replaceReq.ResourceID == 0 {
+		resp.FailWithMessage(ctx, "资源ID不能为空")
+		return
+	}
+	if replaceReq.Hash == "" {
+		resp.FailWithMessage(ctx, "文件Hash不能为空")
+		return
+	}
+
+	// 检查是否需要替换
+	if err := service.CheckReplaceResource(ctx, replaceReq); err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+
+	// hash不同，可以替换
+	resp.Ok(ctx)
+}
+
+// 替换资源
+func ReplaceResource(ctx *gin.Context) {
+	// 获取参数
+	var replaceReq dto.ReplaceResourceReq
+	if err := ctx.Bind(&replaceReq); err != nil {
+		resp.FailWithMessage(ctx, "请求参数有误")
+		return
+	}
+
+	// 支持从query参数获取resourceId（用于分片上传完成后的回调）
+	if replaceReq.ResourceID == 0 {
+		replaceReq.ResourceID = utils.StringToUint(ctx.Query("resourceId"))
+	}
+
+	// 参数校验
+	if replaceReq.ResourceID == 0 {
+		resp.FailWithMessage(ctx, "资源ID不能为空")
+		return
+	}
+	if replaceReq.Hash == "" {
+		resp.FailWithMessage(ctx, "文件Hash不能为空")
+		return
+	}
+
+	// 替换资源
+	resource, err := service.ReplaceResource(ctx, replaceReq)
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+
+	// 返回
+	resp.OkWithData(ctx, gin.H{"resource": resource})
+}
