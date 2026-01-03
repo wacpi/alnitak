@@ -15,8 +15,12 @@ import { computed } from "vue";
 import { zhCN, dateZhCN, darkTheme } from "naive-ui";
 import GlobalContainer from "@/layout/global.vue";
 import { useTheme } from '@/hooks/theme-hooks';
+import useThemeStore from '@/stores/modules/theme-store';
 import type { GlobalThemeOverrides } from 'naive-ui';
 import { NNotificationProvider, NConfigProvider, NMessageProvider, NDialogProvider } from 'naive-ui';
+
+// 初始化主题 store，确保从 localStorage 读取并应用保存的主题
+useThemeStore();
 
 const { theme, themeName } = useTheme();
 
