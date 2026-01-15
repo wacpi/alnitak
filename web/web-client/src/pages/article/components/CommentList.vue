@@ -327,7 +327,7 @@ onBeforeUnmount(() => {
       align-items: center;
 
       .nav-title-text {
-        color: #18191c;
+        color: var(--font-primary-1);
         font-weight: 500;
       }
 
@@ -335,7 +335,7 @@ onBeforeUnmount(() => {
         font-size: 13px;
         margin: 0 36px 0 6px;
         font-weight: 400;
-        color: #9499a0;
+        color: var(--font-primary-3);
       }
     }
   }
@@ -417,7 +417,7 @@ onBeforeUnmount(() => {
         font-weight: 500;
         margin-right: 5px;
         line-height: 20px;
-        color: #61666d;
+        color: var(--font-primary-2);
         cursor: pointer;
       }
     }
@@ -433,7 +433,7 @@ onBeforeUnmount(() => {
       font-weight: 400;
 
       .comment-content {
-        color: #18191c;
+        color: var(--font-primary-1);
         overflow: hidden;
         word-wrap: break-word;
         word-break: break-word;
@@ -451,7 +451,7 @@ onBeforeUnmount(() => {
       height: 24px;
       margin-top: 2px;
       font-size: 13px;
-      color: #9499a0;
+      color: var(--font-primary-3);
       font-weight: 400;
 
       .comment-time {
@@ -496,13 +496,13 @@ onBeforeUnmount(() => {
         line-height: 24px;
         font-weight: 500;
         margin-right: 5px;
-        color: #61666d;
+        color: var(--font-primary-2);
       }
     }
 
     .reply-content-container {
       .reply-content {
-        color: #18191c;
+        color: var(--font-primary-1);
         overflow: hidden;
         word-wrap: break-word;
         word-break: break-word;
@@ -519,7 +519,7 @@ onBeforeUnmount(() => {
       height: 24px;
       margin-top: 2px;
       font-size: 13px;
-      color: #9499a0;
+      color: var(--font-primary-3);
       font-weight: 400;
 
       .reply-time {
@@ -552,7 +552,7 @@ onBeforeUnmount(() => {
 
 .bottom-line {
   margin-top: 14px;
-  border-bottom: 1px solid #e3e5e7;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .at {
@@ -584,11 +584,11 @@ onBeforeUnmount(() => {
 }
 
 .btn-disabled {
-  color: #9499a0 !important;
+  color: var(--font-primary-3) !important;
   cursor: not-allowed !important;
 
   &:hover {
-    color: #9499a0 !important;
+    color: var(--font-primary-3) !important;
   }
 }
 
