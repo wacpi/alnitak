@@ -90,7 +90,7 @@ onBeforeMount(() => {
       .up-name {
         font-size: 14px;
         max-width: 150px;
-        color: #212121;
+        color: var(--font-primary-1);
         line-height: 23px;
         height: 23px;
         text-overflow: ellipsis;
@@ -103,7 +103,7 @@ onBeforeMount(() => {
       .up-sign {
         display: block;
         font-size: 13px;
-        color: #999;
+        color: var(--font-primary-3);
         line-height: 20px;
       }
     }
