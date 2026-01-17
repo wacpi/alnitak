@@ -172,7 +172,7 @@ const getPartitionName = async (id: number) => {
   partitionText.value = `${partition?.name}/${subpartition?.name}`;
 }
 
-const loadVideoInfo = () => {
+const loadVideoInfo = async () => {
   if (props.info.vid) {
     if (props.info.tags) {
       dynamicTags.value = props.info.tags.split(',');
@@ -184,9 +184,9 @@ const loadVideoInfo = () => {
   }
 }
 
-watch(() => props.info, () => {
+watch(() => props.info, async () => {
   loadingForm.value = true;
-  loadVideoInfo();
+  await loadVideoInfo();
   nextTick(() => {
     loadingForm.value = false;
   })
@@ -194,7 +194,7 @@ watch(() => props.info, () => {
 
 onMounted(async () => {
   await getPartition();
-  loadVideoInfo();
+  await loadVideoInfo();
   loadingForm.value = false;
 })
 </script>
