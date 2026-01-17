@@ -111,8 +111,8 @@ onBeforeMount(async () => {
   .side-toolbar {
     .toolbar-item {
       position: relative;
-      color: #8a919f;
-      background: #fff;
+      color: var(--font-primary-3);
+      background: var(--bg-elev-1);
       display: flex;
       flex-direction: column;
       align-items: center;

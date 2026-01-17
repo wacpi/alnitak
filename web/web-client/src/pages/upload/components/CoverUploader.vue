@@ -85,6 +85,7 @@ const changeUpload = (status: string, data: any) => {
     width: 169px;
     height: 127px;
     border-radius: 3px;
+    object-fit: contain;
   }
 
   .placeholder {

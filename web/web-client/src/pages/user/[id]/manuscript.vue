@@ -17,6 +17,8 @@
         </div>
       </li>
     </ul>
+    <div v-if="loading" class="loading-tip">加载中...</div>
+    <div v-if="noMore && videoList.length > 0" class="no-more-tip">没有更多了</div>
   </div>
 </template>
 
@@ -69,6 +71,16 @@ const scrollLoad = () => {
 </script>
 
 <style lang="scss" scoped>
+.video-box {
+  .loading-tip,
+  .no-more-tip {
+    text-align: center;
+    padding: 20px 0;
+    color: var(--font-primary-3);
+    font-size: 14px;
+  }
+}
+
 .video-list {
   display: grid;
   grid-template-columns: repeat(6, 1fr);

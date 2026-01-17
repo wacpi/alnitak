@@ -2,7 +2,7 @@
   <div class="video-box">
     <p class="video-title">我的视频</p>
     <ul ref="videoListRef" class="video-list">
-      <li class="video-item" v-for="item in videoList ">
+      <li class="video-item" v-for="item in videoList">
         <nuxt-link class="cover" :to="item.status === reviewCode.AUDIT_APPROVED ? `/video/${item.vid}` : ''">
           <img class="img" :src="getResourceUrl(item.cover)" />
         </nuxt-link>
@@ -20,15 +20,13 @@
         </div>
       </li>
     </ul>
-    <div v-show="showPagination" class="pagination">
-      <el-pagination background layout="prev, pager, next" :page="page" :page-size="pageSize" :total="total"
-        @current-change="pageChange" />
-    </div>
+    <div v-if="loading" class="loading-tip">加载中...</div>
+    <div v-if="noMore && videoList.length > 0" class="no-more-tip">没有更多了</div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, onMounted, onBeforeUnmount } from 'vue';
 import { getUploadVideoAPI } from "@/api/video";
 import { ElIcon } from 'element-plus';
 import PlayCountIcon from "@/components/icons/PlayCountIcon.vue";
@@ -37,46 +35,61 @@ import { useVideoCountStore } from '@/composables/video-count-store';
 //获取我的视频
 const page = ref(1);
 const total = ref(0);
-const pageSize = ref(8);
-const showPagination = ref(false);
+const pageSize = ref(18);
+const noMore = ref(false);
+const loading = ref(false);
 const videoCountStore = useVideoCountStore();
 const videoList = ref<ManuscriptVideoType[]>([]);
 const videoListRef = ref<HTMLElement>();
+
 const getUploadVideo = async () => {
+  if (loading.value || noMore.value) return;
+  loading.value = true;
   const res = await getUploadVideoAPI(page.value, pageSize.value);
   if (res.data.code === statusCode.OK) {
-    const approvedVideos = res.data.data.videos.filter((video: ManuscriptVideoType) => video.status === reviewCode.AUDIT_APPROVED);
-    videoList.value = approvedVideos;
-
-    total.value = approvedVideos.length;
+    total.value = res.data.data.total;
     videoCountStore.setVideoCountState(total.value);
 
-    showPagination.value = total.value > pageSize.value;
+    if (res.data.data.videos && res.data.data.videos.length > 0) {
+      // 只显示审核通过的视频
+      const approvedVideos = res.data.data.videos.filter(
+        (video: ManuscriptVideoType) => video.status === reviewCode.AUDIT_APPROVED
+      );
+      videoList.value = videoList.value.concat(approvedVideos);
+
+      // 如果返回的数据少于 pageSize，说明没有更多了
+      if (res.data.data.videos.length < pageSize.value) {
+        noMore.value = true;
+      }
+    } else {
+      noMore.value = true;
+    }
   }
+  loading.value = false;
 }
 
-//页码改变
-const pageChange = (target: number) => {
-  page.value = target;
-  getUploadVideo();
-}
+// 监听窗口滚动事件
+const handleScroll = () => {
+  const scrollTop = document.documentElement.scrollTop || document.body.scrollTop;
+  const clientHeight = document.documentElement.clientHeight;
+  const scrollHeight = document.documentElement.scrollHeight;
 
-const sizeChange = () => {
-  if (videoListRef.value!.clientWidth === 1076) {
-    pageSize.value = 18;
-  } else {
-    pageSize.value = 15;
+  // 距离底部 100px 时触发加载
+  if (scrollTop + clientHeight >= scrollHeight - 100) {
+    if (!loading.value && !noMore.value) {
+      page.value++;
+      getUploadVideo();
+    }
   }
 }
 
 onMounted(() => {
-  sizeChange();
   getUploadVideo();
-  window.addEventListener("resize", sizeChange);
+  window.addEventListener('scroll', handleScroll, true);
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener("resize", sizeChange);
+  window.removeEventListener('scroll', handleScroll, true);
 })
 </script>
 
@@ -91,10 +104,12 @@ onBeforeUnmount(() => {
     color: var(--font-primary-1);
   }
 
-  .pagination {
-    display: flex;
-    align-items: center;
-    justify-content: center;
+  .loading-tip,
+  .no-more-tip {
+    text-align: center;
+    padding: 20px 0;
+    color: var(--font-primary-3);
+    font-size: 14px;
   }
 }
 

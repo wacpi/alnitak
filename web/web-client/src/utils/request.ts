@@ -64,20 +64,24 @@ const refreshToken = async (): Promise<string> => {
   return refreshPromise;
 };
 
-//请求拦截器
+// 请求拦截器
 service.interceptors.request.use(async (config) => {
-  //如果为刷新token的请求则不拦截
+  // 如果为刷新 token 的请求则不拦截
   if (config.url === "v1/auth/updateToken") return config;
-  if (localStorage) {
-    if (storage.get('token')) {
-      config.headers.Authorization = storage.get('token');
+
+  // 确保只在客户端处理 token
+  if (process.client) {
+    const token = storage.get('token');
+    if (token) {
+      config.headers.Authorization = token;
     } else {
-      //如果没有accessToken且有refreshToken
+      // 如果没有 accessToken 且有 refreshToken
       const localRefreshToken = storage.get('refreshToken');
       if (localRefreshToken) {
         if (!isRefreshing) {
           isRefreshing = true;
           try {
+            // 刷新 token
             const token = await refreshToken();
             config.headers.Authorization = token;
             return config;
@@ -86,7 +90,7 @@ service.interceptors.request.use(async (config) => {
             // 刷新失败,继续原请求
           }
         } else {
-          // 正在刷新中,等待刷新完成
+          // 正在刷新中，等待刷新完成
           return new Promise((resolve) => {
             requests.push((token: string) => {
               config.headers.Authorization = token;
@@ -102,38 +106,37 @@ service.interceptors.request.use(async (config) => {
   return Promise.reject(error);
 });
 
-//响应拦截器
+// 响应拦截器
 service.interceptors.response.use(async (res) => {
-  // token 过期
-  if (localStorage) {
+  if (process.client) {
     switch (res.data.code) {
       case statusCode.TOKEN_EXPRIED:
+        // token 过期，需要刷新
         if (storage.get('refreshToken')) {
           if (!isRefreshing) {
-            // 首次收到需要刷新token的响应
             isRefreshing = true;
             try {
               const token = await refreshToken();
               res.config.headers.Authorization = token;
-              return service.request(res.config);
+              return service.request(res.config); // 重新发起请求
             } catch (error) {
               console.error('Token refresh in response interceptor failed:', error);
-              // 刷新失败,返回原响应
+              // 刷新失败, 返回原响应
               return res;
             }
           } else {
-            // 正在刷新中,等待刷新完成后重试
+            // 正在刷新中，等待刷新完成后重试
             return new Promise((resolve) => {
               requests.push((token: string) => {
                 res.config.headers.Authorization = token;
-                resolve(service(res.config));
+                resolve(service(res.config)); // 重新发起请求
               });
             });
           }
         }
         break;
       case statusCode.LOGIN_AGAIN:
-        // 清理缓存信息
+        // 清理缓存信息并跳转到登录页
         storage.remove("token");
         storage.remove('refreshToken');
         Cookies.remove('user_id');

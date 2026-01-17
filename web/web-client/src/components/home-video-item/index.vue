@@ -36,9 +36,11 @@ const props = defineProps<{
     display: block;
     height: auto;
     /* 让高度自动调整以保持比例 */
+    //封面容器高度
     max-height: 160px;
     /* 最大高度限制 */
-    border-radius: 10px;
+    //圆角
+    border-radius: 9px;
     overflow: hidden;
     cursor: pointer;
     background-color: rgba(0, 0, 0, .2);
@@ -95,7 +97,8 @@ const props = defineProps<{
       align-items: center;
       font-size: 13px;
       color: var(--font-primary-3);
-      margin-top: 5px;
+      //UP信息位置调整
+      margin-top: 2px;
 
       .avatar {
         width: 26px;

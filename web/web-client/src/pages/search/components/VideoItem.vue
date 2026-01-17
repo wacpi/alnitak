@@ -76,6 +76,7 @@ const keyHighlight = (title: string) => {
     img {
       width: 100%;
       height: 100%;
+      object-fit: contain;
     }
 
     .duration {
@@ -107,6 +108,7 @@ const keyHighlight = (title: string) => {
       text-overflow: ellipsis;
       display: -webkit-box;
       -webkit-line-clamp: 2;
+      line-clamp: 2;
       -webkit-box-orient: vertical;
       font-weight: 500;
       cursor: pointer;
