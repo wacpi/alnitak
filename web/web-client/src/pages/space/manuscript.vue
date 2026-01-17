@@ -47,7 +47,11 @@ const getUploadVideo = async () => {
   loading.value = true;
   const res = await getUploadVideoAPI(page.value, pageSize.value);
   if (res.data.code === statusCode.OK) {
-    total.value = res.data.data.total;
+    const videos = res.data.data.videos || [];
+    const approvedVideos = videos.filter((video: ManuscriptVideoType) => video.status === reviewCode.AUDIT_APPROVED);
+    videoList.value = approvedVideos;
+
+    total.value = approvedVideos.length;
     videoCountStore.setVideoCountState(total.value);
 
     if (res.data.data.videos && res.data.data.videos.length > 0) {
