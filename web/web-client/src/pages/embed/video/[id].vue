@@ -2,10 +2,10 @@
   <div class="embed-video-container">
     <div class="player-box" @mouseenter="showOverlay" @mouseleave="hideOverlay">
       <div class="player-info-overlay" v-if="videoInfo" v-show="infoOverlayVisible" @mouseenter="showOverlay" @mouseleave="hideOverlay">
-        <a class="title-link" :href="`/video/${videoInfo.vid}${currentPart > 1 ? `?p=${currentPart}` : ''}`" target="_blank">{{ videoInfo.title }}</a>
+        <a class="title-link" :href="videoLink" target="_blank">{{ displayedTitle }}</a>
         <div class="up-info">
           <img class="avatar" :src="getResourceUrl(videoInfo.author.avatar)" :alt="videoInfo.author.name" />
-          <a class="up-name" :href="`/user/${videoInfo.author.uid}`" target="_blank">{{ videoInfo.author.name }}</a>
+          <a class="up-name" :href="userLink" target="_blank">{{ videoInfo.author.name }}</a>
         </div>
       </div>
       <client-only>
@@ -16,11 +16,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick, computed, watchEffect } from 'vue';
+import { ref, watch, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import EmbedPlayer from '@/components/embed-player/index.vue';
+import EmbedPlayer from '@/components/embed-player/art.vue';
 import { asyncGetVideoInfoAPI } from '@/api/video';
-import { getHistoryProgressAPI } from '@/api/history';
 import { getDanmakuAPI } from '@/api/danmaku';
 import { getResourceUrl } from '@/utils/resource';
 import { globalConfig } from '@/utils/global-config';
@@ -36,18 +35,48 @@ const playerReady = ref(false);
 const infoOverlayVisible = ref(false);
 let hoverCount = 0;
 
+const displayedTitle = computed(() => {
+  return videoInfo.value?.resources?.[currentPart.value - 1]?.title || videoInfo.value?.title;
+});
+
+const pageTitle = computed(() => {
+  const videoTitle = videoInfo.value?.title || '';
+  const partTitle = videoInfo.value?.resources?.[currentPart.value - 1]?.title;
+
+  if (partTitle && partTitle !== videoTitle) {
+    return `${partTitle} - ${videoTitle} - ${globalConfig.title}`;
+  }
+
+  return `${videoTitle} - ${globalConfig.title}`;
+});
+
+const videoLink = computed(() => {
+  return `/video/${videoInfo.value?.vid}${currentPart.value > 1 ? `?p=${currentPart.value}` : ''}`;
+});
+
+const userLink = computed(() => {
+  return `/user/${videoInfo.value?.author.uid}`;
+});
+
 // 获取视频信息
-const { data } = await asyncGetVideoInfoAPI(videoId);
-if ((data.value as any).code === 200) {
-  videoInfo.value = (data.value as any).data.video as VideoType;
-} else {
-  router.replace('/404');
-}
+const fetchVideoInfo = async () => {
+  const { data } = await asyncGetVideoInfoAPI(videoId);
+  if ((data.value as any).code === 200) {
+    videoInfo.value = (data.value as any).data.video as VideoType;
+  } else {
+    router.replace('/404');
+  }
+};
 
 // 校验分集参数
-if (route.query.p && Number(route.query.p) > (videoInfo.value?.resources.length || 1)) {
-  router.replace({ path: `/embed/video/${videoId}`, query: { p: 1 } });
-}
+const validatePartQuery = () => {
+  const partNum = Number(route.query.p) || 1;
+  if (videoInfo.value?.resources.length && partNum > videoInfo.value.resources.length) {
+    router.replace({ path: `/embed/video/${videoId}`, query: { p: 1 } });
+  } else {
+    currentPart.value = partNum;
+  }
+};
 
 // 加载弹幕
 const loadDanmaku = async () => {
@@ -69,14 +98,7 @@ const onPlayerReady = () => {
 };
 
 // 路由监听
-watch(() => route.query.p, (newP) => {
-  const partNum = Number(newP) || 1;
-  if (videoInfo.value?.resources[partNum - 1]) {
-    currentPart.value = partNum;
-  } else {
-    router.replace({ path: `/embed/video/${videoId}`, query: { p: 1 } });
-  }
-});
+watch(() => route.query.p, validatePartQuery);
 
 // 播放器 ref 变更
 watch(playerRef, (val) => {
@@ -86,8 +108,8 @@ watch(playerRef, (val) => {
 });
 
 // 弹幕显隐绑定 infoOverlay（可选）
-watchEffect(() => {
-  infoOverlayVisible.value = playerRef.value?.controlsVisible !== false;
+watch(() => playerRef.value?.controlsVisible, (controlsVisible) => {
+  infoOverlayVisible.value = controlsVisible !== false;
 });
 
 // 鼠标控制
@@ -103,11 +125,15 @@ const hideOverlay = () => {
   }
 };
 
-useHead({
-  title: () => videoInfo.value?.title ? `${videoInfo.value.title} - ${globalConfig.title}` : globalConfig.title
-})
-</script>
+// 初次加载
+fetchVideoInfo();
+validatePartQuery();
 
+// 更新页面标题
+useHead({
+  title: pageTitle
+});
+</script>
 
 <style scoped>
 html, body, #__nuxt, .embed-video-container, .player-box, .player-container, .player, #dplayer {
@@ -205,4 +231,4 @@ video {
   text-decoration: underline;
   opacity: 1;
 }
-</style> 
+</style>

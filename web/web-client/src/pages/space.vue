@@ -364,6 +364,10 @@ const getUploadVideo = async () => {
   .space-menu {
     width: 200px;
     background-color: var(--bg-elev-1);
+    position: sticky;
+    top: 70px;
+    height: fit-content;
+    align-self: flex-start;
 
     .menu-item {
       position: relative;

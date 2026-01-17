@@ -98,7 +98,7 @@ onBeforeUnmount(() => {
   min-width: 1000px;
   overflow: hidden;
   min-height: 100vh;
-  background-color: #f2f3f5;
+  background-color: var(--bg-color);
 
 
   .home-header {
@@ -106,7 +106,7 @@ onBeforeUnmount(() => {
     top: 0;
     width: 100%;
     z-index: 999;
-    background-color: #fff;
+    background-color: var(--bg-elev-1);
   }
 }
 
@@ -145,11 +145,11 @@ onBeforeUnmount(() => {
   width: 100%;
   margin: 0;
   padding: 12px 0;
-  background-color: #fff;
+  background-color: var(--bg-elev-1);
 
   .article-item {
     height: 110px;
-  padding: 0 20px 0;
+    padding: 0 20px 0;
     box-sizing: border-box;
   }
 }
@@ -157,7 +157,7 @@ onBeforeUnmount(() => {
 .content-wrapper {
   display: flex;
   padding-bottom: 12px;
-  border-bottom: 1px solid rgba(228, 230, 235, 0.5);
+  border-bottom: 1px solid var(--border-color);
   width: 100%;
   margin-top: 2px;
 
@@ -170,7 +170,7 @@ onBeforeUnmount(() => {
       font-weight: 600;
       font-size: 16px;
       line-height: 24px;
-      color: #252933;
+      color: var(--font-primary-1);
       width: 100%;
       display: -webkit-box;
       overflow: hidden;
@@ -183,7 +183,7 @@ onBeforeUnmount(() => {
       min-height: 44px;
       margin-bottom: 4px;
       font-weight: 400;
-      color: #8a919f;
+      color: var(--font-primary-3);
       font-size: 13px;
       line-height: 22px;
       display: -webkit-box;
@@ -213,7 +213,7 @@ onBeforeUnmount(() => {
           margin-right: 24px;
           font-size: 13px;
           line-height: 20px;
-          color: #8a919f;
+          color: var(--font-primary-3);
 
           span {
             height: 16px;
@@ -231,13 +231,13 @@ onBeforeUnmount(() => {
         align-items: center;
 
         .tag {
-          background-color: #f2f3f5;
+          background-color: var(--hover-bg);
           padding: 0 6px;
           border-radius: 2px;
           max-width: 76px;
           box-sizing: border-box;
           margin-left: 6px;
-          color: #8a919f;
+          color: var(--font-primary-3);
           text-overflow: ellipsis;
           overflow: hidden;
           white-space: nowrap;
@@ -254,9 +254,9 @@ onBeforeUnmount(() => {
     width: 108px;
     height: 72px;
     margin: 12px 0 0 24px;
-    background-color: #fff;
+    background-color: var(--bg-elev-1);
     border-radius: 4px;
-    border: 1px solid rgba(228, 230, 235, 0.5);
+    border: 1px solid var(--border-color);
   }
 }
 </style>

@@ -111,7 +111,7 @@ onBeforeMount(() => {
   position: relative;
   min-height: 100vh;
   padding-top: 76px;
-  background-color: #f6f7f9;
+  background-color: var(--bg-color);
 
   .header {
     position: fixed;
@@ -128,7 +128,7 @@ onBeforeMount(() => {
 }
 
 .article-content {
-  background-color: #fff;
+  background-color: var(--bg-elev-1);
   border-radius: 4px;
   padding: 20px 40px 40px;
 
@@ -139,7 +139,7 @@ onBeforeMount(() => {
     .title {
       min-height: 39px;
       font-size: 28px;
-      color: #222;
+      color: var(--font-primary-1);
       margin-bottom: 16px;
       font-weight: 700;
       line-height: 1.4;
@@ -147,7 +147,7 @@ onBeforeMount(() => {
 
     .article-read-panel {
       margin-bottom: 20px;
-      color: #999;
+      color: var(--font-primary-3);
 
       .article-read-info {
         font-weight: 400;
@@ -169,14 +169,14 @@ onBeforeMount(() => {
 .title-line {
   height: 1px;
   width: 100%;
-  background: hsla(0, 0%, 59.2%, .21);
+  background: var(--border-color);
   margin-bottom: 20px;
 }
 
 .comment-list {
   margin-top: 20px;
   padding: 20px;
-  background-color: #fff;
+  background-color: var(--bg-elev-1);
 }
 
 @media (max-width: 1400px) {

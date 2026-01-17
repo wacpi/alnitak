@@ -22,7 +22,7 @@
                 <span>创建于：{{ formatTime(item.createdAt) }}</span>
                 <span class="status" v-if="getStatusText(item.status)"
                   :style="`color: ${getStatusTextColor(item.status)}`">{{ getStatusText(item.status) }}</span>
-                <span class="status status-btn" v-if="item.status === reviewCode.REVIEW_FAILED"
+                <span class="status status-btn" v-if="item.status === reviewCode.REVIEW_FAILED || item.status === reviewCode.PROCESSING_FAIL"
                   @click="showReason(item.vid)">查看原因</span>
               </div>
             </div>
@@ -162,8 +162,21 @@ const getStatusTextColor = (status: number) => {
 const showReason = async (vid: number) => {
   const res = await getVideoReviewRecordAPI(vid);
   if (res.data.code === statusCode.OK) {
-    ElMessageBox.alert(res.data.data.review.remark, '', {
+    const review = res.data.data.review;
+    let message = review.remark || '审核未通过';
+
+    // 如果有冲突信息，添加到消息中
+    if (review.conflictResourceId) {
+      message += `\n\n【内容冲突】`;
+      if (review.conflictReason) {
+        message += `\n原因：${review.conflictReason}`;
+      }
+      message += `\n冲突资源ID：${review.conflictResourceId}`;
+    }
+
+    ElMessageBox.alert(message, '审核不通过原因', {
       confirmButtonText: '确认',
+      dangerouslyUseHTMLString: false,
     })
   }
 }
@@ -226,6 +239,7 @@ onBeforeMount(() => {
             width: 100%;
             height: 100%;
             border-radius: 2px;
+            object-fit: contain;
           }
         }
       }
