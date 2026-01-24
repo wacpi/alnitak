@@ -135,7 +135,7 @@ export default defineNuxtConfig({
       },
       proxy: {
         '/api': {
-          target: process.env.API_PROXY_TARGET || `http${globalConfig.https ? 's' : ''}://${globalConfig.domain}`,
+          target: `http${globalConfig.https ? 's' : ''}://${globalConfig.domain}`,
           changeOrigin: true,
           ws: true,
           // 可选：需要去掉 /api 前缀时，设置 API_PROXY_REWRITE=remove 并解开下一行

@@ -1,5 +1,5 @@
 <template>
-  <div class="alnitak-editor">
+  <div class="alnitak-editor" :class="{ 'alnitak-editor-dark': isDark }">
     <editor v-model="valueHtml" :defaultConfig="editorConfig" :mode="mode" @onCreated="handleCreated" />
   </div>
 </template>
@@ -9,13 +9,17 @@
 import '@wangeditor/editor/dist/css/style.css' // 引入 css
 // @ts-ignore
 import { Editor } from '@wangeditor/editor-for-vue';
-import { onBeforeUnmount, ref, shallowRef } from 'vue';
+import { onBeforeUnmount, ref, shallowRef, computed } from 'vue';
+import { useTheme } from '@/hooks/theme-hooks';
 
 const props = withDefaults(defineProps<{
   content: string; //弹窗可见性
 }>(), {
   content: "",
 })
+
+const { themeName } = useTheme();
+const isDark = computed(() => themeName.value === 'dark');
 
 const mode = 'default';
 const editorRef = shallowRef();
@@ -35,7 +39,7 @@ onBeforeUnmount(() => {
     editorRef.value = null;
   }
 })
-</script> 
+</script>
 
 <style lang="scss" scoped>
 .alnitak-editor {

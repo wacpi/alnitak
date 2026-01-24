@@ -27,9 +27,10 @@
         <div class="user-name">{{ item.author.name }}</div>
       </div>
       <div class="comment-content-container">
-        <span class="comment-content" v-for="content in handleMention(item.content, item.atUserIds, item.atUsernames)">
-          <span v-if="!content.key">{{ content.value }}</span>
-          <nuxt-link v-else class="at" :to="`/user/${content.key}`">{{ content.value }}</nuxt-link>
+        <span class="comment-content" v-for="content in handleMentionAndTime(item.content, item.atUserIds, item.atUsernames)">
+          <span v-if="content.type === 'text'">{{ content.value }}</span>
+          <nuxt-link v-else-if="content.type === 'mention'" class="at" :to="`/user/${content.key}`">{{ content.value }}</nuxt-link>
+          <span v-else-if="content.type === 'time'" class="time-link" @click="handleTimeClick(content.value)">{{ content.value }}</span>
         </span>
       </div>
       <div class="comment-info">
@@ -59,9 +60,10 @@
           <span v-if="reply.replyUserName">
             回复<nuxt-link class="at" :to="`/user/${reply.replyUserId}`">@{{ reply.replyUserName }}</nuxt-link> :
           </span>
-          <span class="reply-content" v-for="content in handleMention(reply.content, reply.atUserIds, reply.atUsernames)">
-            <span v-if="!content.key">{{ content.value }}</span>
-            <nuxt-link v-else class="at" :to="`/user/${content.key}`">{{ content.value }}</nuxt-link>
+          <span class="reply-content" v-for="content in handleMentionAndTime(reply.content, reply.atUserIds, reply.atUsernames)">
+            <span v-if="content.type === 'text'">{{ content.value }}</span>
+            <nuxt-link v-else-if="content.type === 'mention'" class="at" :to="`/user/${content.key}`">{{ content.value }}</nuxt-link>
+            <span v-else-if="content.type === 'time'" class="time-link" @click="handleTimeClick(content.value)">{{ content.value }}</span>
           </span>
         </span>
         <div class="reply-info">
@@ -113,6 +115,73 @@ import { scrollToViewCenter } from "@/utils/scroll";
 const props = defineProps<{
   vid: number
 }>();
+
+const emit = defineEmits<{
+  (e: 'seek-time', seconds: number): void
+}>();
+
+// 解析时间字符串为秒数
+const parseTimeToSeconds = (timeStr: string): number => {
+  // 支持格式: 02:00, 2:00, 02：00, 2：00, 1:02:00 等
+  const normalized = timeStr.replace(/：/g, ':'); // 中文冒号转英文
+  const parts = normalized.split(':').map(Number);
+  if (parts.length === 2) {
+    return parts[0] * 60 + parts[1];
+  } else if (parts.length === 3) {
+    return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  }
+  return 0;
+};
+
+// 处理时间点击
+const handleTimeClick = (timeStr: string) => {
+  const seconds = parseTimeToSeconds(timeStr);
+  emit('seek-time', seconds);
+};
+
+// 时间戳正则：支持 02:00, 2:00, 02：00, 2：00, 1:02:00 等格式
+const timeRegex = /(\d{1,2}[：:]\d{2}(?:[：:]\d{2})?)/g;
+
+// 处理 @提及和时间戳
+const handleMentionAndTime = (content: string, atUserIds: string, atUsernames: string) => {
+  // 先用原来的 handleMention 处理 @提及
+  const mentionResult = handleMention(content, atUserIds, atUsernames);
+
+  // 再处理每个片段中的时间戳
+  const result: { type: 'text' | 'mention' | 'time', value: string, key?: string | null }[] = [];
+
+  for (const item of mentionResult) {
+    if (item.key) {
+      // 这是 @提及，保持不变
+      result.push({ type: 'mention', value: item.value, key: item.key });
+    } else {
+      // 普通文本，需要检查是否包含时间戳
+      const text = item.value;
+      let lastIndex = 0;
+      let match;
+
+      while ((match = timeRegex.exec(text)) !== null) {
+        // 添加时间戳之前的文本
+        if (match.index > lastIndex) {
+          result.push({ type: 'text', value: text.substring(lastIndex, match.index) });
+        }
+        // 添加时间戳
+        result.push({ type: 'time', value: match[1] });
+        lastIndex = match.index + match[0].length;
+      }
+
+      // 添加剩余的文本
+      if (lastIndex < text.length) {
+        result.push({ type: 'text', value: text.substring(lastIndex) });
+      }
+
+      // 重置正则的 lastIndex
+      timeRegex.lastIndex = 0;
+    }
+  }
+
+  return result;
+};
 
 const getUserInfo = async () => {
   const res = await getUserInfoAPI();
@@ -558,12 +627,22 @@ onBeforeUnmount(() => {
 
 .bottom-line {
   margin-top: 14px;
-  border-bottom: 1px solid #e3e5e7;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .at {
   cursor: pointer;
   padding: 0 2px;
+  color: var(--primary-color);
+  text-decoration: none;
+
+  &:hover {
+    color: var(--primary-hover-color);
+  }
+}
+
+.time-link {
+  cursor: pointer;
   color: var(--primary-color);
   text-decoration: none;
 
