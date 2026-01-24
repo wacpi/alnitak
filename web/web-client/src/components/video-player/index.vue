@@ -448,7 +448,14 @@ onBeforeUnmount(() => {
 });
 
 // ===== 对外暴露方法 =====
+const seek = (time: number) => {
+  if (player) {
+    player.seek(time);
+  }
+};
+
 defineExpose({
+  seek,
   setOnReady,
   uploadHistory,
   setDanmaku,

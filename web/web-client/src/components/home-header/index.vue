@@ -145,10 +145,16 @@ const getUserInfo = async () => {
 }
 
 // 左侧菜单
+const MENU_FOLD_KEY = 'menu-fold-state';
 const menuFold = ref(false);
+
+
 const foldClick = () => {
   menuFold.value = !menuFold.value;
   emits("changeFold", menuFold.value);
+  try {
+    localStorage.setItem(MENU_FOLD_KEY, String(menuFold.value));
+  } catch {}
 }
 
 // 退出登录
@@ -209,6 +215,16 @@ const setTheme = (mode: ThemeMode) => {
 };
 
 onMounted(() => {
+  // 读取保存的折叠状态并通知父组件
+  try {
+    const savedFold = localStorage.getItem(MENU_FOLD_KEY);
+    if (savedFold === 'true') {
+      menuFold.value = true;
+      emits("changeFold", true);
+    }
+  } catch {}
+
+  // 读取主题设置
   let mode: ThemeMode = 'light';
   try {
     const saved = localStorage.getItem(THEME_KEY) as ThemeMode | null;

@@ -46,7 +46,7 @@
             <div class="tag" v-for="item in videoInfo?.tags.split(',')">{{ item }}</div>
           </div>
           <!-- 评论区 -->
-          <comment-list v-if="videoInfo" :vid="videoInfo.vid"></comment-list>
+          <comment-list v-if="videoInfo" :vid="videoInfo.vid" @seek-time="handleSeekTime"></comment-list>
         </div>
         <div class="right-column">
           <!-- 作者信息 -->
@@ -201,6 +201,13 @@ watch(playerRef, (val) => {
   }
 });
 
+// 处理评论区时间跳转
+const handleSeekTime = (seconds: number) => {
+  if (playerRef.value && playerRef.value.seek) {
+    playerRef.value.seek(seconds);
+  }
+};
+
 const changePart = async (target: number) => {
   // 移除手动上报，让播放器组件自己处理
   // 只负责切换逻辑
@@ -329,9 +336,9 @@ const initWebSocket = () => {
     clientId = createUUID();
     localStorage.setItem("ws-client-id", clientId);
   }
-  const wsProtocol = window.location.protocol === 'http:' ? 'ws://' : 'wss://';
-  const domain = globalConfig.domain || window.location.host;
-  SocketURL = wsProtocol + domain + `/api/v1/online/video?vid=${videoId}&clientId=${clientId}`;
+  // 始终使用当前页面的 host，走前端代理，避免暴露后端地址
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+  SocketURL = wsProtocol + window.location.host + `/api/v1/online/video?vid=${videoId}&clientId=${clientId}`;
 
   // 清理旧的定时器
   if (heartbeatTimer) {

@@ -36,9 +36,19 @@ const changeMenuFold = (val: boolean) => {
   menuFold.value = val;
 }
 
+// 客户端挂载后同步折叠状态
+onMounted(() => {
+  try {
+    const saved = localStorage.getItem('menu-fold-state');
+    if (saved === 'true') {
+      menuFold.value = true;
+    }
+  } catch {}
+});
+
 // 获取分区
 const page = ref(1);
-const pageSize = 12;
+const pageSize = 16;
 const videoList = ref<VideoType[]>([])
 const { data } = await asyncGetHotVideoAPI(page.value, pageSize);
 if ((data.value as any).code === statusCode.OK) {
@@ -138,7 +148,6 @@ onBeforeUnmount(() => {
 }
 
 .recommended-fold {
-  max-height: 780px;
   grid-template-columns: repeat(5, 1fr);
 }
 </style>
