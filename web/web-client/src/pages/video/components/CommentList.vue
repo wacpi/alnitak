@@ -558,7 +558,7 @@ onBeforeUnmount(() => {
 
 .bottom-line {
   margin-top: 14px;
-  border-bottom: 1px solid #e3e5e7;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .at {
