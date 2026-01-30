@@ -84,9 +84,28 @@ func GetVideoResourceByStatus(videoId uint, status int) (resources []vo.Resource
 	return
 }
 
-// 获取视频资源
+// 获取视频资源（含fileId和uid用于全局去重）
 func GetReviewResourceList(videoId uint) (resources []vo.ResourceResp) {
-	global.Mysql.Model(&model.Resource{}).Where("vid = ?", videoId).Scan(&resources)
+	global.Mysql.Model(&model.Resource{}).
+		Select("id, created_at, vid, title, duration, status, file_id, uid").
+		Where("vid = ?", videoId).Scan(&resources)
+
+	return
+}
+
+// GetRelatedResources 获取相同文件的关联稿件（用于审核时查看同文件其他稿件）
+func GetRelatedResources(fileID uint, excludeVid uint) (resources []vo.RelatedResourceResp) {
+	if fileID == 0 {
+		return
+	}
+
+	// 查询相同 file_id 的其他资源（排除当前视频）
+	global.Mysql.Table("resources").
+		Select("resources.id as resource_id, resources.vid, resources.uid, resources.title, resources.status, resources.created_at, users.name as author_name").
+		Joins("LEFT JOIN users ON resources.uid = users.id").
+		Where("resources.file_id = ? AND resources.vid != ? AND resources.deleted_at IS NULL", fileID, excludeVid).
+		Order("resources.created_at ASC").
+		Scan(&resources)
 
 	return
 }

@@ -11,7 +11,7 @@ func GetLikeMessage(ctx *gin.Context, page, pageSize int) (total int64, msg []vo
 	userId := ctx.GetUint("userId")
 
 	global.Mysql.Model(&model.LikeMessage{}).Where("uid = ?", userId).Count(&total)
-	global.Mysql.Model(&model.LikeMessage{}).Where("uid = ?", userId).Limit(pageSize).Offset((page - 1) * pageSize).Scan(&msg)
+	global.Mysql.Model(&model.LikeMessage{}).Where("uid = ?", userId).Order("id DESC").Limit(pageSize).Offset((page - 1) * pageSize).Scan(&msg)
 	for i := 0; i < len(msg); i++ {
 		msg[i].User = GetUserInfo(msg[i].Sid)
 		if msg[i].Type == global.CONTENT_TYPE_VIDEO {

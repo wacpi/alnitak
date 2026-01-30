@@ -160,6 +160,13 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 					utils.ErrorLog(fmt.Sprintf("【GPU转码失败】%s，尝试切换到CPU", fileName), "transcoding", err.Error())
 					handleGPUFailure()
 
+					// 【关键】检查是否被取消（用户删除稿件），如果是则不再重试
+					if ctx.Err() != nil {
+						utils.InfoLog(fmt.Sprintf("【跳过CPU降级】%s，转码已被取消", fileName), "transcoding")
+						wg.Done()
+						return
+					}
+
 					// GPU失败后尝试使用CPU
 					utils.InfoLog(fmt.Sprintf("【降级到CPU一步式转码】%s", fileName), "transcoding")
 					m3u8File, err = pressingVideo(ctx, transcodingInfo.VideoID, transcodingInfo.ResourceID, transcodingInfo.InputFile, transcodingInfo.OutputDir, fileName, c.Resolution, c.BitrateRate, c.FPS, cancel)
@@ -213,6 +220,13 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 	wg.Wait()
 
 	utils.InfoLog(fmt.Sprintf("【所有转码任务完成】成功=%d, 总数=%d", successCount, len(targets)), "transcoding")
+
+	// 【关键】检查是否所有任务都失败了（可能是被用户取消）
+	// 如果成功数为0，说明转码被取消或全部失败，不再继续后续处理
+	if successCount == 0 {
+		utils.InfoLog(fmt.Sprintf("【跳过后续处理】VideoID=%d 所有转码任务均失败或被取消", transcodingInfo.VideoID), "transcoding")
+		return
+	}
 
 	// 上传oss - 添加panic恢复
 	defer func() {
@@ -628,7 +642,7 @@ func uploadFilesToOSS(dirName, outputDir string, files []os.DirEntry) int {
 				objectKey := "video/" + dirName + "/" + fileName
 				filePath := outputDir + fileName
 
-				utils.InfoLog(fmt.Sprintf("【OSS上传中】Worker%d: %d/%d %s", workerID, task.index+1, len(files), fileName), "transcoding")
+				utils.InfoLog(fmt.Sprintf("【OSS上传中】Worker%d: %d/%d %s/%s", workerID, task.index+1, len(files), dirName, fileName), "transcoding")
 
 				// 上传文件,失败重试1次
 				err := global.Storage.PutObjectFromFile(objectKey, filePath)
@@ -789,6 +803,36 @@ func completeTransCoding(videoId, resourceId uint, status int) error {
 	}
 
 	utils.InfoLog("【事务提交】成功", "transcoding")
+
+	// 更新关联的 VideoFile 状态为已就绪（支持全局去重秒传）
+	if currentResource.FileID != 0 {
+		result := global.Mysql.Model(&model.VideoFile{}).Where("id = ? AND status != ?", currentResource.FileID, model.FileStatusReady).
+			Update("status", model.FileStatusReady)
+		if result.Error != nil {
+			utils.ErrorLog(fmt.Sprintf("【警告】更新VideoFile状态失败, FileID=%d", currentResource.FileID), "transcoding", result.Error.Error())
+		} else {
+			utils.InfoLog(fmt.Sprintf("【VideoFile状态更新】FileID=%d 状态设为 FileStatusReady(3), 影响行数=%d", currentResource.FileID, result.RowsAffected), "transcoding")
+		}
+	} else {
+		// 兼容旧数据：Resource.FileID 为 0 时，尝试通过 VideoIndexFile.DirName 找到对应的 VideoFile 并更新
+		var videoIndex model.VideoIndexFile
+		if err := global.Mysql.Where("resource_id = ?", resourceId).First(&videoIndex).Error; err == nil && videoIndex.DirName != "" {
+			result := global.Mysql.Model(&model.VideoFile{}).Where("dir_name = ? AND status != ?", videoIndex.DirName, model.FileStatusReady).
+				Update("status", model.FileStatusReady)
+			if result.Error != nil {
+				utils.ErrorLog(fmt.Sprintf("【警告】通过DirName更新VideoFile状态失败, DirName=%s", videoIndex.DirName), "transcoding", result.Error.Error())
+			} else if result.RowsAffected > 0 {
+				utils.InfoLog(fmt.Sprintf("【VideoFile状态更新】DirName=%s 状态设为 FileStatusReady(3), 影响行数=%d", videoIndex.DirName, result.RowsAffected), "transcoding")
+
+				// 同时更新 Resource.FileID（补充旧数据）
+				var vf model.VideoFile
+				if global.Mysql.Where("dir_name = ?", videoIndex.DirName).First(&vf).Error == nil {
+					global.Mysql.Model(&model.Resource{}).Where("id = ? AND file_id = 0", resourceId).Update("file_id", vf.ID)
+					utils.InfoLog(fmt.Sprintf("【Resource关联更新】ResourceID=%d 设置 FileID=%d", resourceId, vf.ID), "transcoding")
+				}
+			}
+		}
+	}
 
 	// 转码完成后删除视频缓存，让下次查询时重新加载最新状态
 	cache.DelVideoInfo(videoId)

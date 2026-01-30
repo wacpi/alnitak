@@ -9,19 +9,20 @@ const (
 )
 
 type VideoResp struct {
-	ID          uint           `json:"vid"`
-	Uid         uint           `json:"uid"`
-	Title       string         `json:"title"`
-	Cover       string         `json:"cover"`
-	Desc        string         `json:"desc"`
-	CreatedAt   time.Time      `json:"createdAt"`
-	Copyright   bool           `json:"copyright"`
-	Tags        string         `json:"tags"`
-	Duration    float64        `json:"duration"`
-	Clicks      int64          `json:"clicks"`
-	PartitionId uint           `json:"partitionId"`
-	Author      UserInfoResp   `json:"author" gorm:"-"`
-	Resources   []ResourceResp `json:"resources" gorm:"-"`
+	ID           uint           `json:"vid"`
+	Uid          uint           `json:"uid"`
+	Title        string         `json:"title"`
+	Cover        string         `json:"cover"`
+	Desc         string         `json:"desc"`
+	CreatedAt    time.Time      `json:"createdAt"`
+	Copyright    bool           `json:"copyright"`
+	Tags         string         `json:"tags"`
+	Duration     float64        `json:"duration"`
+	Clicks       int64          `json:"clicks"`
+	PartitionId  uint           `json:"partitionId"`
+	DanmakuCount int64          `json:"danmakuCount" gorm:"-"` // 弹幕数量
+	Author       UserInfoResp   `json:"author" gorm:"-"`
+	Resources    []ResourceResp `json:"resources" gorm:"-"`
 }
 
 type VideoStatusResp struct {

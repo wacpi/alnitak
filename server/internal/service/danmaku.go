@@ -22,6 +22,13 @@ func GetDanmaku(ctx *gin.Context, videoId, part uint) (danmakus []vo.DanmakuResp
 	return danmakus, nil
 }
 
+// 获取视频弹幕数量
+func GetDanmakuCount(videoId uint) int64 {
+	var count int64
+	global.Mysql.Model(&model.Danmaku{}).Where("vid = ?", videoId).Count(&count)
+	return count
+}
+
 func SendDanmaku(ctx *gin.Context, danmakuReq dto.DanmakuReq) error {
 	if video := GetVideoInfo(danmakuReq.Vid); video.ID == 0 {
 		return errors.New("视频不存在")

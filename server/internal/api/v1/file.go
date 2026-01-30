@@ -71,9 +71,9 @@ func GetVideoSlice(ctx *gin.Context) {
 		return
 	}
 
-	// 使用oss
+	// 使用oss（302临时重定向，避免浏览器缓存导致签名URL过期后请求失败）
 	redirect := global.Storage.GetObjectUrl("video/" + dir + "/" + file)
-	ctx.Redirect(http.StatusMovedPermanently, redirect)
+	ctx.Redirect(http.StatusFound, redirect)
 }
 
 // 获取图片文件

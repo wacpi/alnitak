@@ -193,17 +193,24 @@ func DeleteVideo(ctx *gin.Context, id uint) error {
 	var resources []model.Resource
 	global.Mysql.Where("vid = ?", id).Find(&resources)
 
-	// 删除关联的m3u8索引文件记录和视频文件记录（通过resource_id关联）
+	// 删除关联的m3u8索引文件记录和处理视频文件记录（通过resource_id关联）
 	for _, resource := range resources {
 		// 查找VideoIndexFile获取DirName
 		var indexFile model.VideoIndexFile
 		global.Mysql.Where("resource_id = ?", resource.ID).First(&indexFile)
-		if indexFile.DirName != "" {
-			// 删除video_file表中对应的记录
-			if err := global.Mysql.Where("dir_name = ?", indexFile.DirName).Delete(&model.VideoFile{}).Error; err != nil {
-				utils.ErrorLog("删除视频文件记录失败", "video", err.Error())
+
+		// 处理 VideoFile 引用计数（全局去重）
+		if resource.FileID != 0 {
+			// 减少引用计数，如果计数为0则删除VideoFile记录
+			decreaseVideoFileRefCount(resource.FileID, userId, resource.ID, indexFile.DirName)
+		} else if indexFile.DirName != "" {
+			// 兼容旧数据：通过 DirName 查找 VideoFile
+			var vf model.VideoFile
+			if global.Mysql.Where("dir_name = ?", indexFile.DirName).First(&vf).Error == nil {
+				decreaseVideoFileRefCount(vf.ID, userId, resource.ID, indexFile.DirName)
 			}
 		}
+
 		// 删除VideoIndexFile记录
 		if err := global.Mysql.Where("resource_id = ?", resource.ID).Delete(&model.VideoIndexFile{}).Error; err != nil {
 			utils.ErrorLog("删除视频关联m3u8索引文件失败", "video", err.Error())
@@ -274,6 +281,13 @@ func GetVideoById(ctx *gin.Context, videoId uint) (vo.VideoResp, error) {
 	AddVideoClicks(videoId, ctx.ClientIP())
 	video.Clicks += GetVideoClicks(video.ID)
 
+	// 实时查询作者粉丝数（视频缓存中不包含此动态数据）
+	var fans int64
+	global.Mysql.Model(&model.Relation{}).
+		Where("target_uid = ? and (relation = ? or relation = ?)", video.Uid, global.FOLLOWED, global.MUTUAL_FANS).
+		Count(&fans)
+	video.Author.Fans = fans
+
 	return video, nil
 }
 
@@ -329,17 +343,24 @@ func DeleteVideoManage(ctx *gin.Context, id uint) error {
 	var resources []model.Resource
 	global.Mysql.Where("vid = ?", id).Find(&resources)
 
-	// 删除关联的m3u8索引文件记录和视频文件记录（通过resource_id关联）
+	// 删除关联的m3u8索引文件记录和处理视频文件记录（通过resource_id关联）
 	for _, resource := range resources {
 		// 查找VideoIndexFile获取DirName
 		var indexFile model.VideoIndexFile
 		global.Mysql.Where("resource_id = ?", resource.ID).First(&indexFile)
-		if indexFile.DirName != "" {
-			// 删除video_file表中对应的记录
-			if err := global.Mysql.Where("dir_name = ?", indexFile.DirName).Delete(&model.VideoFile{}).Error; err != nil {
-				utils.ErrorLog("删除视频文件记录失败", "video", err.Error())
+
+		// 处理 VideoFile 引用计数（全局去重）
+		if resource.FileID != 0 {
+			// 减少引用计数，如果计数为0则删除VideoFile记录
+			decreaseVideoFileRefCount(resource.FileID, video.Uid, resource.ID, indexFile.DirName)
+		} else if indexFile.DirName != "" {
+			// 兼容旧数据：通过 DirName 查找 VideoFile
+			var vf model.VideoFile
+			if global.Mysql.Where("dir_name = ?", indexFile.DirName).First(&vf).Error == nil {
+				decreaseVideoFileRefCount(vf.ID, video.Uid, resource.ID, indexFile.DirName)
 			}
 		}
+
 		// 删除VideoIndexFile记录
 		if err := global.Mysql.Where("resource_id = ?", resource.ID).Delete(&model.VideoIndexFile{}).Error; err != nil {
 			utils.ErrorLog("删除视频关联m3u8索引文件失败", "video", err.Error())
@@ -430,6 +451,8 @@ func GetHotVideo(ctx *gin.Context, page, pageSize int) []vo.VideoResp {
 		videos[i] = GetVideoInfo(id)
 		// 同步播放量
 		videos[i].Clicks += GetVideoClicks(id)
+		// 同步弹幕数量
+		videos[i].DanmakuCount = GetDanmakuCount(id)
 	}
 
 	return videos
@@ -449,6 +472,8 @@ func GetVideoListByPartition(ctx *gin.Context, size int, partitionId uint) []vo.
 		videos[i] = GetVideoInfo(id)
 		// 同步播放量
 		videos[i].Clicks += GetVideoClicks(id)
+		// 同步弹幕数量
+		videos[i].DanmakuCount = GetDanmakuCount(id)
 	}
 
 	return videos
@@ -486,12 +511,14 @@ func GetRelatedVideoList(ctx *gin.Context, videoId uint) []vo.VideoResp {
 		videos[i] = GetVideoInfo(videoIds[i])
 		// 同步播放量
 		videos[i].Clicks += GetVideoClicks(videoIds[i])
+		// 同步弹幕数量
+		videos[i].DanmakuCount = GetDanmakuCount(videoIds[i])
 	}
 
 	return videos
 }
 
-// 获取相关推荐视频
+// 搜索视频
 func SearchVideo(ctx *gin.Context, searchVideoReq dto.SearchVideoReq) []vo.VideoResp {
 	var videoIds []uint
 	if len(searchVideoReq.KeyWords) == 0 {
@@ -510,6 +537,8 @@ func SearchVideo(ctx *gin.Context, searchVideoReq dto.SearchVideoReq) []vo.Video
 		videos[i] = GetVideoInfo(videoIds[i])
 		// 同步播放量
 		videos[i].Clicks += GetVideoClicks(videoIds[i])
+		// 同步弹幕数量
+		videos[i].DanmakuCount = GetDanmakuCount(videoIds[i])
 	}
 
 	return videos

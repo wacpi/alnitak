@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/gin-gonic/gin"
 	"interastral-peace.com/alnitak/internal/cache"
@@ -77,6 +78,22 @@ func ReviewVideoFailed(ctx *gin.Context, reviewVideoReq dto.ReviewVideoReq) erro
 		tx.Rollback()
 		utils.ErrorLog("更新视频状态失败", "review", err.Error())
 		return errors.New("更新状态失败")
+	}
+
+	// 如果指定了冲突稿件，更新资源表的冲突关联字段
+	if reviewVideoReq.ConflictResourceID != 0 {
+		// 更新该视频下所有资源的冲突关联
+		if err := tx.Model(&model.Resource{}).Where("vid = ?", reviewVideoReq.Vid).Updates(
+			map[string]interface{}{
+				"conflict_resource_id": reviewVideoReq.ConflictResourceID,
+				"conflict_reason":      reviewVideoReq.ConflictReason,
+			},
+		).Error; err != nil {
+			tx.Rollback()
+			utils.ErrorLog("更新冲突关联失败", "review", err.Error())
+			return errors.New("更新冲突关联失败")
+		}
+		utils.InfoLog(fmt.Sprintf("【审核驳回】设置冲突关联 vid=%d -> conflictResourceId=%d", reviewVideoReq.Vid, reviewVideoReq.ConflictResourceID), "review")
 	}
 
 	// 添加审核记录

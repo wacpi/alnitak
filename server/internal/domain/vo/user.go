@@ -20,6 +20,7 @@ type UserInfoResp struct {
 	SpaceCover string    `json:"spaceCover"`
 	Birthday   time.Time `json:"birthday"`
 	CreatedAt  time.Time `json:"createdAt"`
+	Fans       int64     `json:"fans" gorm:"-"` // 粉丝数量
 }
 
 type UserBaseInfoResp struct {

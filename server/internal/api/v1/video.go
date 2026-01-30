@@ -197,8 +197,26 @@ func GetReviewResourceList(ctx *gin.Context) {
 	vid := utils.StringToUint(ctx.Query("vid"))
 	resources := service.GetReviewResourceList(vid)
 
+	// 查找相同文件的关联稿件（全局去重功能）
+	var relatedResources []interface{}
+	for _, r := range resources {
+		if r.FileID != 0 {
+			related := service.GetRelatedResources(r.FileID, vid)
+			if len(related) > 0 {
+				relatedResources = append(relatedResources, map[string]interface{}{
+					"resourceId":       r.ID,
+					"fileId":           r.FileID,
+					"relatedResources": related,
+				})
+			}
+		}
+	}
+
 	// 返回给前端
-	resp.OkWithData(ctx, gin.H{"resources": resources})
+	resp.OkWithData(ctx, gin.H{
+		"resources":        resources,
+		"relatedResources": relatedResources, // 相同文件的关联稿件
+	})
 }
 
 // 获取热门视频

@@ -112,6 +112,7 @@ func (r *CleanupResult) cleanOrphanedVideoDirs(dryRun bool) {
 // checkVideoDirValidity 检查视频目录是否有效
 // 返回空字符串表示有效，返回原因字符串表示需要清理
 // 注意：同一个dirName可能有多条记录（不同画质），只要有一条是有效的，整个目录就应该保留
+// 全局去重模式下，还需要检查 VideoFile 的引用计数和 VideoFileRef 表
 func checkVideoDirValidity(dirName string) string {
 	// 1. 检查 VideoIndexFile 表（获取所有记录）
 	var indexFiles []model.VideoIndexFile
@@ -125,8 +126,29 @@ func checkVideoDirValidity(dirName string) string {
 		if videoFile.ID == 0 {
 			return "数据库无记录"
 		}
-		// VideoFile 存在但 VideoIndexFile 不存在，可能是上传中断，保留
-		return ""
+
+		// VideoFile 存在，检查是否有有效引用（全局去重模式）
+		// 检查 VideoFileRef 是否有未删除的引用
+		var refCount int64
+		global.Mysql.Model(&model.VideoFileRef{}).Where("file_id = ?", videoFile.ID).Count(&refCount)
+		if refCount > 0 {
+			// 有引用，保留
+			return ""
+		}
+
+		// 检查 VideoFile 自身的引用计数
+		if videoFile.RefCount > 0 {
+			return ""
+		}
+
+		// 检查是否正在上传/转码中（状态 0=上传中, 1=已合并, 2=转码中）
+		if videoFile.Status < model.FileStatusReady {
+			// 还在处理中，保留
+			return ""
+		}
+
+		// VideoFile 存在但无引用且已完成，可以清理
+		return "VideoFile无有效引用"
 	}
 
 	// 2. 遍历所有 VideoIndexFile 记录，只要有一条完整有效的链路，就保留目录
@@ -182,9 +204,18 @@ func checkSingleIndexFileValidity(indexFile model.VideoIndexFile) string {
 
 // cleanVideoDirDbRecords 清理视频目录相关的数据库记录
 func cleanVideoDirDbRecords(dirName string, r *CleanupResult) {
+	// 先查询 VideoFile，获取其 ID 用于清理引用表
+	var videoFile model.VideoFile
+	global.Mysql.Unscoped().Where("dir_name = ?", dirName).First(&videoFile)
+
 	// 删除 VideoIndexFile 记录
 	result := global.Mysql.Unscoped().Where("dir_name = ?", dirName).Delete(&model.VideoIndexFile{})
 	r.CleanedIndexFiles += int(result.RowsAffected)
+
+	// 清理 VideoFileRef 引用记录（全局去重模式）
+	if videoFile.ID != 0 {
+		global.Mysql.Unscoped().Where("file_id = ?", videoFile.ID).Delete(&model.VideoFileRef{})
+	}
 
 	// 删除 VideoFile 记录
 	result = global.Mysql.Unscoped().Where("dir_name = ?", dirName).Delete(&model.VideoFile{})
