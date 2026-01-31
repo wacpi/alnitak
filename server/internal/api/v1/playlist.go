@@ -21,6 +21,11 @@ func AddPlaylist(ctx *gin.Context) {
 		return
 	}
 
+	if utils.VerifyStringLength(req.Cover, "=", 0) {
+		resp.FailWithMessage(ctx, "合集封面不能为空")
+		return
+	}
+
 	id, err := service.AddPlaylist(ctx, req)
 	if err != nil {
 		resp.FailWithMessage(ctx, err.Error())
@@ -40,6 +45,11 @@ func EditPlaylist(ctx *gin.Context) {
 
 	if utils.VerifyStringLength(req.Title, "=", 0) {
 		resp.FailWithMessage(ctx, "合集标题不能为空")
+		return
+	}
+
+	if utils.VerifyStringLength(req.Cover, "=", 0) {
+		resp.FailWithMessage(ctx, "合集封面不能为空")
 		return
 	}
 

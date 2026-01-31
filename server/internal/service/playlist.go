@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	maxPlaylistPerUser = 50  // 每用户最多创建合集数
-	maxVideoPerPlaylist = 200 // 每合集最多视频数
-	sortStep           = 1000 // 排序步长
+	maxPlaylistPerUser  = 50   // 每用户最多创建合集数
+	maxVideoPerPlaylist = 200  // 每合集最多视频数
+	sortStep            = 1000 // 排序步长
 )
 
 // AddPlaylist 创建合集
@@ -70,7 +70,6 @@ func EditPlaylist(ctx *gin.Context, req dto.EditPlaylistReq) error {
 		"cover":   req.Cover,
 		"desc":    req.Desc,
 		"is_open": req.IsOpen,
-		"status":  global.WAITING_REVIEW,
 	}).Error; err != nil {
 		utils.ErrorLog("编辑合集失败", "playlist", err.Error())
 		return errors.New("编辑失败")
@@ -180,11 +179,22 @@ func AddPlaylistVideo(ctx *gin.Context, req dto.PlaylistVideoAddReq) error {
 			continue // 跳过不符合条件的视频
 		}
 
-		// 检查是否已在合集中
-		var exists int64
-		global.Mysql.Model(&model.PlaylistVideo{}).
-			Where("playlist_id = ? AND vid = ?", req.PlaylistID, vid).Count(&exists)
-		if exists > 0 {
+		// 检查是否已在合集中（包含软删除的记录）
+		var existing model.PlaylistVideo
+		err := global.Mysql.Unscoped().
+			Where("playlist_id = ? AND vid = ?", req.PlaylistID, vid).First(&existing).Error
+		if err == nil {
+			// 记录存在
+			if existing.DeletedAt.Valid {
+				// 软删除的记录，恢复它
+				maxSort += sortStep
+				global.Mysql.Unscoped().Model(&existing).Updates(map[string]interface{}{
+					"deleted_at": nil,
+					"sort":       maxSort,
+				})
+				addCount++
+			}
+			// 未删除的记录，跳过
 			continue
 		}
 
@@ -219,7 +229,7 @@ func DelPlaylistVideo(ctx *gin.Context, req dto.PlaylistVideoDelReq) error {
 		return errors.New("无权操作")
 	}
 
-	result := global.Mysql.Where("playlist_id = ? AND vid IN ?", req.PlaylistID, req.Vids).
+	result := global.Mysql.Unscoped().Where("playlist_id = ? AND vid IN ?", req.PlaylistID, req.Vids).
 		Delete(&model.PlaylistVideo{})
 
 	if result.RowsAffected > 0 {

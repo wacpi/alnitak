@@ -100,11 +100,11 @@ func GetRelatedResources(fileID uint, excludeVid uint) (resources []vo.RelatedRe
 	}
 
 	// 查询相同 file_id 的其他资源（排除当前视频）
-	global.Mysql.Table("resources").
-		Select("resources.id as resource_id, resources.vid, resources.uid, resources.title, resources.status, resources.created_at, users.name as author_name").
-		Joins("LEFT JOIN users ON resources.uid = users.id").
-		Where("resources.file_id = ? AND resources.vid != ? AND resources.deleted_at IS NULL", fileID, excludeVid).
-		Order("resources.created_at ASC").
+	global.Mysql.Table("resource").
+		Select("resource.id as resource_id, resource.vid, resource.uid, resource.title, resource.status, resource.created_at, users.name as author_name").
+		Joins("LEFT JOIN users ON resource.uid = users.id").
+		Where("resource.file_id = ? AND resource.vid != ? AND resource.deleted_at IS NULL", fileID, excludeVid).
+		Order("resource.created_at ASC").
 		Scan(&resources)
 
 	return
