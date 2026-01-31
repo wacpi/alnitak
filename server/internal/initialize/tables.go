@@ -37,4 +37,6 @@ func InitTables() {
 	global.Mysql.AutoMigrate(&model.Carousel{})       // 轮播图表
 	global.Mysql.AutoMigrate(&model.Article{})        // 文章表
 	global.Mysql.AutoMigrate(&model.ImageFile{})      // 图片文件表
+	global.Mysql.AutoMigrate(&model.Playlist{})       // 合集表
+	global.Mysql.AutoMigrate(&model.PlaylistVideo{})  // 合集视频关联表
 }

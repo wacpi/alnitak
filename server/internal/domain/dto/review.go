@@ -13,3 +13,9 @@ type ReviewArticleReq struct {
 	Status int
 	Remark string
 }
+
+type ReviewPlaylistReq struct {
+	ID     uint `json:"id"`
+	Status int
+	Remark string
+}

@@ -17,4 +17,5 @@ var (
 	Storage           oss.Storage
 	SnowflakeNode     *snowflake.Node
 	VideoPartitionMap map[uint]uint
+	SyncApi           bool
 )

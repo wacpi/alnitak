@@ -20,7 +20,10 @@ import (
 func main() {
 	env := flag.String("env", "prod", "dev/prod")
 	clearCache := flag.Bool("clear-cache", false, "是否清空所有Redis缓存")
+	syncApi := flag.Bool("api", false, "同步API路由到数据库")
 	flag.Parse()
+
+	global.SyncApi = *syncApi
 
 	// 初始化配置文件
 	initialize.InitConfig(*env)

@@ -294,7 +294,7 @@ func GetVideoById(ctx *gin.Context, videoId uint) (vo.VideoResp, error) {
 // 获取所有的视频列表
 func GetAllVideoList(ctx *gin.Context) (videos []vo.AllVideoResp) {
 	userId := ctx.GetUint("userId")
-	global.Mysql.Model(&model.Video{}).Select("`id`,`title`").Where("uid = ?", userId).Scan(&videos)
+	global.Mysql.Model(&model.Video{}).Select("`id`,`title`,`cover`").Where("uid = ?", userId).Scan(&videos)
 
 	return
 }

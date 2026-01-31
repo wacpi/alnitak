@@ -52,6 +52,7 @@ type UploadVideoResp struct {
 type AllVideoResp struct {
 	ID    uint   `json:"vid"`
 	Title string `json:"title"`
+	Cover string `json:"cover"`
 }
 
 type VideoInfoManageResp struct {

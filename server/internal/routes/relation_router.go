@@ -20,10 +20,10 @@ func CollectRelationRoutes(r *gin.RouterGroup) {
 		relationAuth.GET("getUserRelation", api.GetUserRelation)
 	}
 
-	// 获取关注列表
-	relationGroup.GET("getFollowings", api.GetFollowings)
-	// 获取粉丝列表
-	relationGroup.GET("getFollowers", api.GetFollowers)
+	// 获取关注列表（可选认证，用于返回当前用户与列表用户的关系）
+	relationGroup.GET("getFollowings", middleware.OptionalAuth(), api.GetFollowings)
+	// 获取粉丝列表（可选认证）
+	relationGroup.GET("getFollowers", middleware.OptionalAuth(), api.GetFollowers)
 	// 获取关注和粉丝数
 	relationGroup.GET("getFollowCount", api.GetFollowCount)
 }

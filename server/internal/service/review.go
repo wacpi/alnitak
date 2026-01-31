@@ -212,3 +212,90 @@ func GetArticleReviewRecord(ctx *gin.Context, articleId uint) (vo.ReviewResp, er
 
 	return review, nil
 }
+
+// 获取待审核合集列表
+func GetReviewPlaylistList(page, pageSize int) (total int64, list []vo.PlaylistResp) {
+	global.Mysql.Model(&model.Playlist{}).Where("status = ?", global.WAITING_REVIEW).Count(&total)
+	global.Mysql.Model(&model.Playlist{}).Select(vo.PLAYLIST_FIELD).
+		Where("status = ?", global.WAITING_REVIEW).
+		Order("created_at asc").
+		Limit(pageSize).Offset((page - 1) * pageSize).Scan(&list)
+
+	// 填充作者信息
+	for i := range list {
+		list[i].Author = GetUserBaseInfo(list[i].Uid)
+	}
+	return
+}
+
+// 审核通过(合集)
+func ReviewPlaylistApproved(ctx *gin.Context, req dto.ReviewPlaylistReq) error {
+	tx := global.Mysql.Begin()
+	if err := tx.Model(&model.Playlist{}).Where("id = ?", req.ID).Updates(
+		map[string]interface{}{"status": global.AUDIT_APPROVED},
+	).Error; err != nil {
+		tx.Rollback()
+		utils.ErrorLog("更新合集状态失败", "review", err.Error())
+		return errors.New("更新状态失败")
+	}
+
+	if err := tx.Create(&model.Review{
+		Cid:    req.ID,
+		Status: global.AUDIT_APPROVED,
+		Remark: "",
+		Uid:    ctx.GetUint("userId"),
+		Type:   global.CONTENT_TYPE_PLAYLIST,
+	}).Error; err != nil {
+		tx.Rollback()
+		utils.ErrorLog("创建审核记录失败", "review", err.Error())
+		return errors.New("更新状态失败")
+	}
+
+	tx.Commit()
+	return nil
+}
+
+// 审核不通过(合集)
+func ReviewPlaylistFailed(ctx *gin.Context, req dto.ReviewPlaylistReq) error {
+	tx := global.Mysql.Begin()
+	if err := tx.Model(&model.Playlist{}).Where("id = ?", req.ID).Updates(
+		map[string]interface{}{"status": global.REVIEW_FAILED},
+	).Error; err != nil {
+		tx.Rollback()
+		utils.ErrorLog("更新合集状态失败", "review", err.Error())
+		return errors.New("更新状态失败")
+	}
+
+	if err := tx.Create(&model.Review{
+		Cid:    req.ID,
+		Status: req.Status,
+		Remark: req.Remark,
+		Uid:    ctx.GetUint("userId"),
+		Type:   global.CONTENT_TYPE_PLAYLIST,
+	}).Error; err != nil {
+		tx.Rollback()
+		utils.ErrorLog("创建审核记录失败", "review", err.Error())
+		return errors.New("更新状态失败")
+	}
+
+	tx.Commit()
+	return nil
+}
+
+// 获取审核记录(合集)
+func GetPlaylistReviewRecord(ctx *gin.Context, playlistId uint) (vo.ReviewResp, error) {
+	userId := ctx.GetUint("userId")
+	var playlist model.Playlist
+	if err := global.Mysql.First(&playlist, playlistId).Error; err != nil {
+		return vo.ReviewResp{}, errors.New("合集不存在")
+	}
+	if playlist.Uid != userId {
+		return vo.ReviewResp{}, errors.New("合集不存在")
+	}
+
+	var review vo.ReviewResp
+	global.Mysql.Model(&model.Review{}).Select(vo.REVIEW_FIELD).
+		Where("cid = ? and `type` = ?", playlistId, global.CONTENT_TYPE_PLAYLIST).Last(&review)
+
+	return review, nil
+}
