@@ -60,9 +60,11 @@
             <part-list ref="partListRef" :resources="videoInfo.resources" :active="currentPart"
               @change="changePart"></part-list>
           </div>
+          <!-- 合集列表 -->
+          <video-collection ref="collectionRef" v-if="videoInfo" :vid="videoInfo.vid"></video-collection>
           <!-- 相关推荐 -->
           <recommend-list ref="recommendListRef" v-if="videoInfo" :vid="videoInfo.vid"
-            :show-autoplay-control="!videoInfo || videoInfo.resources.length <= 1"></recommend-list>
+            :show-autoplay-control="!videoInfo || (videoInfo.resources.length <= 1 && !hasCollection)"></recommend-list>
         </div>
       </div>
     </div>
@@ -70,13 +72,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, watch, type ComponentPublicInstance } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick, type ComponentPublicInstance } from "vue";
 import { ElIcon } from "element-plus";
 import { Forbid as ForbidIcon } from "@icon-park/vue-next";
 import { formatTime } from "@/utils/format";
 import PartList from "./components/PartList.vue";
 import AuthorCard from './components/AuthorCard.vue';
 import ArchiveInfo from './components/ArchiveInfo.vue';
+import VideoCollection from "./components/VideoCollection.vue";
 import CommentList from "./components/CommentList.vue";
 import DanmakuList from "./components/DanmakuList.vue";
 import HeaderBar from "@/components/header-bar/index.vue";
@@ -93,7 +96,7 @@ const router = useRouter();
 
 // 获取视频信息
 const videoInfo = ref<VideoType>();
-const videoId = route.params.id.toString();
+let videoId = route.params.id.toString();
 const { data } = await asyncGetVideoInfoAPI(videoId);
 if ((data.value as any).code === statusCode.OK) {
   videoInfo.value = (data.value as any).data.video as VideoType;
@@ -130,6 +133,8 @@ const pendingProgress = ref<number | null>(null);
 // 获取组件引用
 const recommendListRef = ref<InstanceType<typeof RecommendList> | null>(null);
 const partListRef = ref<InstanceType<typeof PartList> | null>(null);
+const collectionRef = ref<InstanceType<typeof VideoCollection> | null>(null);
+const hasCollection = computed(() => !!collectionRef.value?.hasPlaylist);
 
 // 视频播放结束时的自动连播逻辑
 const onVideoEnded = () => {
@@ -149,15 +154,29 @@ const onVideoEnded = () => {
           changePart(nextPart);
         }, 1000);// 这里设置延迟时间：3000毫秒 = 3秒
       } else {
-        console.log('已是最后一集，检查推荐视频');
-        // 最后一集播放完，检查推荐自动连播
-        checkRecommendAutoplay();
+        console.log('已是最后一集，检查合集/推荐视频');
+        checkCollectionAutoplay();
       }
     }
   } else {
-    // 单集：检查推荐自动连播
-    checkRecommendAutoplay();
+    // 单集：检查合集自动连播，再检查推荐
+    checkCollectionAutoplay();
   }
+};
+
+// 检查合集自动连播
+const checkCollectionAutoplay = () => {
+  if (collectionRef.value?.autonext) {
+    const nextVideo = collectionRef.value.getNextVideo?.();
+    if (nextVideo) {
+      setTimeout(() => {
+        navigateTo(`/video/${nextVideo.vid}`);
+      }, 1000);
+      return;
+    }
+  }
+  // 合集没有下一个或未开启，检查推荐
+  checkRecommendAutoplay();
 };
 
 // 检查推荐视频自动连播
@@ -272,7 +291,7 @@ const showFoldBtn = ref(false); // 是否显示展开和折叠按钮
 const foldDescHeight = ref('auto'); // 折叠状态下简介的最大高度
 const playerReady = ref(false);
 onMounted(async () => {
-  if (descRef.value!.clientHeight >= 80) {
+  if (descRef.value && descRef.value.clientHeight >= 80) {
     showFoldBtn.value = true;
     foldDescHeight.value = '80px';
   } else {
@@ -316,6 +335,11 @@ onMounted(async () => {
     showPlayer.value = true;
     playerReady.value = true;
   })
+
+  // 初始化 WebSocket 连接（统计在看人数）
+  console.log('[video page] onMounted 执行，准备初始化 WebSocket, videoId:', videoId);
+  initWebSocket();
+  document.addEventListener('visibilitychange', handleVisibilityChange);
 })
 
 //websocket
@@ -329,6 +353,32 @@ let isManualClose = false; // 标记是否为手动关闭
 let heartbeatTimer: number | null = null; // 心跳定时器
 let lastMessageTime = 0; // 最后一次收到消息的时间
 
+// 关闭当前 WebSocket 连接
+const closeWebSocket = () => {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
+  if (websocket) {
+    isManualClose = true;
+    websocket.close();
+    websocket = null;
+  }
+  reconnectAttempts = 0;
+  onlineCount.value = 0;
+}
+
+// 重新连接 WebSocket（切换视频时使用）
+const reconnectWebSocket = () => {
+  closeWebSocket();
+  isManualClose = false;
+  initWebSocket();
+}
+
 //初始化weosocket
 const initWebSocket = () => {
   let clientId = localStorage.getItem("ws-client-id");
@@ -336,9 +386,15 @@ const initWebSocket = () => {
     clientId = createUUID();
     localStorage.setItem("ws-client-id", clientId);
   }
-  // 始终使用当前页面的 host，走前端代理，避免暴露后端地址
-  const wsProtocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
-  SocketURL = wsProtocol + window.location.host + `/api/v1/online/video?vid=${videoId}&clientId=${clientId}`;
+
+  // 开发环境直连后端，生产环境通过 Nginx 代理
+  if (process.dev) {
+    const wsProtocol = globalConfig.https ? 'wss://' : 'ws://';
+    SocketURL = `${wsProtocol}${globalConfig.domain}/api/v1/online/video?vid=${videoId}&clientId=${clientId}`;
+  } else {
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+    SocketURL = `${wsProtocol}${window.location.host}/api/v1/online/video?vid=${videoId}&clientId=${clientId}`;
+  }
 
   // 清理旧的定时器
   if (heartbeatTimer) {
@@ -401,21 +457,21 @@ const initWebSocket = () => {
 
 // 启动心跳检测
 const startHeartbeat = () => {
-  // 每15秒检查一次连接状态
   heartbeatTimer = window.setInterval(() => {
     if (websocket && websocket.readyState === WebSocket.OPEN) {
-      const now = Date.now();
-      // 如果超过45秒没收到消息,可能连接已断开,主动重连
-      if (now - lastMessageTime > 45000) {
-        console.warn('[WebSocket] 心跳超时,主动重连');
+      // 发送心跳消息给后端，保持连接活跃并重置后端的读超时
+      try {
+        websocket.send('ping');
+        lastMessageTime = Date.now();
+      } catch {
+        console.warn('[WebSocket] 发送心跳失败');
         websocket.close();
       }
     } else if (websocket && websocket.readyState !== WebSocket.CONNECTING) {
-      // 连接已断开但未触发onclose,手动触发重连
       console.warn('[WebSocket] 检测到连接异常,状态:', websocket.readyState);
       websocket.close();
     }
-  }, 15000);
+  }, 25000); // 每 25 秒发一次心跳（后端 60 秒读超时，30 秒 ping）
 }
 
 // 监听页面可见性变化
@@ -451,37 +507,20 @@ const websocketOnmessage = (e: any) => {
   }
 }
 
-onBeforeMount(() => {
-  initWebSocket();
-  // 监听页面可见性变化
-  document.addEventListener('visibilitychange', handleVisibilityChange);
-})
 
 onBeforeUnmount(() => {
   window.removeEventListener("resize", handelResize);
   document.removeEventListener('visibilitychange', handleVisibilityChange);
 
   // 标记为手动关闭
-  isManualClose = true;
-
   // 清理 WebSocket
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-  }
-  if (heartbeatTimer) {
-    clearInterval(heartbeatTimer);
-    heartbeatTimer = null;
-  }
-  if (websocket) {
-    websocket.close();
-    websocket = null;
-  }
+  closeWebSocket();
 
   // 清理组件引用,避免内存泄漏
   playerRef.value = null;
   recommendListRef.value = null;
   partListRef.value = null;
+  collectionRef.value = null;
   danmakuListRef.value = null;
   playerContainerRef.value = null;
   descRef.value = undefined;
@@ -495,6 +534,9 @@ onBeforeUnmount(() => {
 // 新增：监听 route.params.id 变化，重新拉取视频信息和重置状态
 watch(() => route.params.id, async (newId, oldId) => {
   if (newId !== oldId) {
+    // 更新 videoId
+    videoId = newId.toString();
+
     // 重新拉取视频信息
     const { data } = await asyncGetVideoInfoAPI(newId.toString());
     if ((data.value as any).code === statusCode.OK) {
@@ -508,6 +550,11 @@ watch(() => route.params.id, async (newId, oldId) => {
         pendingProgress.value = res.data.data.progress;
       } else {
         pendingProgress.value = null;
+      }
+
+      // 重新连接 WebSocket 以更新在线人数
+      if (process.client) {
+        reconnectWebSocket();
       }
     } else {
       navigateTo('/404');

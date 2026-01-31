@@ -46,17 +46,55 @@ const options: PlayerOptionsType = {
       // TODO: 处理IOS系统中的hls视频播放
       //这段代码先前造成清晰度切换进度丢失问题！
       customHls: function (video: HTMLVideoElement) {
-        if (!hls.value) {  // 如果 Hls 实例不存在，才创建一个新的 Hls 实例
-          hls.value = new Hls();
-        } else {
-          hls.value.destroy();  // 销毁旧的实例，防止内存泄漏
-          hls.value = new Hls();  // 重新实例化 Hls（仅在必要时）
-        }
-        hls.value.loadSource(video.src);  // 加载新的 HLS 视频源
-        hls.value.attachMedia(video);  // 将 HLS 实例附加到视频元素上
+        // 从 localStorage 恢复音量状态（首次加载或页面刷新）
+        // 如果视频已有音量设置（清晰度切换），则以当前值为准
+        const savedVolume = localStorage.getItem('wplayer-volume');
+        const savedMuted = localStorage.getItem('wplayer-muted');
+        const prevVolume = video.currentTime > 0 ? video.volume : (savedVolume !== null ? parseFloat(savedVolume) : 1);
+        const prevMuted = video.currentTime > 0 ? video.muted : (savedMuted === '1');
 
-        hls.value.on(Hls.Events.ERROR, () => {
-          console.error("资源加载失败");
+        if (hls.value) {
+          hls.value.destroy();
+        }
+        hls.value = new Hls({
+          maxBufferLength: 30,
+          maxMaxBufferLength: 60,
+        });
+        hls.value.loadSource(video.src);
+        hls.value.attachMedia(video);
+
+        // HLS 媒体附加完成后恢复音量状态
+        hls.value.on(Hls.Events.MEDIA_ATTACHED, () => {
+          video.volume = prevVolume;
+          video.muted = prevMuted;
+        });
+
+        // 监听音量变化，持久化到 localStorage（避免重复绑定）
+        if (!(video as any).__volumeChangeBound) {
+          (video as any).__volumeChangeBound = true;
+          video.addEventListener('volumechange', () => {
+            localStorage.setItem('wplayer-volume', video.volume.toString());
+            localStorage.setItem('wplayer-muted', video.muted ? '1' : '0');
+          });
+        }
+
+        hls.value.on(Hls.Events.ERROR, (_event, data) => {
+          if (data.fatal) {
+            switch (data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                console.error('[HLS] 网络错误，尝试恢复:', data.details);
+                hls.value?.startLoad();
+                break;
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                console.error('[HLS] 媒体错误，尝试恢复:', data.details);
+                hls.value?.recoverMediaError();
+                break;
+              default:
+                console.error('[HLS] 致命错误，无法恢复:', data.type, data.details);
+                hls.value?.destroy();
+                break;
+            }
+          }
         });
       },
     },
