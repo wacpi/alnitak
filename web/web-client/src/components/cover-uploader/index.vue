@@ -23,7 +23,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { isUrl } from "@/utils/verify";
 import { globalConfig } from "@/utils/global-config";
@@ -37,6 +37,13 @@ const props = defineProps<{
 }>()
 
 const currentCover = ref(props.cover);
+
+// 监听props.cover的变化，更新currentCover
+watch(() => props.cover, (newCover) => {
+  if (newCover !== undefined) {
+    currentCover.value = newCover;
+  }
+}, { immediate: true });
 
 const percent = ref(0);//上传百分比
 const uploading = ref(false);//是否上传中
