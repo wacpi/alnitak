@@ -1,7 +1,17 @@
 {
   "permissions": {
     "allow": [
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(dir:*)",
+      "Bash(tree:*)",
+      "Bash(npx vue-tsc:*)",
+      "Bash(npm install:*)",
+      "Bash(find:*)",
+      "Bash(xargs:*)",
+      "Bash(node --version:*)",
+      "Bash(powershell -Command \"Get-ChildItem -Path ''E:\\\\alnitak_flutter\\\\lib'' -Name\")",
+      "Bash(powershell -Command \"Get-ChildItem -Path ''E:\\\\alnitak_flutter\\\\lib'' -Recurse -Filter ''*.dart'' -Name\")",
+      "Bash(powershell:*)"
     ]
   }
 }

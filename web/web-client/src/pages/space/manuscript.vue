@@ -48,21 +48,15 @@ const getUploadVideo = async () => {
   const res = await getUploadVideoAPI(page.value, pageSize.value);
   if (res.data.code === statusCode.OK) {
     const videos = res.data.data.videos || [];
-    const approvedVideos = videos.filter((video: ManuscriptVideoType) => video.status === reviewCode.AUDIT_APPROVED);
-    videoList.value = approvedVideos;
-
-    total.value = approvedVideos.length;
-    videoCountStore.setVideoCountState(total.value);
-
-    if (res.data.data.videos && res.data.data.videos.length > 0) {
-      // 只显示审核通过的视频
-      const approvedVideos = res.data.data.videos.filter(
+    if (videos.length > 0) {
+      const approvedVideos = videos.filter(
         (video: ManuscriptVideoType) => video.status === reviewCode.AUDIT_APPROVED
       );
       videoList.value = videoList.value.concat(approvedVideos);
+      total.value = videoList.value.length;
+      videoCountStore.setVideoCountState(total.value);
 
-      // 如果返回的数据少于 pageSize，说明没有更多了
-      if (res.data.data.videos.length < pageSize.value) {
+      if (videos.length < pageSize.value) {
         noMore.value = true;
       }
     } else {

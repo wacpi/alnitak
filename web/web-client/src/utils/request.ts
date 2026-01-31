@@ -1,10 +1,35 @@
 import axios from "axios";
 import Cookies from "js-cookie";
-import type { AxiosInstance, InternalAxiosRequestConfig } from "axios";
+import type { AxiosInstance, AxiosError } from "axios";
 import { updateTokenAPI } from "@/api/auth";
 import { statusCode } from "./status-code";
 import { globalConfig as config, } from "./global-config";
 import { storageData as storage } from "./storage-data";
+
+// 重试配置
+const MAX_RETRIES = 3;
+const RETRY_DELAY = 1000; // 初始延迟 1s
+const RETRYABLE_ERRORS = ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'ERR_NETWORK'];
+
+// 判断是否为可重试的网络错误
+const isRetryableError = (error: AxiosError): boolean => {
+  // 网络错误（无响应）
+  if (!error.response) {
+    const code = error.code || '';
+    const message = error.message || '';
+    return (
+      RETRYABLE_ERRORS.some(e => code.includes(e) || message.includes(e)) ||
+      message.includes('Network Error') ||
+      message.includes('timeout')
+    );
+  }
+  // 502/503/504 网关错误也可重试
+  const status = error.response.status;
+  return status === 502 || status === 503 || status === 504;
+};
+
+// 延迟函数
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Token 刷新队列,使用类型定义
 type TokenCallback = (token: string) => void;
@@ -145,7 +170,30 @@ service.interceptors.response.use(async (res) => {
     }
   }
   return res;
-}, (error) => {
+}, async (error: AxiosError) => {
+  const config = error.config;
+
+  // 如果没有 config 或已超过最大重试次数，直接拒绝
+  if (!config) {
+    return Promise.reject(error);
+  }
+
+  // 初始化重试计数
+  (config as any).__retryCount = (config as any).__retryCount || 0;
+
+  // 检查是否可重试且未超过最大重试次数
+  if (isRetryableError(error) && (config as any).__retryCount < MAX_RETRIES) {
+    (config as any).__retryCount += 1;
+    const retryCount = (config as any).__retryCount;
+
+    // 指数退避延迟
+    const delayMs = RETRY_DELAY * Math.pow(2, retryCount - 1);
+    console.warn(`[request] 网络错误，${delayMs}ms 后进行第 ${retryCount} 次重试...`, error.message);
+
+    await delay(delayMs);
+    return service.request(config);
+  }
+
   return Promise.reject(error);
 });
 

@@ -5,7 +5,7 @@
   "license": "MIT",
   "scripts": {
     "build": "nuxt build",
-    "dev": "nuxt dev",
+    "dev": "node --no-deprecation node_modules/nuxt/bin/nuxt.mjs dev",
     "generate": "nuxt generate",
     "preview": "nuxt preview",
     "postinstall": "nuxt prepare"
@@ -13,6 +13,7 @@
   "devDependencies": {
     "@element-plus/nuxt": "^1.0.7",
     "@nuxt/devtools": "latest",
+    "@types/http-proxy": "^1.17.17",
     "@types/js-cookie": "^3.0.6",
     "@types/spark-md5": "^3.0.5",
     "nuxt": "^3.8.2",
@@ -28,6 +29,7 @@
     "axios": "^1.6.2",
     "element-plus": "^2.4.4",
     "hls.js": "^1.5.7",
+    "http-proxy": "^1.18.1",
     "isomorphic-dompurify": "^2.9.0",
     "js-base64": "^3.7.7",
     "js-cookie": "^3.0.5",

@@ -45,6 +45,10 @@ export default defineNuxtConfig({
       src: '@/plugins/theme-init.client',
       mode: 'client',
     },
+    {
+      src: '@/plugins/error-handler.server',
+      mode: 'server',
+    },
   ],
   css: [
     'element-plus/dist/index.css',
@@ -143,6 +147,34 @@ export default defineNuxtConfig({
           // 网络不稳定时适当拉长代理超时
           timeout: 30000,
           proxyTimeout: 30000,
+          configure: (proxy, _options) => {
+            // 捕获代理错误，防止 ECONNRESET 导致 unhandledRejection
+            proxy.on('error', (err, _req, res) => {
+              // 静默处理网络错误，减少日志噪音
+              if (err.message?.includes('ECONNRESET') || err.message?.includes('ETIMEDOUT')) {
+                return;
+              }
+              console.warn('[proxy error]', err.message);
+              // 如果响应还没有发送，返回 502
+              if (res && 'writeHead' in res && !res.headersSent) {
+                res.writeHead(502, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ code: 502, msg: 'Proxy error: ' + err.message }));
+              }
+            });
+            // WebSocket 代理错误处理
+            proxy.on('proxyReqWs', (proxyReq, _req, socket) => {
+              socket.on('error', () => {
+                // WebSocket 连接错误，静默忽略
+              });
+            });
+            proxy.on('proxyReq', (proxyReq, req, _res) => {
+              // 仅对非 WebSocket 请求设置 keep-alive
+              // WebSocket 需要 Connection: Upgrade，不能覆盖
+              if (!req.headers.upgrade) {
+                proxyReq.setHeader('Connection', 'keep-alive');
+              }
+            });
+          },
         }
       }
     }

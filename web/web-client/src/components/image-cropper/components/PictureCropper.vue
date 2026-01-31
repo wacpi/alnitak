@@ -1,14 +1,22 @@
 <template>
-  <vue-picture-cropper :boxStyle="{
-    width: '100%',
-    height: '100%',
-    backgroundColor: '#f8f8f8',
-    margin: 'auto',
-  }" :options="cropperOptions" :img="localURL" @cropend="change" @ready="change" />
+  <vue-picture-cropper :boxStyle="boxStyle" :options="cropperOptions" :img="localURL" @cropend="change" @ready="change" />
 </template>
 
 <script setup lang="ts">
-import { onBeforeMount, ref } from 'vue';
+import { computed, onBeforeMount, onMounted, ref } from 'vue';
+
+const cropperBg = ref('#f8f8f8');
+onMounted(() => {
+  const style = getComputedStyle(document.documentElement);
+  const bg = style.getPropertyValue('--fill-1').trim();
+  if (bg) cropperBg.value = bg;
+});
+const boxStyle = computed(() => ({
+  width: '100%',
+  height: '100%',
+  backgroundColor: cropperBg.value,
+  margin: 'auto',
+}));
 import VuePictureCropper, { cropper } from "vue-picture-cropper";
 
 const emits = defineEmits(["change"]);

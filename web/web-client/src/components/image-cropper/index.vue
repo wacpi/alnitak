@@ -74,7 +74,7 @@ defineExpose({
 .cropper-card {
   position: relative;
   padding: 20px;
-  background-color: #fff;
+  background-color: var(--bg-elev-1, #fff);
   border-radius: 6px;
   min-width: 300px;
   min-height: 200px;
@@ -88,7 +88,7 @@ defineExpose({
   // 关闭按钮
   .close-icon {
     position: absolute;
-    color: #adadad;
+    color: var(--font-primary-3, #adadad);
     top: 16px;
     right: 16px;
     cursor: pointer;
