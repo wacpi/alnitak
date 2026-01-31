@@ -2,11 +2,11 @@
   <div class="playlist-edit">
     <p class="title">{{ isEdit ? '编辑合集' : '创建合集' }}</p>
     <div class="form-container">
-      <el-form :model="form" label-width="80px" label-position="top">
-        <el-form-item label="合集标题">
+      <el-form :model="form" :rules="rules" ref="formRef" label-width="80px" label-position="top">
+        <el-form-item label="合集标题" prop="title">
           <el-input v-model="form.title" maxlength="100" show-word-limit placeholder="请输入合集标题"></el-input>
         </el-form-item>
-        <el-form-item label="合集封面">
+        <el-form-item label="合集封面" prop="cover">
           <cover-uploader :cover="form.cover" @finish="coverFinish"></cover-uploader>
         </el-form-item>
         <el-form-item label="合集简介">
@@ -37,6 +37,18 @@ const route = useRoute();
 const isEdit = computed(() => !!Number(route.query.id));
 const submitting = ref(false);
 
+
+const formRef = ref();
+
+// 表单验证规则
+const rules = ref({
+  title: [
+    { required: true, message: "合集标题不能为空", trigger: "blur" }
+  ],
+  cover: [
+    { required: true, message: "合集封面不能为空", trigger: "change" }
+  ]
+});
 const form = ref({
   id: 0,
   title: '',
@@ -50,10 +62,13 @@ const coverFinish = (url: string) => {
 }
 
 const handleSubmit = async () => {
-  if (!form.value.title) {
-    ElMessage.error('请输入合集标题');
-    return;
-  }
+  // 表单验证
+  if (!formRef.value) return;
+  await formRef.value.validate((valid: boolean) => {
+    if (!valid) {
+      return;
+    }
+  });
 
   submitting.value = true;
   try {
