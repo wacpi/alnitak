@@ -6,7 +6,7 @@ export const addPlaylistAPI = (data: { title: string, cover: string, desc: strin
 }
 
 // 编辑合集
-export const editPlaylistAPI = (data: { id: number, title: string, cover: string, desc: string, isOpen: boolean }) => {
+export const editPlaylistAPI = (data: { id: number, title: string, cover: string, desc: string }) => {
   return request.put('v1/playlist/edit', data);
 }
 

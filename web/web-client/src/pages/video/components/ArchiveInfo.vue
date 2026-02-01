@@ -18,6 +18,7 @@
       <el-icon class="icon">
         <share-icon></share-icon>
       </el-icon>
+      <p>{{ stat.share }}</p>
       <div class="share-popover">
         <div class="share-popover-content">
           <el-tabs v-model="shareTab">
@@ -49,7 +50,7 @@ import { statusCode } from '@/utils/status-code';
 import LikeIcon from "@/components/icons/LikeIcon.vue";
 import CollectIcon from "@/components/icons/CollectIcon.vue";
 import ShareIcon from '@/components/icons/ShareIcon.vue';
-import { getVideoArchiveStatAPI } from "@/api/archive";
+import { getVideoArchiveStatAPI, shareVideoAPI } from "@/api/archive";
 import { getLikeVideoStatusAPI, likeVideoAPI, cancelLikeVideoAPI } from "@/api/like";
 import { getCollectVideoStatusAPI } from '@/api/collect';
 import CollectionList from './CollectionList.vue';
@@ -59,9 +60,10 @@ const props = defineProps<{
 }>();
 
 // 点赞收藏数据
-const stat = ref<{ like: number, collect: number }>({
+const stat = ref<{ like: number, collect: number, share: number }>({
   like: 0,
-  collect: 0
+  collect: 0,
+  share: 0
 });
 
 const loading = ref(true);
@@ -114,8 +116,12 @@ const copyText = async (text: string, msg: string) => {
   }
 };
 
-const copyUrl = () => copyText(shareUrl.value, '播放地址已复制');
-const copyEmbed = () => copyText(embedCode.value, '嵌入代码已复制');
+const doShare = async () => {
+  await shareVideoAPI(props.vid);
+  stat.value.share++;
+};
+const copyUrl = () => { copyText(shareUrl.value, '播放地址已复制'); doShare(); };
+const copyEmbed = () => { copyText(embedCode.value, '嵌入代码已复制'); doShare(); };
 
 //获取点赞收藏关注信息
 const getArchiveStat = async () => {
