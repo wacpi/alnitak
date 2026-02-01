@@ -188,9 +188,10 @@ const uploadHistory = async () => {
 const getHistoryProgress = async () => {
   const res = await getHistoryProgressAPI(props.videoInfo.vid, props.part);
   if (res.data.code === statusCode.OK) {
-    player.seek(res.data.data.progress)
-  } else {
-    uploadHistory();
+    const progress = res.data.data.progress;
+    if (typeof progress === 'number' && progress > 0) {
+      player.seek(progress);
+    }
   }
 }
 
@@ -215,7 +216,9 @@ onMounted(async () => {
   await getHistoryProgress();
 
   timer = window.setInterval(() => {
-    uploadHistory();
+    if (player && player.video && !player.video.paused && !player.video.ended && player.video.currentTime > 0) {
+      uploadHistory();
+    }
   }, 10000)
 })
 

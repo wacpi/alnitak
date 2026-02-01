@@ -13,9 +13,6 @@
           <el-input v-model="form.desc" type="textarea" :rows="4" maxlength="2000" show-word-limit
             placeholder="请输入合集简介"></el-input>
         </el-form-item>
-        <el-form-item v-if="isEdit" label="是否公开">
-          <el-switch v-model="form.isOpen"></el-switch>
-        </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="handleSubmit" :loading="submitting">
             {{ isEdit ? '保存修改' : '创建合集' }}
@@ -54,7 +51,6 @@ const form = ref({
   title: '',
   cover: '',
   desc: '',
-  isOpen: true,
 });
 
 const coverFinish = (url: string) => {
@@ -78,7 +74,6 @@ const handleSubmit = async () => {
         title: form.value.title,
         cover: form.value.cover,
         desc: form.value.desc,
-        isOpen: form.value.isOpen,
       });
       if (res.data.code === statusCode.OK) {
         ElMessage.success('修改成功，等待审核');
@@ -128,7 +123,6 @@ onBeforeMount(async () => {
           title: target.title,
           cover: target.cover,
           desc: target.desc,
-          isOpen: target.isOpen,
         };
       }
     }
