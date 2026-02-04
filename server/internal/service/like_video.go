@@ -79,6 +79,9 @@ func HasLikeVideo(ctx *gin.Context, videoId uint) (bool, error) {
 	userId := ctx.GetUint("userId")
 	like, err := FindLikeVideoByUid(videoId, userId)
 	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return false, nil
+		}
 		utils.ErrorLog("获取点赞信息失败", "like", err.Error())
 		return false, errors.New("获取点赞信息失败")
 	}

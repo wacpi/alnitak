@@ -599,8 +599,8 @@ func VideoWriteCache(videoId uint) (video vo.VideoResp) {
 // 获取视频状态
 func getVideoStatus(videoId uint) int {
 	var processingCount int64 // 转码中的资源数量
-	var failedCount int64      // 转码失败的资源数量
-	var totalCount int64       // 总资源数量
+	var failedCount int64     // 转码失败的资源数量
+	var totalCount int64      // 总资源数量
 
 	global.Mysql.Model(&model.Resource{}).Where("vid = ?", videoId).Count(&totalCount)
 	global.Mysql.Model(&model.Resource{}).Where("vid = ? and status = ?", videoId, global.VIDEO_PROCESSING).Count(&processingCount)

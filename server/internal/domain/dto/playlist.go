@@ -9,11 +9,10 @@ type AddPlaylistReq struct {
 
 // 编辑合集
 type EditPlaylistReq struct {
-	ID     uint   `json:"id" binding:"required"`
-	Title  string `json:"title" binding:"required"`
-	Cover  string `json:"cover"`
-	Desc   string `json:"desc"`
-	IsOpen bool   `json:"isOpen"`
+	ID    uint   `json:"id" binding:"required"`
+	Title string `json:"title" binding:"required"`
+	Cover string `json:"cover"`
+	Desc  string `json:"desc"`
 }
 
 // 添加视频到合集

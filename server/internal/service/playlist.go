@@ -66,10 +66,9 @@ func EditPlaylist(ctx *gin.Context, req dto.EditPlaylistReq) error {
 	}
 
 	if err := global.Mysql.Model(&model.Playlist{}).Where("id = ?", req.ID).Updates(map[string]interface{}{
-		"title":   req.Title,
-		"cover":   req.Cover,
-		"desc":    req.Desc,
-		"is_open": req.IsOpen,
+		"title": req.Title,
+		"cover": req.Cover,
+		"desc":  req.Desc,
 	}).Error; err != nil {
 		utils.ErrorLog("编辑合集失败", "playlist", err.Error())
 		return errors.New("编辑失败")

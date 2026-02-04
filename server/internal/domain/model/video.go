@@ -14,6 +14,7 @@ type Video struct {
 	PartitionId uint    `gorm:"comment:分区ID"`
 	Tags        string  `gorm:"type:varchar(100);comment:标签;"`
 	Duration    float64 `gorm:"comment:视频时长;default:0"`
+	Shares      int64   `gorm:"comment:分享数;default:0"`
 
 	Author User `gorm:"-"`
 }

@@ -114,6 +114,8 @@ func CollectRoutes(r *gin.Engine) *gin.Engine {
 		CollectOnlineRoutes(v1)
 		// 配置相关接口
 		CollectConfigRoutes(v1)
+		// PGC相关接口
+		CollectPGCRoutes(v1)
 	}
 
 	//获取静态文件

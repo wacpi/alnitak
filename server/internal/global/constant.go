@@ -37,3 +37,39 @@ const (
 	CONTENT_TYPE_ARTICLE  = 1
 	CONTENT_TYPE_PLAYLIST = 2
 )
+
+// ========== PGC内容类型 ==========
+const (
+	// PGCTypeNone 非PGC
+	PGCTypeNone = 0
+	// PGCTypeBangumi 番剧
+	PGCTypeBangumi = 1
+	// PGCTypeDocument 纪录片
+	PGCTypeDocument = 2
+	// PGCTypeMovie 电影
+	PGCTypeMovie = 3
+	// PGCTypeTVSeries 电视剧
+	PGCTypeTVSeries = 4
+)
+
+// ========== PGC审核状态 ==========
+const (
+	// PGCAuditDraft 草稿
+	PGCAuditDraft = 0
+	// PGCAuditSubmitted 已提交
+	PGCAuditSubmitted = 100
+	// PGCAuditProcessing 审核中
+	PGCAuditProcessing = 200
+	// PGCAuditApproved 审核通过
+	PGCAuditApproved = 300
+	// PGCAuditRejected 审核驳回
+	PGCAuditRejected = 400
+)
+
+// ========== PGC剧集状态 ==========
+const (
+	// PGCEpisodeNormal 正常
+	PGCEpisodeNormal = 0
+	// PGCEpisodeOffline 下架
+	PGCEpisodeOffline = -1
+)

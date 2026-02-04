@@ -39,4 +39,6 @@ func InitTables() {
 	global.Mysql.AutoMigrate(&model.ImageFile{})      // 图片文件表
 	global.Mysql.AutoMigrate(&model.Playlist{})       // 合集表
 	global.Mysql.AutoMigrate(&model.PlaylistVideo{})  // 合集视频关联表
+	global.Mysql.AutoMigrate(&model.PGCContent{})     // PGC内容表
+	global.Mysql.AutoMigrate(&model.PGCEpisode{})     // PGC剧集表
 }

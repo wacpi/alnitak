@@ -14,6 +14,7 @@ type Article struct {
 	Status      int    `gorm:"comment:审核状态;not null"`
 	PartitionId uint   `gorm:"comment:分区ID;deult:0"`
 	Tags        string `gorm:"type:varchar(100);comment:标签;"`
+	Shares      int64  `gorm:"comment:分享数;default:0"`
 
 	Author User `gorm:"-"`
 }

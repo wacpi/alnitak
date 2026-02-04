@@ -73,6 +73,10 @@ func GetHistoryProgress(ctx *gin.Context, videoId, part uint) (progress float64,
 		history, err = FindHistoryByPart(videoId, userId, part)
 	}
 	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			// 无历史记录，返回进度0，不视为错误
+			return 0, 0, nil
+		}
 		utils.ErrorLog("获取历史记录进度失败", "history", err.Error())
 		return 0, 0, errors.New("获取失败")
 	}
