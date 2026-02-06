@@ -143,6 +143,8 @@ func initApiData() {
 		{Method: "POST", Path: "/api/v1/config/setStorageConfig", Category: "配置", Desc: "编辑存储配置（后台管理）"},
 		{Method: "GET", Path: "/api/v1/config/getOtherConfig", Category: "配置", Desc: "获取其他配置（后台管理）"},
 		{Method: "POST", Path: "/api/v1/config/setOtherConfig", Category: "配置", Desc: "编辑其他配置（后台管理）"},
+		{Method: "GET", Path: "/api/v1/config/getCleanupPreview", Category: "配置", Desc: "获取资源清理预览（后台管理）"},
+		{Method: "POST", Path: "/api/v1/config/executeCleanup", Category: "配置", Desc: "执行资源清理（后台管理）"},
 	}
 	if err := global.Mysql.Create(&entities).Error; err != nil {
 		zap.L().Error("API数据初始化失败", zap.String("err", err.Error()), zap.String("module", "initialize"))
@@ -273,6 +275,8 @@ func initCasbinRuleData() {
 		{Ptype: "p", V0: "002", V1: "/api/v1/config/setEmailConfig", V2: "POST"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/config/setOtherConfig", V2: "POST"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/config/setStorageConfig", V2: "POST"},
+		{Ptype: "p", V0: "002", V1: "/api/v1/config/getCleanupPreview", V2: "GET"},
+		{Ptype: "p", V0: "002", V1: "/api/v1/config/executeCleanup", V2: "POST"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/danmaku/sendDanmaku", V2: "POST"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/history/video/addHistory", V2: "POST"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/history/video/getHistory", V2: "GET"},

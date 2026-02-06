@@ -338,6 +338,9 @@ func BanUser(ctx *gin.Context, banUserReq dto.BanUserReq) error {
 
 	tx.Commit()
 
+	//移除缓存
+	cache.DelUserInfo(banUserReq.Uid)
+
 	return nil
 }
 
@@ -375,6 +378,9 @@ func UnBanUser(ctx *gin.Context, id uint) error {
 	}
 
 	tx.Commit()
+
+	//移除缓存
+	cache.DelUserInfo(banUser.Uid)
 
 	return nil
 }
