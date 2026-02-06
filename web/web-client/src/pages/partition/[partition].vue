@@ -91,7 +91,7 @@ onBeforeUnmount(() => {
     top: 0;
     width: 100%;
     z-index: 999;
-    background-color: #fff;
+    background-color: var(--bg-elev-1);
   }
 }
 
@@ -104,7 +104,7 @@ onBeforeUnmount(() => {
     height: 100%;
     width: 220px;
     z-index: 1;
-    background-color: #fff;
+    background-color: var(--bg-elev-1);
     transition: width .25s;
   }
 

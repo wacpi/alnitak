@@ -1,18 +1,18 @@
 <template>
   <div class="side-bar">
     <div class="side-toolbar">
-      <div class="toolbar-item">
-        <el-icon :class="[likeAnimation, archive.hasLike ? 'active' : 'icon']" @click="likeClick">
+      <div class="toolbar-item" @click="likeClick">
+        <el-icon :class="[likeAnimation, archive.hasLike ? 'active' : 'icon']">
           <like-icon></like-icon>
         </el-icon>
       </div>
-      <div class="toolbar-item">
-        <el-icon :class="[collectAnimation, archive.hasCollect ? 'active' : 'icon']" @click="collectClick">
+      <div class="toolbar-item" @click="collectClick">
+        <el-icon :class="[collectAnimation, archive.hasCollect ? 'active' : 'icon']">
           <collect-icon></collect-icon>
         </el-icon>
       </div>
-      <div class="toolbar-item">
-        <el-icon @click="scrollToComment">
+      <div class="toolbar-item" @click="scrollToComment">
+        <el-icon>
           <comment-fill-icon></comment-fill-icon>
         </el-icon>
       </div>
@@ -111,8 +111,8 @@ onBeforeMount(async () => {
   .side-toolbar {
     .toolbar-item {
       position: relative;
-      color: #8a919f;
-      background: #fff;
+      color: var(--font-primary-3);
+      background: var(--bg-elev-1);
       display: flex;
       flex-direction: column;
       align-items: center;
