@@ -10,6 +10,14 @@ import * as dashjs from 'dashjs';
 import artplayerPluginDanmuku from 'artplayer-plugin-danmuku';
 import { getResourceQualityApi, getVideoFileUrl, getVideoFileUrlDash } from '@/api/video';
 import { getDanmakuAPI } from '@/api/danmaku';
+import {
+  createHlsPlayer,
+  destroyHlsPlayer,
+  getSavedPlaybackState,
+  setupVolumePersistence,
+  getSavedVolumeState,
+  type HlsPlayerState,
+} from '@/utils/hls-player';
 
 const props = defineProps<{
   videoInfo: VideoType;
@@ -19,8 +27,8 @@ const props = defineProps<{
 
 const playerContainer = ref<HTMLElement | null>(null);
 let player: any = null;
-let dashPlayer: any = null; // 保存 dashjs 实例，避免重复创建
-let hlsPlayer: any = null;  // 保存 hls.js 实例
+let dashPlayer: any = null;
+let hlsPlayerState: HlsPlayerState = { instance: null, videoElement: null, playPromise: null };
 let originalDanmaku: DanmakuType[] = [];
 
 const resourceNameMap: Record<string, string> = {
@@ -95,7 +103,7 @@ function guessType(url: string, qualityItem?: any) {
   return 'mp4';
 }
 
-const getQualities = (qualityList: string[], resourceId: number) => {
+const getQualities = (qualityList: string[], resourceId: number, serverSupportsDash: boolean) => {
   const sorted = [...qualityList].sort((a, b) => {
     const wa = parseInt(a.split('x')[0], 10);
     const wb = parseInt(b.split('x')[0], 10);
@@ -105,7 +113,8 @@ const getQualities = (qualityList: string[], resourceId: number) => {
     return fpsB - fpsA;
   });
 
-  const supportDash = supportsDashJs();
+  // 必须浏览器支持且服务器资源支持才使用 DASH
+  const useDash = supportsDashJs() && serverSupportsDash;
   // 读取保存的清晰度偏好
   const savedQuality = localStorage.getItem('artplayer-quality');
 
@@ -115,8 +124,8 @@ const getQualities = (qualityList: string[], resourceId: number) => {
       // 如果有保存的清晰度且匹配，则设为默认；否则使用第一个
       default: savedQuality ? displayName === savedQuality : idx === 0,
       html: displayName,
-      url: supportDash ? getVideoFileUrlDash(resourceId, item) : getVideoFileUrl(resourceId, item),
-      type: supportDash ? 'dash' : 'm3u8',
+      url: useDash ? getVideoFileUrlDash(resourceId, item) : getVideoFileUrl(resourceId, item),
+      type: useDash ? 'dash' : 'm3u8',
     };
   });
 };
@@ -173,9 +182,11 @@ const initPlayer = async () => {
   console.log('[art.vue] getResourceQualityApi result:', res);
   let qualities = [];
   if (res.data.code === 200 && res.data.data.quality.length > 0) {
-    qualities = getQualities(res.data.data.quality, resource.id);
+    // 从服务器获取是否支持 DASH（新资源 SegmentBase 模式）
+    const serverSupportsDash = res.data.data.supportsDash === true;
+    qualities = getQualities(res.data.data.quality, resource.id, serverSupportsDash);
   } else {
-    qualities = [{ default: true, html: '默认', url: resource.url }];
+    qualities = [{ default: true, html: '默认', url: resource.url, type: 'm3u8' }];
   }
 
   await loadDanmaku();
@@ -228,28 +239,40 @@ const initPlayer = async () => {
     ],
 customType: {
       m3u8: function (video: HTMLVideoElement, url: string) {
-        // 销毁旧的 HLS 实例
-        if (hlsPlayer) {
-          hlsPlayer.destroy();
-          hlsPlayer = null;
-        }
+        const savedVolumeState = getSavedVolumeState();
+        const playbackState = getSavedPlaybackState(video);
+        const volumeState = {
+          volume: playbackState.currentTime > 0 ? playbackState.volume : savedVolumeState.volume,
+          muted: playbackState.currentTime > 0 ? playbackState.muted : savedVolumeState.muted,
+        };
+
+        setupVolumePersistence(video);
+
         if (Hls.isSupported()) {
-          hlsPlayer = new Hls();
-          hlsPlayer.loadSource(url);
-          hlsPlayer.attachMedia(video);
+          createHlsPlayer(
+            video,
+            url,
+            hlsPlayerState,
+            { ...playbackState, volume: volumeState.volume, muted: volumeState.muted },
+            {
+              maxBufferLength: 30,
+              maxMaxBufferLength: 60,
+            }
+          );
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
           video.src = url;
+          if (playbackState.currentTime > 0) {
+            video.currentTime = playbackState.currentTime;
+          }
         }
       },
       dash: function (video: HTMLVideoElement, url: string) {
-        // 销毁旧的 DASH 实例，避免重复创建
         if (dashPlayer) {
           dashPlayer.reset();
           dashPlayer = null;
         }
         if (dashjs && dashjs.MediaPlayer) {
           dashPlayer = dashjs.MediaPlayer().create();
-          // 优化缓冲配置，减少掉帧
           dashPlayer.updateSettings({
             streaming: {
               buffer: {
@@ -260,9 +283,11 @@ customType: {
                 bufferToKeep: 20,
               },
             },
-            // 禁用 EME（加密媒体扩展）警告，我们的内容不加密
             debug: {
-              logLevel: 3, // WARN level, 避免 EME 信息日志
+              logLevel: 3,
+            },
+            protection: {
+              enableEmeAdaptive: false,
             },
           });
           dashPlayer.initialize(video, url, false);
@@ -378,10 +403,7 @@ onBeforeUnmount(() => {
     dashPlayer.reset();
     dashPlayer = null;
   }
-  if (hlsPlayer) {
-    hlsPlayer.destroy();
-    hlsPlayer = null;
-  }
+  destroyHlsPlayer(hlsPlayerState);
 });
 </script>
 

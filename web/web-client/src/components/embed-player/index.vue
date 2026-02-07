@@ -9,6 +9,14 @@ import Dash from 'dashjs';
 import Wplayer from 'wplayer-next';
 import { getResourceQualityApi, getVideoFileUrl, getVideoFileUrlDash } from '@/api/video';
 import { getDanmakuAPI } from '@/api/danmaku';
+import {
+  createHlsPlayer,
+  destroyHlsPlayer,
+  getSavedPlaybackState,
+  setupVolumePersistence,
+  getSavedVolumeState,
+  type HlsPlayerState,
+} from '@/utils/hls-player';
 
 const props = defineProps<{
   videoInfo: VideoType;
@@ -22,6 +30,7 @@ const playerContainer = ref<HTMLElement | null>(null);
 let player: any = null;
 let dashPlayer: any = null;
 let originalDanmaku: DanmakuType[] = [];
+const hlsPlayerState: HlsPlayerState = { instance: null, videoElement: null, playPromise: null };
 
 const setDanmaku = (data: DanmakuType[]) => {
   originalDanmaku = Array.isArray(data) ? data : [];
@@ -202,17 +211,28 @@ const initPlayer = async () => {
       customType: {
         customHls: function (video: HTMLVideoElement) {
           console.log('[embed-player] customHls called', video.src);
-          if ((window as any)._mainHls) {
-            (window as any)._mainHls.destroy();
-            (window as any)._mainHls = null;
-            console.log('[embed-player] old _mainHls destroyed');
-          }
-          (window as any)._mainHls = new Hls();
-          (window as any)._mainHls.loadSource(video.src);
-          (window as any)._mainHls.attachMedia(video);
-          (window as any)._mainHls.on(Hls.Events.ERROR, () => {
-            console.error("[embed-player] HLS 资源加载失败");
-          });
+          const savedVolumeState = getSavedVolumeState();
+          const playbackState = getSavedPlaybackState(video);
+          const volumeState = {
+            volume: playbackState.currentTime > 0 ? playbackState.volume : savedVolumeState.volume,
+            muted: playbackState.currentTime > 0 ? playbackState.muted : savedVolumeState.muted,
+          };
+
+          setupVolumePersistence(video);
+
+          createHlsPlayer(
+            video,
+            video.src,
+            hlsPlayerState,
+            { ...playbackState, volume: volumeState.volume, muted: volumeState.muted },
+            {
+              maxBufferLength: 30,
+              maxMaxBufferLength: 60,
+              onError: (event, data) => {
+                console.error('[embed-player] HLS 错误:', event, data);
+              },
+            }
+          );
         },
         customDash: function (video: HTMLVideoElement) {
           console.log('[embed-player] customDash called', video.src);
@@ -273,6 +293,7 @@ onBeforeUnmount(() => {
     player.destroy();
     player = null;
   }
+  destroyHlsPlayer(hlsPlayerState);
   if (dashPlayer) {
     dashPlayer.reset();
     dashPlayer = null;
