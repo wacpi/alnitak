@@ -200,8 +200,9 @@ const loadResource = async (resourceId: number) => {
       return fpsB - fpsA;
     });
 
-    // 检测是否支持 DASH
-    const supportDash = supportsDashJs();
+    // 必须浏览器支持且服务器资源支持才使用 DASH
+    const serverSupportsDash = res.data.data.supportsDash === true;
+    const useDash = supportsDashJs() && serverSupportsDash;
 
     options.video.quality = qualities.map((item: string, index: number) => {
       const name = getQualityDisplayName(item);
@@ -210,12 +211,12 @@ const loadResource = async (resourceId: number) => {
       }
       return {
         name,
-        url: supportDash ? getVideoFileUrlDash(resourceId, item) : getVideoFileUrl(resourceId, item),
+        url: useDash ? getVideoFileUrlDash(resourceId, item) : getVideoFileUrl(resourceId, item),
       };
     });
 
     // 设置视频类型（HLS 或 DASH）
-    if (supportDash) {
+    if (useDash) {
       options.video.type = 'customDash';
     } else {
       options.video.type = 'customHls';
