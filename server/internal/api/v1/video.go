@@ -280,3 +280,20 @@ func SearchVideo(ctx *gin.Context) {
 	// 返回给前端
 	resp.OkWithData(ctx, gin.H{"videos": videos})
 }
+
+// 重新转码视频（后台管理专用）
+func ReTranscodeVideo(ctx *gin.Context) {
+	vid := utils.StringToUint(ctx.Query("vid"))
+
+	if vid == 0 {
+		resp.FailWithMessage(ctx, "视频ID不能为空")
+		return
+	}
+
+	if err := service.ReTranscodeVideo(ctx, vid); err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+
+	resp.OkWithMessage(ctx, "已触发重新转码")
+}

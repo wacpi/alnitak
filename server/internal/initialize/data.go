@@ -690,6 +690,7 @@ var authApiDesc = map[string]string{
 	"POST|/api/v1/video/uploadVideoInfo":         "上传视频信息",
 	"GET|/api/v1/video/getResourceQualityManage": "获取视频资源支持的分辨率信息（后台管理）",
 	"GET|/api/v1/video/getVideoFileManage":       "获取视频文件URL（后台管理）",
+	"POST|/api/v1/video/reTranscodeVideo":        "重新转码视频（后台管理）",
 	// 配置
 	"GET|/api/v1/config/getEmailConfig":    "获取邮箱配置（后台管理）",
 	"POST|/api/v1/config/setEmailConfig":   "编辑邮箱配置（后台管理）",

@@ -57,6 +57,38 @@ The project doesn't have a standard test command configured. Check for test file
 5. **Real-time**: WebSocket support in `pkg/ws/`
 6. **Video Processing**: Transcoding capabilities with GPU support
 7. **ID Generation**: Snowflake algorithm for unique IDs
+8. **Dynamic Manifest**: DASH MPD / HLS m3u8 generated on-the-fly
+
+### Video Streaming Architecture (B站风格)
+
+The system uses Bilibili-style audio/video separation with SegmentBase mode:
+
+```
+Transcoding flow:
+  FFmpeg → Separate video.m4s + audio.m4s → Extract SegmentBase info → Save to DB
+
+Playback flow:
+  Request → Query video_index_file → Generate DASH MPD (SegmentBase) → Player uses byte-range requests
+
+File structure per video:
+  ./upload/video/{dir_name}/
+    ├── upload.mp4              # Original file
+    ├── 1920x1080_3000k_30_video.m4s   # 1080p video stream
+    ├── 1280x720_2000k_30_video.m4s    # 720p video stream
+    ├── 854x480_900k_30_video.m4s      # 480p video stream
+    ├── 640x360_500k_30_video.m4s      # 360p video stream
+    └── audio.m4s               # Shared audio stream (320kbps AAC)
+```
+
+**video_index_file table fields (SegmentBase mode):**
+- Video stream: `video_file`, `video_bandwidth`, `video_codec`, `width`, `height`, `frame_rate`, `video_init_range`, `video_index_range`
+- Audio stream: `audio_file`, `audio_bandwidth`, `audio_codec`, `audio_sample_rate`, `audio_init_range`, `audio_index_range`
+- Common: `total_duration`, `quality`, `dir_name`
+
+**API Endpoints:**
+- `GET /api/v1/video/getVideoFile?resourceId=X&quality=Y&format=mpd` - Get DASH MPD manifest
+- `GET /api/v1/video/stream/:file?key=K` - Stream file with byte-range support (SegmentBase)
+- `GET /api/v1/video/slice/:file?key=K` - Legacy segment file access (SegmentList)
 
 ### Initialization Flow
 The application initializes in this order (see `cmd/main.go:19-54`):

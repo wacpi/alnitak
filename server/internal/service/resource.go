@@ -117,6 +117,7 @@ func GetResourceQuality(ctx *gin.Context, id uint) ([]string, error) {
 	}
 
 	var quality []string
+
 	if err := global.Mysql.Model(&model.VideoIndexFile{}).Where("resource_id = ?", id).
 		Pluck("quality", &quality).Error; err != nil {
 		utils.ErrorLog("分辨率信息获取失败", "resource", err.Error())
@@ -129,6 +130,7 @@ func GetResourceQuality(ctx *gin.Context, id uint) ([]string, error) {
 // 获取视频资源支持的分辨率信息(后台管理)
 func GetResourceQualityManage(ctx *gin.Context, id uint) ([]string, error) {
 	var quality []string
+
 	if err := global.Mysql.Model(&model.VideoIndexFile{}).Where("resource_id = ?", id).
 		Pluck("quality", &quality).Error; err != nil {
 		utils.ErrorLog("分辨率信息获取失败", "resource", err.Error())

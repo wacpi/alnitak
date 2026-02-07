@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"strconv"
@@ -18,6 +17,92 @@ import (
 	"interastral-peace.com/alnitak/internal/global"
 	"interastral-peace.com/alnitak/utils"
 )
+
+// getMP4InitRange 从 fMP4 文件中提取初始化范围
+// 返回: initRange (0 到 moov 结束), indexRange (sidx 范围，如果没有 sidx 则用 moov)
+// 用于 DASH SegmentBase 模式
+func getMP4InitRange(filePath string) (initRange, indexRange string, err error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", "", err
+	}
+	defer file.Close()
+
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return "", "", err
+	}
+	fileSize := fileInfo.Size()
+
+	// 遍历 MP4 box 结构，找到 ftyp, moov, sidx
+	var moovEnd int64 = 0
+	var sidxStart int64 = 0
+	var sidxEnd int64 = 0
+
+	offset := int64(0)
+	header := make([]byte, 8)
+
+parseLoop:
+	for offset < fileSize {
+		_, err := file.ReadAt(header, offset)
+		if err != nil {
+			break
+		}
+
+		// 解析 box size（4 字节大端）
+		boxSize := int64(uint32(header[0])<<24 | uint32(header[1])<<16 | uint32(header[2])<<8 | uint32(header[3]))
+		boxType := string(header[4:8])
+
+		// 处理扩展 size（size == 1 表示使用 64 位 size）
+		if boxSize == 1 {
+			extHeader := make([]byte, 8)
+			file.ReadAt(extHeader, offset+8)
+			boxSize = int64(uint64(extHeader[0])<<56 | uint64(extHeader[1])<<48 | uint64(extHeader[2])<<40 | uint64(extHeader[3])<<32 |
+				uint64(extHeader[4])<<24 | uint64(extHeader[5])<<16 | uint64(extHeader[6])<<8 | uint64(extHeader[7]))
+		}
+
+		// size == 0 表示 box 延伸到文件末尾
+		if boxSize == 0 {
+			boxSize = fileSize - offset
+		}
+
+		switch boxType {
+		case "moov":
+			moovEnd = offset + boxSize
+		case "sidx":
+			sidxStart = offset
+			sidxEnd = offset + boxSize
+		case "moof":
+			// 遇到 moof 就停止，后面都是媒体数据
+			break parseLoop
+		}
+
+		offset += boxSize
+
+		// 如果找到了 sidx，可以停止了
+		if sidxEnd > 0 {
+			break
+		}
+	}
+
+	if moovEnd == 0 {
+		return "", "", fmt.Errorf("moov box not found in %s", filePath)
+	}
+
+	// initRange: 从文件开头到 moov 结束（ftyp + moov）
+	initRange = fmt.Sprintf("0-%d", moovEnd-1)
+
+	// indexRange: 优先使用 sidx，否则用 moov 起始位置
+	if sidxEnd > 0 {
+		indexRange = fmt.Sprintf("%d-%d", sidxStart, sidxEnd-1)
+	} else {
+		// 没有 sidx，使用 moov 结束后的位置作为索引起点
+		// 对于 fMP4，播放器会从 moov 中的 mvex 获取信息
+		indexRange = fmt.Sprintf("0-%d", moovEnd-1)
+	}
+
+	return initRange, indexRange, nil
+}
 
 type TranscodingTarget struct {
 	Resolution  string // 分辨率
@@ -45,6 +130,8 @@ var (
 	maxGpuFailCount      = 3                                   // 最大允许GPU失败次数
 	transcodingProcesses = make(map[uint][]TranscodingProcess) // key: videoID, value: 该视频的所有转码进程
 	processMapMutex      sync.RWMutex                          // 保护进程映射的读写锁
+	audioEncoded         = false                               // 音频是否已编码
+	audioMu              sync.Mutex                            // 保护 audioEncoded
 )
 
 // 初始化转码并发控制（根据CPU核心数或配置）
@@ -144,34 +231,31 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 			defer cancel()
 
 			fileName := c.Resolution + "_" + c.BitrateRate + "_" + c.FpsName
+			videoFile := transcodingInfo.OutputDir + fileName + "_video.m4s"
+			audioFile := transcodingInfo.OutputDir + "audio.m4s"
 
-			utils.InfoLog(fmt.Sprintf("【开始HLS一步式转码】%s", fileName), "transcoding")
+			utils.InfoLog(fmt.Sprintf("【开始SegmentBase转码】%s", fileName), "transcoding")
 
-			// 智能选择转码方式：GPU优先，失败时自动降级到CPU
-			var m3u8File string
-			var err error
+			// ========== 编码视频 ==========
+			var videoErr error
 			useGpu := global.Config.Transcoding.UseGpu && checkGPUAvailable()
 
 			if useGpu {
-				utils.InfoLog(fmt.Sprintf("【使用GPU一步式转码】%s", fileName), "transcoding")
-				m3u8File, err = pressingVideoGPU(ctx, transcodingInfo.VideoID, transcodingInfo.ResourceID, transcodingInfo.InputFile, transcodingInfo.OutputDir, fileName, c.Resolution, c.BitrateRate, c.FPS, cancel)
+				utils.InfoLog(fmt.Sprintf("【GPU编码视频】%s", fileName), "transcoding")
+				videoErr = encodeVideoOnlyGPU(ctx, transcodingInfo.VideoID, transcodingInfo.ResourceID,
+					transcodingInfo.InputFile, videoFile, c.Resolution, c.BitrateRate, c.FPS, cancel)
 
-				if err != nil {
-					utils.ErrorLog(fmt.Sprintf("【GPU转码失败】%s，尝试切换到CPU", fileName), "transcoding", err.Error())
+				if videoErr != nil && strings.Contains(videoErr.Error(), "GPU error") {
 					handleGPUFailure()
-
-					// 【关键】检查是否被取消（用户删除稿件），如果是则不再重试
 					if ctx.Err() != nil {
-						utils.InfoLog(fmt.Sprintf("【跳过CPU降级】%s，转码已被取消", fileName), "transcoding")
+						utils.InfoLog(fmt.Sprintf("【跳过CPU降级】%s，转码已取消", fileName), "transcoding")
 						wg.Done()
 						return
 					}
-
-					// GPU失败后尝试使用CPU
-					utils.InfoLog(fmt.Sprintf("【降级到CPU一步式转码】%s", fileName), "transcoding")
-					m3u8File, err = pressingVideo(ctx, transcodingInfo.VideoID, transcodingInfo.ResourceID, transcodingInfo.InputFile, transcodingInfo.OutputDir, fileName, c.Resolution, c.BitrateRate, c.FPS, cancel)
-				} else {
-					// GPU转码成功，重置失败计数
+					utils.InfoLog(fmt.Sprintf("【降级CPU编码视频】%s", fileName), "transcoding")
+					videoErr = encodeVideoOnly(ctx, transcodingInfo.VideoID, transcodingInfo.ResourceID,
+						transcodingInfo.InputFile, videoFile, c.Resolution, c.BitrateRate, c.FPS, cancel)
+				} else if videoErr == nil {
 					gpuCheckMutex.Lock()
 					if gpuFailCount > 0 {
 						gpuFailCount = 0
@@ -180,34 +264,94 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 					gpuCheckMutex.Unlock()
 				}
 			} else {
-				if global.Config.Transcoding.UseGpu && !checkGPUAvailable() {
-					utils.InfoLog(fmt.Sprintf("【使用CPU一步式转码】%s（GPU已禁用）", fileName), "transcoding")
-				} else {
-					utils.InfoLog(fmt.Sprintf("【使用CPU一步式转码】%s", fileName), "transcoding")
+				utils.InfoLog(fmt.Sprintf("【CPU编码视频】%s", fileName), "transcoding")
+				videoErr = encodeVideoOnly(ctx, transcodingInfo.VideoID, transcodingInfo.ResourceID,
+					transcodingInfo.InputFile, videoFile, c.Resolution, c.BitrateRate, c.FPS, cancel)
+			}
+
+			if videoErr != nil {
+				utils.ErrorLog(fmt.Sprintf("【视频编码失败】%s", fileName), "transcoding", videoErr.Error())
+				wg.Done()
+				return
+			}
+
+			// ========== 编码音频（只编码一次）==========
+			audioMu.Lock()
+			needEncodeAudio := !audioEncoded
+			if needEncodeAudio {
+				audioEncoded = true
+			}
+			audioMu.Unlock()
+
+			if needEncodeAudio {
+				utils.InfoLog("【编码音频】audio.m4s", "transcoding")
+				if err := encodeAudioOnly(ctx, transcodingInfo.InputFile, audioFile); err != nil {
+					utils.ErrorLog("【音频编码失败】", "transcoding", err.Error())
+					wg.Done()
+					return
 				}
-				m3u8File, err = pressingVideo(ctx, transcodingInfo.VideoID, transcodingInfo.ResourceID, transcodingInfo.InputFile, transcodingInfo.OutputDir, fileName, c.Resolution, c.BitrateRate, c.FPS, cancel)
 			}
 
-			if err != nil {
-				utils.ErrorLog(fmt.Sprintf("【HLS转码失败】%s", fileName), "transcoding", err.Error())
+			// 只有执行了音频编码的 goroutine 才能保存数据库
+			// 等待音频编码完成（通过检查 audio.m4s 文件大小）
+			if !needEncodeAudio {
+				// 等待其他 goroutine 完成音频编码
+				for {
+					audioPath := transcodingInfo.OutputDir + "/audio.m4s"
+					info, err := os.Stat(audioPath)
+					if err == nil && info.Size() > 10000 { // 音频文件应该 > 10KB
+						break
+					}
+					time.Sleep(100 * time.Millisecond)
+				}
+			}
+
+			// ========== 保存到数据库 ==========
+			width, height, bandwidth, frameRate := parseQualityInfo(fileName)
+
+			// 从 fMP4 文件提取实际的 moov box 范围
+			videoFilePath := transcodingInfo.OutputDir + "/" + fileName + "_video.m4s"
+			audioFilePath := transcodingInfo.OutputDir + "/audio.m4s"
+
+			videoInitRange, videoIndexRange, _ := getMP4InitRange(videoFilePath)
+			audioInitRange, audioIndexRange, _ := getMP4InitRange(audioFilePath)
+
+			utils.InfoLog(fmt.Sprintf("【范围提取】%s video init=%s, index=%s; audio init=%s, index=%s",
+				fileName, videoInitRange, videoIndexRange, audioInitRange, audioIndexRange), "transcoding")
+
+			indexFile := &model.VideoIndexFile{
+				ResourceID:    transcodingInfo.ResourceID,
+				Quality:       fileName,
+				DirName:       transcodingInfo.DirName,
+				TotalDuration: transcodingInfo.Duration,
+
+				// 视频流信息
+				VideoFile:       fileName + "_video.m4s",
+				VideoBandwidth:  bandwidth,
+				VideoCodec:      "avc1.640028",
+				Width:           width,
+				Height:          height,
+				FrameRate:       frameRate,
+				VideoInitRange:  videoInitRange,
+				VideoIndexRange: videoIndexRange,
+
+				// 音频流信息
+				AudioFile:       "audio.m4s",
+				AudioBandwidth:  320000,
+				AudioCodec:      "mp4a.40.2",
+				AudioSampleRate: 48000,
+				AudioInitRange:  audioInitRange,
+				AudioIndexRange: audioIndexRange,
+			}
+
+			if err := global.Mysql.Create(indexFile).Error; err != nil {
+				utils.ErrorLog(fmt.Sprintf("【保存索引失败】%s", fileName), "transcoding", err.Error())
 				wg.Done()
 				return
 			}
 
-			utils.InfoLog(fmt.Sprintf("【HLS转码完成】%s，保存到数据库", fileName), "transcoding")
-
-			// 读取m3u8写入数据库
-			err = saveM3u8File(transcodingInfo, fileName, m3u8File)
-			if err != nil {
-				utils.ErrorLog(fmt.Sprintf("【保存m3u8失败】%s", fileName), "transcoding", err.Error())
-				wg.Done()
-				return
-			}
-
-			utils.InfoLog(fmt.Sprintf("【成功】%s 转码完成", fileName), "transcoding")
-
-			// 删除临时m3u8文件（TS分段文件保留在磁盘）
-			os.Remove(m3u8File)
+			utils.InfoLog(fmt.Sprintf("【成功】%s 转码完成, video=%s, audio=%s",
+				fileName, indexFile.VideoFile, indexFile.AudioFile), "transcoding")
 
 			mu.Lock()
 			successCount++
@@ -374,186 +518,196 @@ func getVideoInfo(input string) (info global.VideoInfo, err error) {
 	return info, nil
 }
 
-// CPU一步式HLS转码：边转码边切片 (优化画质 + 音频接近无损重编码)
-func pressingVideo(ctx context.Context, videoID, resourceID uint, inputFile, outputDir, fileName, quality, rate, fps string, cancelFunc context.CancelFunc) (string, error) {
-	outputM3U8 := outputDir + fileName + ".m3u8"
-	outputTs := outputDir + fileName + "_%05d.ts"
-
-	// 解析 fps
-	fpsInt, err := strconv.Atoi(fps)
-	if err != nil {
-		fpsInt = 30 // 默认30fps
+// parseFPS 解析帧率字符串，支持 "24000/1001" 或 "30" 格式
+func parseFPS(fps string) float64 {
+	if strings.Contains(fps, "/") {
+		parts := strings.Split(fps, "/")
+		if len(parts) == 2 {
+			num, _ := strconv.ParseFloat(parts[0], 64)
+			den, _ := strconv.ParseFloat(parts[1], 64)
+			if den > 0 {
+				return num / den
+			}
+		}
 	}
-
-	// 10秒切片
-	sliceSeconds := 10
-	gop := fpsInt * sliceSeconds
-
-	// 引入 Lanczos 高质量缩放滤镜
-	scaleFilter := fmt.Sprintf("scale=%s:flags=lanczos", quality)
-
-	command := []string{
-		"-i", inputFile,
-
-		// --- 视频参数 ---
-		// 1. 画质控制：CRF 20 (建议值)
-		"-crf", "20",
-		// 2. 缩放质量：Lanczos 算法
-		"-vf", scaleFilter,
-		// 3. 编码效率：slow (同码率下画质更好)
-		"-preset", "slow",
-		// 4. 心理视觉调优
-		"-tune", "film",
-		// 5. 去块滤波优化
-		"-x264-params", "deblock=-1:-1:keyint-min=" + strconv.Itoa(gop),
-		// 6. Profile
-		"-profile:v", "high",
-		"-b:v", rate,
-		"-c:v", "libx264",
-		"-r", fps,
-
-		// --- HLS 关键帧精准对齐 ---
-		"-g", strconv.Itoa(gop),
-		"-sc_threshold", "0",
-		"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", sliceSeconds), // 强制每N秒一个关键帧
-		"-vsync", "cfr",
-
-		// --- 音频参数 (修改部分) ---
-		// 行业标准高音质重编码：解决兼容性与时间戳问题，同时保持接近无损的听感
-		"-c:a", "aac", // 编码器：AAC (兼容性之王)
-		"-b:a", "320k", // 码率：320kbps (AAC的画质上限，听感透明)
-		"-ar", "48000", // 采样率：48kHz (视频标准)
-		"-ac", "2", // 声道：双声道 (立体声)
-		"-af", "aresample=async=1", // 音频滤镜：修正音频时间戳，防止音画不同步
-
-		// --- HLS 切片设置 ---
-		"-f", "hls",
-		"-hls_time", strconv.Itoa(sliceSeconds),
-		"-hls_list_size", "0",
-		"-hls_segment_type", "mpegts",
-		"-hls_segment_filename", outputTs,
-		"-hls_playlist_type", "vod",
-		"-hls_flags", "split_by_time", // 严格按时间切片，确保各清晰度分片对齐
-		"-start_number", "0", // 确保分片从0开始
-
-		outputM3U8,
-	}
-
-	// 使用CommandContext支持取消
-	cmd := exec.CommandContext(ctx, "ffmpeg", command...)
-
-	// 注册转码进程
-	if err := cmd.Start(); err != nil {
-		utils.ErrorLog("HLS转码启动失败", "transcoding", err.Error())
-		return outputM3U8, err
-	}
-
-	registerTranscodingProcess(videoID, resourceID, cmd, cancelFunc, outputDir)
-	defer unregisterTranscodingProcess(videoID, resourceID)
-
-	// 等待命令完成
-	err = cmd.Wait()
-	if err != nil {
-		utils.ErrorLog("HLS转码失败", "transcoding", err.Error())
-		return outputM3U8, err
-	}
-
-	return outputM3U8, nil
+	f, _ := strconv.ParseFloat(fps, 64)
+	return f
 }
 
-// GPU一步式HLS转码：边转码边切片（使用NVIDIA硬件加速 - 优化画质 + 音频接近无损重编码）
-func pressingVideoGPU(ctx context.Context, videoID, resourceID uint, inputFile, outputDir, fileName, quality, rate, fps string, cancelFunc context.CancelFunc) (string, error) {
-	outputM3U8 := outputDir + fileName + ".m3u8"
-	outputTs := outputDir + fileName + "_%05d.ts"
-
-	fpsInt, err := strconv.Atoi(fps)
-	if err != nil {
-		fpsInt = 30
+// SegmentBase模式：编码视频（CPU）
+// 生成 fragmented MP4 (fMP4) 格式，包含 mvex box，用于 DASH SegmentBase
+func encodeVideoOnly(ctx context.Context, videoID, resourceID uint, inputFile, outputFile, quality, rate, fps string, cancelFunc context.CancelFunc) error {
+	// 解析帧率，支持 "24000/1001" 或 "30" 格式
+	fpsFloat := parseFPS(fps)
+	gopSize := int(fpsFloat * 2) // 每2秒一个关键帧
+	if gopSize < 1 {
+		gopSize = 48 // 默认值
 	}
-
-	sliceSeconds := 10
-	gop := fpsInt * sliceSeconds
-
-	// 引入 Lanczos 高质量缩放滤镜
 	scaleFilter := fmt.Sprintf("scale=%s:flags=lanczos", quality)
 
 	command := []string{
 		"-i", inputFile,
-
-		// --- 视频参数 (NVENC) ---
-		// 1. 恒定质量控制
-		"-cq", "22",
-		// 2. 缩放
+		"-map", "0:v",
+		"-an",
+		"-c:v", "libx264",
+		"-crf", "20",
 		"-vf", scaleFilter,
-		// 3. 预设：最高质量 p6
-		"-preset", "p6",
-		// 4. 码率控制模式：VBR_HQ
-		"-rc", "vbr_hq",
-
-		"-b:v", rate, // MaxRate
-		"-c:v", "h264_nvenc",
+		"-preset", "slow",
+		"-tune", "film",
+		"-profile:v", "high",
+		"-b:v", rate,
 		"-r", fps,
-
-		// --- HLS 关键帧精准对齐 ---
-		"-g", strconv.Itoa(gop),
-		"-keyint_min", strconv.Itoa(gop),
+		"-g", strconv.Itoa(gopSize), // 每2秒一个关键帧，便于seek
 		"-sc_threshold", "0",
-		"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", sliceSeconds), // 强制每N秒一个关键帧
 		"-vsync", "cfr",
+		"-f", "mp4",
+		"-movflags", "+frag_keyframe+empty_moov+default_base_moof+dash+global_sidx", // fMP4 + 全局sidx for DASH SegmentBase
+		"-y", outputFile,
+	}
 
-		// --- 音频参数 (修改部分) ---
-		// 即使是 GPU 视频转码，音频通常也是由 CPU 处理的，参数同上
+	cmd := exec.CommandContext(ctx, "ffmpeg", command...)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+
+	// 打印完整命令
+	utils.InfoLog(fmt.Sprintf("【CPU编码命令】ffmpeg %s", strings.Join(command, " ")), "transcoding")
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("视频编码启动失败: %s, stderr: %s", err.Error(), stderr.String())
+	}
+
+	registerTranscodingProcess(videoID, resourceID, cmd, cancelFunc, "")
+	defer unregisterTranscodingProcess(videoID, resourceID)
+
+	if err := cmd.Wait(); err != nil {
+		return fmt.Errorf("视频编码失败: %s, stderr: %s", err.Error(), stderr.String())
+	}
+
+	return nil
+}
+
+// SegmentBase模式：编码视频（GPU）
+// 生成 fragmented MP4 (fMP4) 格式，包含 mvex box，用于 DASH SegmentBase
+func encodeVideoOnlyGPU(ctx context.Context, videoID, resourceID uint, inputFile, outputFile, quality, rate, fps string, cancelFunc context.CancelFunc) error {
+	// 解析帧率，支持 "24000/1001" 或 "30" 格式
+	fpsFloat := parseFPS(fps)
+	gopSize := int(fpsFloat * 2) // 每2秒一个关键帧
+	if gopSize < 1 {
+		gopSize = 48 // 默认值
+	}
+	scaleFilter := fmt.Sprintf("scale=%s:flags=lanczos", quality)
+
+	command := []string{
+		"-i", inputFile,
+		"-map", "0:v",
+		"-an",
+		"-c:v", "h264_nvenc",
+		"-cq", "22",
+		"-vf", scaleFilter,
+		"-preset", "p6",
+		"-rc", "vbr_hq",
+		"-b:v", rate,
+		"-r", fps,
+		"-g", strconv.Itoa(gopSize), // 每2秒一个关键帧，便于seek
+		"-sc_threshold", "0",
+		"-vsync", "cfr",
+		"-f", "mp4",
+		"-movflags", "+frag_keyframe+empty_moov+default_base_moof+dash+global_sidx", // fMP4 + 全局sidx for DASH SegmentBase
+		"-y", outputFile,
+	}
+
+	cmd := exec.CommandContext(ctx, "ffmpeg", command...)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+
+	// 打印完整命令
+	utils.InfoLog(fmt.Sprintf("【GPU编码命令】ffmpeg %s", strings.Join(command, " ")), "transcoding")
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("GPU视频编码启动失败: %s, stderr: %s", err.Error(), stderr.String())
+	}
+
+	registerTranscodingProcess(videoID, resourceID, cmd, cancelFunc, "")
+	defer unregisterTranscodingProcess(videoID, resourceID)
+
+	if err := cmd.Wait(); err != nil {
+		errOutput := stderr.String()
+		if strings.Contains(errOutput, "No NVENC capable devices found") ||
+			strings.Contains(errOutput, "Cannot load nvcuda.dll") ||
+			strings.Contains(errOutput, "CUDA driver version is insufficient") ||
+			strings.Contains(errOutput, "h264_nvenc") ||
+			strings.Contains(errOutput, "nvenc") {
+			return fmt.Errorf("GPU error: %s", errOutput)
+		}
+		return fmt.Errorf("GPU视频编码失败: %s, stderr: %s", err.Error(), errOutput)
+	}
+
+	return nil
+}
+
+// SegmentBase模式：编码音频
+// 生成 fragmented MP4 (fMP4) 格式，包含 mvex box，用于 DASH SegmentBase
+func encodeAudioOnly(ctx context.Context, inputFile, outputFile string) error {
+	command := []string{
+		"-i", inputFile,
+		"-vn",
 		"-c:a", "aac",
 		"-b:a", "320k",
 		"-ar", "48000",
 		"-ac", "2",
-		"-af", "aresample=async=1", // 关键：防止 GPU 视频编码速度过快导致的音画同步问题
-
-		// --- HLS 切片设置 ---
-		"-f", "hls",
-		"-hls_time", strconv.Itoa(sliceSeconds),
-		"-hls_list_size", "0",
-		"-hls_segment_type", "mpegts",
-		"-hls_segment_filename", outputTs,
-		"-hls_playlist_type", "vod",
-		"-hls_flags", "split_by_time", // 严格按时间切片，确保各清晰度分片对齐
-		"-start_number", "0", // 确保分片从0开始
-
-		outputM3U8,
+		"-af", "aresample=async=1",
+		"-f", "mp4",
+		"-movflags", "+frag_keyframe+empty_moov+default_base_moof+dash+global_sidx", // fMP4 + 全局sidx for DASH SegmentBase
+		"-y", outputFile,
 	}
 
-	// 使用CommandContext支持取消
 	cmd := exec.CommandContext(ctx, "ffmpeg", command...)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
 
-	// 注册转码进程
-	if err := cmd.Start(); err != nil {
-		utils.ErrorLog("GPU HLS转码启动失败", "transcoding", err.Error())
-		return outputM3U8, err
+	// 打印音频编码命令
+	utils.InfoLog(fmt.Sprintf("【音频编码命令】ffmpeg %s", strings.Join(command, " ")), "transcoding")
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("音频编码失败: %s, stderr: %s", err.Error(), stderr.String())
 	}
 
-	registerTranscodingProcess(videoID, resourceID, cmd, cancelFunc, outputDir)
-	defer unregisterTranscodingProcess(videoID, resourceID)
+	return nil
+}
 
-	// 等待命令完成
-	err = cmd.Wait()
-	if err != nil {
-		errMsg := err.Error()
+// parseQualityInfo 从 quality 字符串解析分辨率、码率、帧率
+func parseQualityInfo(quality string) (width, height, bandwidth int, frameRate float64) {
+	width, height = 1920, 1080
+	bandwidth = 3000000
+	frameRate = 30
 
-		// 检测是否是GPU相关错误
-		if strings.Contains(errMsg, "No NVENC capable devices found") ||
-			strings.Contains(errMsg, "Cannot load nvcuda.dll") ||
-			strings.Contains(errMsg, "CUDA driver version is insufficient") ||
-			strings.Contains(errMsg, "h264_nvenc") ||
-			strings.Contains(errMsg, "nvenc") {
-			utils.ErrorLog("GPU不可用或驱动异常", "transcoding", errMsg)
-			return outputM3U8, fmt.Errorf("GPU error: %s", errMsg)
+	parts := strings.Split(quality, "_")
+	if len(parts) >= 1 {
+		resParts := strings.Split(parts[0], "x")
+		if len(resParts) == 2 {
+			if w, err := strconv.Atoi(resParts[0]); err == nil {
+				width = w
+			}
+			if h, err := strconv.Atoi(resParts[1]); err == nil {
+				height = h
+			}
 		}
-
-		utils.ErrorLog("GPU HLS转码失败", "transcoding", errMsg)
-		return outputM3U8, err
 	}
 
-	return outputM3U8, nil
+	if len(parts) >= 2 {
+		rateStr := strings.TrimSuffix(parts[1], "k")
+		if rate, err := strconv.Atoi(rateStr); err == nil {
+			bandwidth = rate * 1000
+		}
+	}
+
+	if len(parts) >= 3 {
+		if fr, err := strconv.ParseFloat(parts[2], 64); err == nil {
+			frameRate = fr
+		}
+	}
+
+	return
 }
 
 /*
@@ -582,32 +736,6 @@ func generateVideoSlices(inputFile, outputDir, outputName string) (string, error
 	return outputM3U8, nil
 }
 */
-
-// 保存m3u8文件
-func saveM3u8File(transcodingInfo *dto.TranscodingInfo, fileName, m3u8File string) error {
-	file, err := os.Open(m3u8File)
-	if err != nil {
-		utils.ErrorLog("打开m3u8文件失败", "transcoding", err.Error())
-		return err
-	}
-
-	bytes, err := io.ReadAll(file)
-	if err != nil {
-		utils.ErrorLog("读取m3u8文件失败", "transcoding", err.Error())
-		return err
-	}
-
-	file.Close()
-
-	global.Mysql.Create(&model.VideoIndexFile{
-		ResourceID: transcodingInfo.ResourceID,
-		Quality:    fileName,
-		DirName:    transcodingInfo.DirName,
-		Content:    string(bytes),
-	})
-
-	return nil
-}
 
 // 并发上传文件到OSS
 func uploadFilesToOSS(dirName, outputDir string, files []os.DirEntry) int {

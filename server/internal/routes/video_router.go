@@ -36,6 +36,8 @@ func CollectVideoRoutes(r *gin.RouterGroup) {
 		videoAuth.GET("getResourceQualityManage", api.GetResourceQualityManage)
 		// 获取视频文件（后台管理）
 		videoAuth.GET("getVideoFileManage", api.GetVideoFileManage)
+		// 重新转码视频（后台管理专用）
+		videoAuth.POST("reTranscodeVideo", api.ReTranscodeVideo)
 	}
 
 	// 获取视频信息
@@ -44,8 +46,10 @@ func CollectVideoRoutes(r *gin.RouterGroup) {
 	videoGroup.GET("getResourceQuality", api.GetResourceQuality)
 	// 获取视频文件
 	videoGroup.GET("getVideoFile", api.GetVideoFile)
-	// 获取视频切片
+	// 获取视频切片（兼容模式：SegmentList）
 	videoGroup.GET("slice/:file", api.GetVideoSlice)
+	// 获取视频流（B站风格：SegmentBase，支持字节范围请求）
+	videoGroup.GET("stream/:file", api.GetVideoStream)
 	// 获取用户视频
 	videoGroup.GET("getVideoByUser", api.GetVideoByUser)
 	// 获取热门视频
