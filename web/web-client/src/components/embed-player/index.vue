@@ -3,10 +3,11 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue';
+import { onMounted, ref, watch, nextTick, onBeforeUnmount } from 'vue';
 import Hls from 'hls.js';
+import Dash from 'dashjs';
 import Wplayer from 'wplayer-next';
-import { getResourceQualityApi, getVideoFileUrl } from '@/api/video';
+import { getResourceQualityApi, getVideoFileUrl, getVideoFileUrlDash } from '@/api/video';
 import { getDanmakuAPI } from '@/api/danmaku';
 
 const props = defineProps<{
@@ -19,6 +20,7 @@ console.log('[embed-player] props:', props);
 
 const playerContainer = ref<HTMLElement | null>(null);
 let player: any = null;
+let dashPlayer: any = null;
 let originalDanmaku: DanmakuType[] = [];
 
 const setDanmaku = (data: DanmakuType[]) => {
@@ -101,13 +103,27 @@ const getQualities = (qualityList: string[], resourceId: number) => {
     const fpsB = parseInt(b.split('_').pop() || '0', 10);
     return fpsB - fpsA;
   });
+
+  // 检测是否支持 DASH
+  const supportDash = supportsDashJs()
+
   const mapped = sorted.map((item) => ({
     name: getQualityDisplayName(item),
-    url: getVideoFileUrl(resourceId, item),
+    url: supportDash ? getVideoFileUrlDash(resourceId, item) : getVideoFileUrl(resourceId, item),
   }));
   console.log('[embed-player] qualities mapped:', mapped);
-  return mapped;
+  return { qualities: mapped, supportDash };
 };
+
+// 检测是否支持 dash.js
+const supportsDashJs = (): boolean => {
+  const video = document.createElement('video')
+  return !!(
+    (window as any).MediaSource ||
+    video.canPlayType('application/dash+xml') !== '' ||
+    (window as any).dashjs !== undefined
+  )
+}
 
 const loadDanmaku = async () => {
   const vid = props.videoInfo.vid;
@@ -141,24 +157,39 @@ const initPlayer = async () => {
   if (!container) return;
   if (player) return;
 
+  // 防御性检查：确保 videoInfo 和 resources 存在
+  if (!props.videoInfo?.resources?.length) {
+    console.warn('[embed-player] videoInfo.resources is empty or undefined');
+    return;
+  }
+
+  const resource = props.videoInfo.resources[props.part - 1];
+  if (!resource?.id) {
+    console.warn('[embed-player] resource not found for part:', props.part);
+    return;
+  }
+
   // 确保 Hls.js 在全局可用
   if (!(window as any).Hls) {
     (window as any).Hls = Hls;
     console.log('[embed-player] Hls.js injected to window');
   }
 
-  const resource = props.videoInfo.resources[props.part - 1];
   console.log('[embed-player] resource:', resource);
   const res = await getResourceQualityApi(resource.id);
   console.log('[embed-player] getResourceQualityApi result:', res);
-  let qualities = [];
+  let qualities: any[] = [];
+  let supportDash = false;
   if (res.data.code === 200 && res.data.data.quality.length > 0) {
-    qualities = getQualities(res.data.data.quality, resource.id);
+    const result = getQualities(res.data.data.quality, resource.id);
+    qualities = result.qualities;
+    supportDash = result.supportDash;
   } else {
-    qualities = [{ name: '默认', url: resource.url, type: 'hls' }];
+    qualities = [{ name: '默认', url: resource.url }];
+    supportDash = false;
   }
 
-  console.log('[embed-player] Wplayer qualities', qualities);
+  console.log('[embed-player] Wplayer qualities', qualities, 'supportDash:', supportDash);
   /* === 播放器实例化片段 start === */
   player = new Wplayer({
     container,
@@ -167,7 +198,7 @@ const initPlayer = async () => {
       defaultQuality: 0,
       autoplay: shouldAutoplay,
       controls: ["play", "progress", "volume", "quality", "fullscreen"],
-      type: 'customHls',
+      type: supportDash ? 'customDash' : 'customHls',
       customType: {
         customHls: function (video: HTMLVideoElement) {
           console.log('[embed-player] customHls called', video.src);
@@ -180,13 +211,24 @@ const initPlayer = async () => {
           (window as any)._mainHls.loadSource(video.src);
           (window as any)._mainHls.attachMedia(video);
           (window as any)._mainHls.on(Hls.Events.ERROR, () => {
-            console.error("[embed-player] 资源加载失败");
+            console.error("[embed-player] HLS 资源加载失败");
+          });
+        },
+        customDash: function (video: HTMLVideoElement) {
+          console.log('[embed-player] customDash called', video.src);
+          if (dashPlayer) {
+            dashPlayer.reset();
+            dashPlayer = null;
+          }
+          dashPlayer = Dash.MediaPlayer().create();
+          dashPlayer.initialize(video, video.src, false);
+          dashPlayer.on(Dash.Events.ERROR, (e: any, err: any) => {
+            console.error('[embed-player] DASH 播放错误:', err);
           });
         },
       },
     },
     danmaku: { show: true },
-    //theme: "#ff5c5c",
     preload: "auto",
     volume: shouldMuted ? 0 : 0.8,
     muted: shouldMuted,
@@ -218,8 +260,38 @@ const initPlayer = async () => {
 
 onMounted(() => {
   console.log('[embed-player] onMounted');
-  initPlayer();
+  nextTick(() => {
+    if (props.videoInfo?.resources?.length) {
+      initPlayer();
+    }
+  });
 });
+
+// 组件卸载时清理
+onBeforeUnmount(() => {
+  if (player) {
+    player.destroy();
+    player = null;
+  }
+  if (dashPlayer) {
+    dashPlayer.reset();
+    dashPlayer = null;
+  }
+});
+
+// 监听 videoInfo 变化，当数据加载完成后初始化播放器
+watch(
+  () => props.videoInfo,
+  (newVal) => {
+    console.log('[embed-player] watch videoInfo changed:', newVal);
+    if (newVal?.resources?.length && !player && playerContainer.value) {
+      nextTick(() => {
+        initPlayer();
+      });
+    }
+  },
+  { immediate: true, deep: true }
+);
 </script>
 
 <style scoped>
