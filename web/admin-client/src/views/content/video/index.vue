@@ -24,7 +24,7 @@ import { h, onBeforeMount, reactive, ref } from 'vue';
 import { Refresh } from "@vicons/ionicons5";
 import useLoading from '@/hooks/loading-hooks';
 import { statusCode } from '@/utils/status-code';
-import { getVideoListAPI, deleteVideoAPI } from '@/api/video';
+import { getVideoListAPI, deleteVideoAPI, reTranscodeVideoAPI } from '@/api/video';
 import type { DataTableColumns } from 'naive-ui';
 import { getResourceUrl } from '@/utils/resource';
 import usePartition from '@/hooks/partition-hooks';
@@ -54,6 +54,16 @@ const deleteVideo = async (row: VideoType) => {
   if (res.data.code === statusCode.OK) {
     message.success('删除成功');
     await getTableData();
+  } else {
+    message.error(res.data.msg);
+  }
+}
+
+// 重新转码视频
+const reTranscodeVideo = async (row: VideoType) => {
+  const res = await reTranscodeVideoAPI(row.vid);
+  if (res.data.code === statusCode.OK) {
+    message.success('重新转码任务已提交，请在后台查看进度');
   } else {
     message.error(res.data.msg);
   }
@@ -106,7 +116,7 @@ const columns: DataTableColumns<VideoType> = [
     key: 'actions',
     title: '操作',
     align: 'center',
-    width: 160,
+    width: 240,
     render: row => {
       return h(NSpace, { justify: 'center' }, {
         default: () => [
@@ -114,12 +124,18 @@ const columns: DataTableColumns<VideoType> = [
             size: 'small',
             onClick: () => editVideo(row)
           }, { default: () => '详情' }),
+          h(NButton, {
+            size: 'small',
+            type: 'warning',
+            onClick: () => reTranscodeVideo(row)
+          }, { default: () => '转码' }),
           h(NPopconfirm, {
             onPositiveClick: () => deleteVideo(row),
           }, {
             default: () => '是否删除视频?',
             trigger: () => h(NButton, {
               size: 'small',
+              type: 'error',
             }, { default: () => '删除' })
           })
         ]

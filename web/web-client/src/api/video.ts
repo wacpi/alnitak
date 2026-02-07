@@ -56,9 +56,19 @@ export const getResourceQualityApi = async (resourceId: number | string) => {
   return request.get(`v1/video/getResourceQuality?resourceId=${resourceId}`)
 }
 
-// 获取视频文件URL
+// 获取视频文件URL（HLS格式）
 export const getVideoFileUrl = (resourceId: number, quality: string) => {
-  return `${baseURL}/api/v1/video/getVideoFile?resourceId=${resourceId}&quality=${quality}`;
+  return `${baseURL}/api/v1/video/getVideoFile?resourceId=${resourceId}&quality=${quality}&format=m3u8`;
+}
+
+// 获取视频文件URL（DASH格式 - 返回MPD XML）
+export const getVideoFileUrlDash = (resourceId: number, quality: string) => {
+  return `${baseURL}/api/v1/video/getVideoFile?resourceId=${resourceId}&quality=${quality}&format=dash`;
+}
+
+// 获取视频播放信息（JSON格式，类似B站）
+export const getVideoPlayInfo = (resourceId: number, quality: string) => {
+  return request.get(`v1/video/getVideoFile?resourceId=${resourceId}&quality=${quality}`);
 }
 
 // 获取热门视频

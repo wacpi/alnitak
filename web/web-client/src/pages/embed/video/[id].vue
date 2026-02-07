@@ -1,14 +1,14 @@
 <template>
   <div class="embed-video-container">
     <div class="player-box" @mouseenter="showOverlay" @mouseleave="hideOverlay">
-      <div class="player-info-overlay" v-if="videoInfo" v-show="infoOverlayVisible" @mouseenter="showOverlay" @mouseleave="hideOverlay">
-        <a class="title-link" :href="videoLink" target="_blank">{{ displayedTitle }}</a>
-        <div class="up-info">
-          <img class="avatar" :src="getResourceUrl(videoInfo.author.avatar)" :alt="videoInfo.author.name" />
-          <a class="up-name" :href="userLink" target="_blank">{{ videoInfo.author.name }}</a>
-        </div>
-      </div>
       <client-only>
+        <div class="player-info-overlay" v-if="videoInfo" v-show="infoOverlayVisible" @mouseenter="showOverlay" @mouseleave="hideOverlay">
+          <a class="title-link" :href="videoLink" target="_blank">{{ displayedTitle }}</a>
+          <div class="up-info">
+            <img class="avatar" :src="getResourceUrl(videoInfo.author.avatar)" :alt="videoInfo.author.name" />
+            <a class="up-name" :href="userLink" target="_blank">{{ videoInfo.author.name }}</a>
+          </div>
+        </div>
         <embed-player v-if="videoInfo" :video-info="videoInfo" :part="currentPart" :progress="pendingProgress" />
       </client-only>
     </div>
@@ -125,8 +125,8 @@ const hideOverlay = () => {
   }
 };
 
-// 初次加载
-fetchVideoInfo();
+// 初次加载 - 使用 await 确保数据加载完成
+await fetchVideoInfo();
 validatePartQuery();
 
 // 更新页面标题

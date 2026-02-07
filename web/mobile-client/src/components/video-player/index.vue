@@ -86,28 +86,88 @@ const loadPart = async (part: number) => {
   }
 }
 
-const resourceNameMap = {
+const resourceNameMap: Record<string, string> = {
   "640x360_500k_30": "360p",
+  "640x360_1000k_30": "360p",
   "854x480_900k_30": "480p",
+  "854x480_1500k_30": "480p",
   "1080x720_2000k_30": "720p",// 兼容之前的错误
   "1280x720_2000k_30": "720p",
+  "1280x720_3000k_30": "720p",
   "1920x1080_3000k_30": "1080p",
+  "1920x1080_6000k_30": "1080p",
   "1920x1080_6000k_60": "1080p60",
+  "1920x1080_8000k_60": "1080p60",
+}
+
+/**
+ * 根据清晰度字符串动态生成显示名称
+ */
+const getQualityDisplayName = (qualityStr: string): string => {
+  if (resourceNameMap[qualityStr]) {
+    return resourceNameMap[qualityStr];
+  }
+
+  try {
+    const parts = qualityStr.split('_');
+    const resolution = parts[0];
+    const fpsStr = parts[parts.length - 1];
+    const fps = parseInt(fpsStr, 10);
+
+    if (resolution.includes('x')) {
+      const [, height] = resolution.split('x').map(Number);
+      const fpsSuffix = fps > 30 ? fps.toString() : '';
+
+      if (height <= 360) return fpsSuffix ? `360p${fpsSuffix}` : '360p';
+      if (height <= 480) return fpsSuffix ? `480p${fpsSuffix}` : '480p';
+      if (height <= 720) return fpsSuffix ? `720p${fpsSuffix}` : '720p';
+      if (height <= 1080) return fpsSuffix ? `1080p${fpsSuffix}` : '1080p';
+      if (height <= 1440) return fpsSuffix ? `1440p${fpsSuffix}` : '1440p';
+      if (height <= 2160) return fpsSuffix ? `4K${fpsSuffix}` : '4K';
+      return fpsSuffix ? `${height}p${fpsSuffix}` : `${height}p`;
+    }
+  } catch (error) {
+    console.warn('Failed to parse quality string:', qualityStr);
+  }
+
+  return qualityStr.split('_')[0] || qualityStr;
 }
 
 const loadResource = async (part: number) => {
+  // 防御性检查
+  if (!props.videoInfo?.resources?.length) {
+    console.warn('[video-player] videoInfo.resources is empty or undefined');
+    return;
+  }
+
   const resource = props.videoInfo.resources[part - 1];
+  if (!resource?.id) {
+    console.warn('[video-player] resource not found for part:', part);
+    return;
+  }
+
   const res = await getResourceQualityApi(resource.id);
-  if (res.data.code === statusCode.OK) {
-    options.video.quality = res.data.data.quality.map((item: keyof typeof resourceNameMap, index: number) => {
-      if (resourceNameMap[item] === defaultQuality.value) {
+  if (res.data.code === statusCode.OK && res.data.data.quality?.length > 0) {
+    // 排序：分辨率从高到低，帧率从高到低
+    const qualities = [...res.data.data.quality].sort((a: string, b: string) => {
+      const wa = parseInt(a.split('x')[0], 10);
+      const wb = parseInt(b.split('x')[0], 10);
+      if (wb !== wa) return wb - wa;
+      const fpsA = parseInt(a.split('_').pop() || '0', 10);
+      const fpsB = parseInt(b.split('_').pop() || '0', 10);
+      return fpsB - fpsA;
+    });
+
+    options.video.quality = qualities.map((item: string, index: number) => {
+      const name = getQualityDisplayName(item);
+      if (name === defaultQuality.value) {
         options.video.defaultQuality = index;
       }
       return {
-        name: resourceNameMap[item],
+        name,
         url: getVideoFileUrl(resource.id, item),
-      }
-    })
+      };
+    });
   }
 }
 

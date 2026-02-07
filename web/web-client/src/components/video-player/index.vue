@@ -12,11 +12,12 @@
 <script setup lang="ts">
 // ===== 依赖与类型定义 =====
 import Hls from "hls.js";
+import * as dashjs from "dashjs";
 import Wplayer from 'wplayer-next';
 import { ref, shallowRef, onBeforeMount, watch, onMounted, onBeforeUnmount } from 'vue';
 import { getDanmakuAPI, sendDanmakuAPI } from "@/api/danmaku";
 import DanmakuSend from "./components/DanmakuSend.vue";
-import { getResourceQualityApi, getVideoFileUrl } from "@/api/video";
+import { getResourceQualityApi, getVideoFileUrl, getVideoFileUrlDash } from "@/api/video";
 import { addHistoryAPI } from "@/api/history";
 
 // ===== 组件属性定义 =====
@@ -31,8 +32,10 @@ const props = withDefaults(defineProps<{
 
 // ===== 播放器与弹幕相关变量 =====
 let player: any = null;
+let dashPlayer: any = null;
 const defaultQuality = ref('');
 const hls = shallowRef<Hls | null>(null);
+const dash = shallowRef<any>(null);
 const hasEnded = ref(false); // 标记视频是否已播放结束
 const danmakuSendRef = ref<InstanceType<typeof DanmakuSend> | null>(null);
 const options: PlayerOptionsType = {
@@ -43,11 +46,8 @@ const options: PlayerOptionsType = {
     pic: '',
     type: 'customHls',
     customType: {
-      // TODO: 处理IOS系统中的hls视频播放
-      //这段代码先前造成清晰度切换进度丢失问题！
+      // HLS 播放
       customHls: function (video: HTMLVideoElement) {
-        // 从 localStorage 恢复音量状态（首次加载或页面刷新）
-        // 如果视频已有音量设置（清晰度切换），则以当前值为准
         const savedVolume = localStorage.getItem('wplayer-volume');
         const savedMuted = localStorage.getItem('wplayer-muted');
         const prevVolume = video.currentTime > 0 ? video.volume : (savedVolume !== null ? parseFloat(savedVolume) : 1);
@@ -63,13 +63,11 @@ const options: PlayerOptionsType = {
         hls.value.loadSource(video.src);
         hls.value.attachMedia(video);
 
-        // HLS 媒体附加完成后恢复音量状态
         hls.value.on(Hls.Events.MEDIA_ATTACHED, () => {
           video.volume = prevVolume;
           video.muted = prevMuted;
         });
 
-        // 监听音量变化，持久化到 localStorage（避免重复绑定）
         if (!(video as any).__volumeChangeBound) {
           (video as any).__volumeChangeBound = true;
           video.addEventListener('volumechange', () => {
@@ -96,6 +94,83 @@ const options: PlayerOptionsType = {
             }
           }
         });
+      },
+      // DASH 播放（支持 B站风格 mpd SegmentBase）
+      customDash: function (video: HTMLVideoElement) {
+        console.log('[DASH] 初始化播放器, src:', video.src);
+
+        const savedVolume = localStorage.getItem('wplayer-volume');
+        const savedMuted = localStorage.getItem('wplayer-muted');
+        const prevVolume = savedVolume !== null ? parseFloat(savedVolume) : 1;
+        const prevMuted = savedMuted === '1';
+
+        // 保存当前播放位置（用于切换清晰度时恢复）
+        const savedTime = video.currentTime > 0 ? video.currentTime : 0;
+        const wasPlaying = !video.paused;
+        console.log('[DASH] 保存播放位置:', savedTime, '是否正在播放:', wasPlaying);
+
+        // 销毁旧的 DASH 实例
+        if (dash.value) {
+          dash.value.reset();
+          dash.value = null;
+        }
+
+        // 创建新的 DASH 实例
+        dash.value = dashjs.MediaPlayer().create();
+        // 优化缓冲配置，减少掉帧
+        dash.value.updateSettings({
+          streaming: {
+            buffer: {
+              bufferTimeDefault: 12,
+              bufferTimeAtTopQuality: 30,
+              bufferTimeAtTopQualityLongForm: 60,
+              bufferPruningInterval: 10,
+              bufferToKeep: 20,
+            },
+          },
+          debug: {
+            logLevel: 3, // WARN level, 减少控制台日志
+          },
+        });
+        dash.value.initialize(video, video.src, false);
+
+        // 恢复音量状态并触发 loadedmetadata（使用字符串事件名）
+        dash.value.on('streamInitialized', () => {
+          video.volume = prevVolume;
+          video.muted = prevMuted;
+          console.log('[DASH] 流初始化完成，音量:', video.volume);
+
+          // 恢复播放位置
+          if (savedTime > 0) {
+            console.log('[DASH] 恢复播放位置到:', savedTime);
+            video.currentTime = savedTime;
+          }
+
+          // 如果之前正在播放，继续播放
+          if (wasPlaying) {
+            video.play().catch((err) => {
+              if (err.name !== 'AbortError') {
+                console.error('[DASH] 自动播放失败:', err);
+              }
+            });
+          }
+
+          // 手动触发 loadedmetadata 事件，让播放器更新时长
+          video.dispatchEvent(new Event('loadedmetadata'));
+        });
+
+        // 监听 playbackMetaDataLoaded 确保时长可用
+        dash.value.on('playbackMetaDataLoaded', () => {
+          console.log('[DASH] 元数据加载完成，时长:', video.duration);
+          video.dispatchEvent(new Event('durationchange'));
+        });
+
+        // 监听错误
+        dash.value.on('error', (e: any) => {
+          console.error('[DASH] 播放错误:', e);
+        });
+
+        console.log('[DASH] 播放器初始化完成');
       },
     },
   },
@@ -286,10 +361,24 @@ const getQualityDisplayName = (qualityStr: string): string => {
   return qualityStr.split('_')[0] || qualityStr;
 }
 
+// 视频播放信息缓存
+const videoPlayInfoCache = new Map<string, any>();
+
 const loadResource = async (part: number) => {
+  // 防御性检查
+  if (!props.videoInfo?.resources?.length) {
+    console.warn('[video-player] videoInfo.resources is empty or undefined');
+    return;
+  }
+
   const resource = props.videoInfo.resources[part - 1]
+  if (!resource?.id) {
+    console.warn('[video-player] resource not found for part:', part);
+    return;
+  }
+
   const res = await getResourceQualityApi(resource.id)
-  if (res.data.code === statusCode.OK) {
+  if (res.data.code === statusCode.OK && res.data.data.quality?.length > 0) {
     // 复制并根据分辨率宽度 & 帧率从高到低排序
     const qualities = [...res.data.data.quality] as string[]
     qualities.sort((a, b) => {
@@ -305,6 +394,9 @@ const loadResource = async (part: number) => {
       return fpsB - fpsA
     })
 
+    // 检测是否支持 DASH
+    const supportDash = supportsDashJs()
+
     // 映射并设置默认质量索引
     options.video.quality = qualities.map((item, index) => {
       const name = getQualityDisplayName(item)
@@ -313,10 +405,32 @@ const loadResource = async (part: number) => {
       }
       return {
         name,
-        url: getVideoFileUrl(resource.id, item),
+        url: supportDash ? getVideoFileUrlDash(resource.id, item) : getVideoFileUrl(resource.id, item),
       }
     })
+
+    // 设置视频类型（HLS 或 DASH）
+    if (supportDash) {
+      options.video.type = 'customDash'
+    } else {
+      options.video.type = 'customHls'
+    }
   }
+}
+
+// 检测 MediaSource API 是否可用
+const supportMediaSource = (): boolean => {
+  return !!(window.MediaSource || (window as any).webkitMediaSource)
+}
+
+// 检测是否支持 dash.js
+const supportsDashJs = (): boolean => {
+  const video = document.createElement('video')
+  return !!(
+    supportMediaSource() ||
+    video.canPlayType('application/dash+xml') !== '' ||
+    (window as any).dashjs !== undefined
+  )
 }
 
 // ===== 弹幕相关方法 =====
@@ -482,6 +596,11 @@ onBeforeUnmount(() => {
   if (hls.value) {
     hls.value.destroy();
     hls.value = null;
+  }
+  // 清理 DASH 实例
+  if (dash.value) {
+    dash.value.reset();
+    dash.value = null;
   }
 });
 
