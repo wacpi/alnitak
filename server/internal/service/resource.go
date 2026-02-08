@@ -110,34 +110,61 @@ func GetRelatedResources(fileID uint, excludeVid uint) (resources []vo.RelatedRe
 	return
 }
 
+// ResourceQualityInfo 资源清晰度信息（包含类型）
+type ResourceQualityInfo struct {
+	Quality      []string `json:"quality"`
+	SupportsDash bool     `json:"supportsDash"` // 是否支持 DASH（SegmentBase 模式）
+}
+
 // 获取视频资源支持的分辨率信息
-func GetResourceQuality(ctx *gin.Context, id uint) ([]string, error) {
+func GetResourceQuality(ctx *gin.Context, id uint) (*ResourceQualityInfo, error) {
 	if !IsResourceExist(id) {
 		return nil, errors.New("资源不存在")
 	}
 
-	var quality []string
-
-	if err := global.Mysql.Model(&model.VideoIndexFile{}).Where("resource_id = ?", id).
-		Pluck("quality", &quality).Error; err != nil {
+	var files []model.VideoIndexFile
+	if err := global.Mysql.Where("resource_id = ?", id).Find(&files).Error; err != nil {
 		utils.ErrorLog("分辨率信息获取失败", "resource", err.Error())
 		return nil, errors.New("获取失败")
 	}
 
-	return quality, nil
+	result := &ResourceQualityInfo{
+		Quality:      make([]string, 0, len(files)),
+		SupportsDash: false,
+	}
+
+	for _, f := range files {
+		result.Quality = append(result.Quality, f.Quality)
+		// 只要有一个是 SegmentBase 模式就支持 DASH
+		if f.IsSegmentBase() {
+			result.SupportsDash = true
+		}
+	}
+
+	return result, nil
 }
 
 // 获取视频资源支持的分辨率信息(后台管理)
-func GetResourceQualityManage(ctx *gin.Context, id uint) ([]string, error) {
-	var quality []string
-
-	if err := global.Mysql.Model(&model.VideoIndexFile{}).Where("resource_id = ?", id).
-		Pluck("quality", &quality).Error; err != nil {
+func GetResourceQualityManage(ctx *gin.Context, id uint) (*ResourceQualityInfo, error) {
+	var files []model.VideoIndexFile
+	if err := global.Mysql.Where("resource_id = ?", id).Find(&files).Error; err != nil {
 		utils.ErrorLog("分辨率信息获取失败", "resource", err.Error())
 		return nil, errors.New("获取失败")
 	}
 
-	return quality, nil
+	result := &ResourceQualityInfo{
+		Quality:      make([]string, 0, len(files)),
+		SupportsDash: false,
+	}
+
+	for _, f := range files {
+		result.Quality = append(result.Quality, f.Quality)
+		if f.IsSegmentBase() {
+			result.SupportsDash = true
+		}
+	}
+
+	return result, nil
 }
 
 func IsResourceExist(resourceId uint) bool {

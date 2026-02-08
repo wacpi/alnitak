@@ -51,14 +51,17 @@ func DeleteResource(ctx *gin.Context) {
 func GetResourceQuality(ctx *gin.Context) {
 	resourceId := utils.StringToUint(ctx.Query("resourceId"))
 
-	quality, err := service.GetResourceQuality(ctx, resourceId)
+	info, err := service.GetResourceQuality(ctx, resourceId)
 	if err != nil {
 		resp.FailWithMessage(ctx, err.Error())
 		return
 	}
 
-	// 返回给前端
-	resp.OkWithData(ctx, gin.H{"quality": quality})
+	// 返回给前端（包含 quality 和 supportsDash）
+	resp.OkWithData(ctx, gin.H{
+		"quality":      info.Quality,
+		"supportsDash": info.SupportsDash,
+	})
 }
 
 // 获取视频资源支持的分辨率信息(后台管理)
@@ -70,14 +73,17 @@ func GetResourceQualityManage(ctx *gin.Context) {
 
 	resourceId := utils.StringToUint(ctx.Query("resourceId"))
 
-	quality, err := service.GetResourceQualityManage(ctx, resourceId)
+	info, err := service.GetResourceQualityManage(ctx, resourceId)
 	if err != nil {
 		resp.FailWithMessage(ctx, err.Error())
 		return
 	}
 
-	// 返回给前端
-	resp.OkWithData(ctx, gin.H{"quality": quality})
+	// 返回给前端（包含 quality 和 supportsDash）
+	resp.OkWithData(ctx, gin.H{
+		"quality":      info.Quality,
+		"supportsDash": info.SupportsDash,
+	})
 }
 
 // 检查资源是否需要替换
