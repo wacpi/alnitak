@@ -267,10 +267,37 @@ customType: {
         }
       },
       dash: function (video: HTMLVideoElement, url: string) {
+        const playbackState = getSavedPlaybackState(video);
+
         if (dashPlayer) {
+          try {
+            const prevUrl = dashPlayer.getManifestUrl();
+            if (prevUrl !== url) {
+              console.log('[art.vue] DASH 切换URL:', prevUrl, '->', url);
+
+              const restoreState = { time: playbackState.currentTime, playing: playbackState.wasPlaying, restored: false };
+
+              dashPlayer.attachSource(url);
+
+              dashPlayer.on('streamInitialized', () => {
+                if (!restoreState.restored && restoreState.time > 0) {
+                  setTimeout(() => {
+                    if (dashPlayer && restoreState.playing) {
+                      dashPlayer.seek(restoreState.time);
+                      video.play().catch(() => {});
+                    }
+                  }, 100);
+                }
+              });
+
+              return;
+            }
+          } catch {
+          }
           dashPlayer.reset();
           dashPlayer = null;
         }
+
         if (dashjs && dashjs.MediaPlayer) {
           dashPlayer = dashjs.MediaPlayer().create();
           dashPlayer.updateSettings({
