@@ -313,9 +313,6 @@ customType: {
             debug: {
               logLevel: 3,
             },
-            protection: {
-              enableEmeAdaptive: false,
-            },
           });
           dashPlayer.initialize(video, url, false);
         } else if (video.canPlayType('application/dash+xml')) {
@@ -372,8 +369,8 @@ customType: {
     const playPromise = player.play();
     if (playPromise !== undefined) {
       playPromise.catch((error: any) => {
-        // 忽略 AbortError，这是正常的时序问题
-        if (error.name !== 'AbortError') {
+        // 忽略 AbortError 和 NotAllowedError（浏览器自动播放策略限制）
+        if (error.name !== 'AbortError' && error.name !== 'NotAllowedError') {
           console.error('[art.vue] 播放错误:', error);
         }
       });
