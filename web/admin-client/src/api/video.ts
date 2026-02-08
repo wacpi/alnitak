@@ -38,7 +38,7 @@ export const getVideoFileUrlDash = (resourceId: number | string, quality: string
 
 // 获取视频文件URL
 export const getVideoFileAPI = (src:string) => {
-  return request.get(src);
+  return request.get(src, { responseType: 'text', transformResponse: [(data: any) => data] });
 }
 
 // 重新转码视频

@@ -13,6 +13,7 @@ import { ref, shallowRef, onBeforeUnmount } from 'vue';
 import { getResourceQualityApi, getVideoFileUrl, getVideoFileUrlDash, getVideoFileAPI } from "@/api/video";
 import { useMessage } from "naive-ui";
 import { getResourceUrl } from "@/utils/resource";
+import { storageData } from "@/utils/storage-data";
 
 const message = useMessage();
 
@@ -78,6 +79,21 @@ const options: PlayerOptionsType = {
             logLevel: 3, // WARN level
           },
         });
+        // 后台管理接口需要认证，通过 RequestModifier 注入 token
+        const token = storageData.get('token');
+        if (token) {
+          dash.value.extend('RequestModifier', function () {
+            return {
+              modifyRequestHeader: function (xhr: XMLHttpRequest) {
+                xhr.setRequestHeader('Authorization', token);
+                return xhr;
+              },
+              modifyRequestURL: function (url: string) {
+                return url;
+              },
+            };
+          }, true);
+        }
         dash.value.initialize(video, video.src, false);
 
         // 恢复播放位置（使用字符串事件名，兼容 dashjs 5.x）

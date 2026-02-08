@@ -5,7 +5,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch, nextTick, onBeforeUnmount } from 'vue';
 import Hls from 'hls.js';
-import Dash from 'dashjs';
+import * as dashjs from 'dashjs';
 import Wplayer from 'wplayer-next';
 import { getResourceQualityApi, getVideoFileUrl, getVideoFileUrlDash } from '@/api/video';
 import { getDanmakuAPI } from '@/api/danmaku';
@@ -240,9 +240,9 @@ const initPlayer = async () => {
             dashPlayer.reset();
             dashPlayer = null;
           }
-          dashPlayer = Dash.MediaPlayer().create();
+          dashPlayer = dashjs.MediaPlayer().create();
           dashPlayer.initialize(video, video.src, false);
-          dashPlayer.on(Dash.Events.ERROR, (e: any, err: any) => {
+          dashPlayer.on(dashjs.MediaPlayer.events.ERROR, (_e: any, err: any) => {
             console.error('[embed-player] DASH 播放错误:', err);
           });
         },
