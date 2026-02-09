@@ -288,13 +288,13 @@ onBeforeMount(() => {
         align-items: center;
 
         .tag {
-          background-color: #f2f3f5;
+          background-color: var(--fill-1);
           padding: 0 6px;
           border-radius: 2px;
           max-width: 76px;
           box-sizing: border-box;
           margin-left: 6px;
-          color: #8a919f;
+          color: var(--font-primary-3);
           text-overflow: ellipsis;
           overflow: hidden;
           white-space: nowrap;
@@ -334,13 +334,13 @@ onBeforeMount(() => {
 
   .delete-dialog-title {
     font-size: 16px;
-    color: #1f2328;
+    color: var(--font-primary-1);
     text-align: center;
     margin: 20px 0;
   }
 
   .delete-dialog-desc {
-    color: #666;
+    color: var(--font-primary-3);
     font-size: 13px;
     text-align: center;
 

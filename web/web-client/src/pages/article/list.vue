@@ -115,7 +115,7 @@ onBeforeUnmount(() => {
   min-width: 1000px;
   overflow: hidden;
   min-height: 100vh;
-  background-color: var(--bg-color);
+  background-color: var(--bg-page);
 
 
   .home-header {
@@ -210,6 +210,7 @@ onBeforeUnmount(() => {
       text-overflow: ellipsis;
       -webkit-box-orient: vertical;
       -webkit-line-clamp: 1;
+      line-clamp: 1;
     }
 
     .abstract {
@@ -224,6 +225,7 @@ onBeforeUnmount(() => {
       text-overflow: ellipsis;
       -webkit-box-orient: vertical;
       -webkit-line-clamp: 2;
+      line-clamp: 2;
     }
 
     .entry-footer {
@@ -264,7 +266,7 @@ onBeforeUnmount(() => {
         align-items: center;
 
         .tag {
-          background-color: var(--hover-bg);
+          background-color: var(--fill-1);
           padding: 0 6px;
           border-radius: 2px;
           max-width: 76px;
