@@ -1,8 +1,10 @@
 package service
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -69,8 +71,35 @@ func GetVideoStatus(ctx *gin.Context, vid uint) (video vo.VideoStatusResp, err e
 	return video, nil
 }
 
-// GetVideoFile 获取视频文件（返回 DASH MPD 或播放信息 JSON）
+// GetVideoFile 获取视频文件（返回 DASH MPD / HLS M3U8 / 播放信息 JSON）
 func GetVideoFile(ctx *gin.Context, resourceId uint, quality, format string) (string, error) {
+	// ========== HLS 子清单请求（m3u8video / m3u8audio） ==========
+	// 由主清单引用，key 由 query 参数传入（复用已有的 key）
+	if format == "m3u8video" || format == "m3u8audio" {
+		existingKey := ctx.Query("key")
+		if existingKey == "" {
+			return "", errors.New("missing key")
+		}
+		// 不校验 resourceId（主清单已校验过），通过 quality 查找索引
+		var file model.VideoIndexFile
+		if resourceId > 0 {
+			if err := global.Mysql.Where("resource_id = ? AND quality = ?", resourceId, quality).First(&file).Error; err != nil {
+				return "", errors.New("视频索引不存在")
+			}
+		} else {
+			return "", errors.New("resourceId 无效")
+		}
+		// 确保 key 对应的目录缓存仍有效
+		if cache.GetVideoSlice(existingKey) == "" {
+			cache.SetVideoSlice(existingKey, file.DirName)
+		}
+		if format == "m3u8video" {
+			return buildM3U8VideoSegmentBase(&file, existingKey)
+		}
+		return buildM3U8AudioSegmentBase(&file, existingKey)
+	}
+
+	// ========== 常规请求 ==========
 	if !IsResourceExist(resourceId) {
 		return "", errors.New("资源不存在")
 	}
@@ -88,6 +117,10 @@ func GetVideoFile(ctx *gin.Context, resourceId uint, quality, format string) (st
 
 	// B站风格：SegmentBase 模式（音视频分离）
 	if file.IsSegmentBase() {
+		// format=m3u8 返回 HLS v7 主清单（Safari/iOS 兼容）
+		if format == "m3u8" {
+			return buildM3U8MasterSegmentBase(&file, resourceId, key), nil
+		}
 		// format=dash 或 format=mpd 返回原始 MPD XML
 		if format == "dash" || format == "mpd" {
 			return buildMPDSegmentBase(&file, key), nil
@@ -214,6 +247,264 @@ func buildPlayURLJSON(file *model.VideoIndexFile, key string) string {
 	)
 
 	return json
+}
+
+// =====================================================
+// HLS v7 over fMP4（SegmentBase 模式的 Safari/iOS 兼容）
+// =====================================================
+
+// sidxEntry 表示 sidx box 中的一个引用条目（一个 fragment）
+type sidxEntry struct {
+	Offset   int64   // fragment 在文件中的字节偏移
+	Size     int64   // fragment 的字节大小
+	Duration float64 // fragment 的时长（秒）
+}
+
+// parseSidxBox 从 fMP4 文件中解析 sidx box，提取所有 fragment 的字节范围
+// sidx box 结构参考 ISO 14496-12
+func parseSidxBox(filePath string) ([]sidxEntry, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	fileSize := fileInfo.Size()
+
+	// 遍历顶层 box，找到 sidx
+	offset := int64(0)
+	header := make([]byte, 8)
+
+	for offset < fileSize {
+		if _, err := file.ReadAt(header, offset); err != nil {
+			break
+		}
+
+		boxSize := int64(binary.BigEndian.Uint32(header[0:4]))
+		boxType := string(header[4:8])
+
+		// 扩展 size
+		if boxSize == 1 {
+			extHeader := make([]byte, 8)
+			if _, err := file.ReadAt(extHeader, offset+8); err != nil {
+				break
+			}
+			boxSize = int64(binary.BigEndian.Uint64(extHeader))
+		}
+		if boxSize == 0 {
+			boxSize = fileSize - offset
+		}
+
+		if boxType == "sidx" {
+			return decodeSidxBox(file, offset, boxSize)
+		}
+
+		// 遇到 moof 就停止搜索
+		if boxType == "moof" {
+			break
+		}
+
+		offset += boxSize
+	}
+
+	return nil, fmt.Errorf("sidx box not found in %s", filePath)
+}
+
+// decodeSidxBox 解码 sidx box 内容
+func decodeSidxBox(reader io.ReaderAt, boxOffset, boxSize int64) ([]sidxEntry, error) {
+	data := make([]byte, boxSize)
+	if _, err := reader.ReadAt(data, boxOffset); err != nil {
+		return nil, err
+	}
+
+	// box header: 8 bytes (size + type)
+	pos := 8
+
+	// FullBox header: version (1 byte) + flags (3 bytes)
+	version := data[pos]
+	pos += 4 // skip version + flags
+
+	// reference_ID (4 bytes)
+	pos += 4
+
+	// timescale (4 bytes)
+	var timescale uint32
+	timescale = binary.BigEndian.Uint32(data[pos : pos+4])
+	pos += 4
+
+	if timescale == 0 {
+		return nil, fmt.Errorf("sidx timescale is 0")
+	}
+
+	// earliest_presentation_time + first_offset
+	var firstOffset int64
+	if version == 0 {
+		// 32-bit each
+		pos += 4 // earliest_presentation_time
+		firstOffset = int64(binary.BigEndian.Uint32(data[pos : pos+4]))
+		pos += 4
+	} else {
+		// 64-bit each
+		pos += 8 // earliest_presentation_time
+		firstOffset = int64(binary.BigEndian.Uint64(data[pos : pos+8]))
+		pos += 8
+	}
+
+	// reserved (2 bytes) + reference_count (2 bytes)
+	pos += 2 // reserved
+	refCount := int(binary.BigEndian.Uint16(data[pos : pos+2]))
+	pos += 2
+
+	// 第一个 fragment 的偏移 = sidx box 结束位置 + first_offset
+	// ISO 14496-12: anchor_point = first byte after sidx box, first_offset 是额外偏移
+	fragmentOffset := boxOffset + boxSize + firstOffset
+
+	entries := make([]sidxEntry, 0, refCount)
+
+	for i := 0; i < refCount; i++ {
+		if pos+12 > len(data) {
+			break
+		}
+
+		// reference_type (1 bit) + referenced_size (31 bits)
+		refField := binary.BigEndian.Uint32(data[pos : pos+4])
+		// referenceType := (refField >> 31) & 1  // 0 = media, 1 = index
+		referencedSize := int64(refField & 0x7FFFFFFF)
+		pos += 4
+
+		// subsegment_duration (4 bytes)
+		subsegmentDuration := binary.BigEndian.Uint32(data[pos : pos+4])
+		pos += 4
+
+		// SAP fields (4 bytes) - skip
+		pos += 4
+
+		duration := float64(subsegmentDuration) / float64(timescale)
+
+		entries = append(entries, sidxEntry{
+			Offset:   fragmentOffset,
+			Size:     referencedSize,
+			Duration: duration,
+		})
+
+		fragmentOffset += referencedSize
+	}
+
+	return entries, nil
+}
+
+// buildM3U8MasterSegmentBase 为 SegmentBase 模式生成 HLS v7 主播放列表（Master Playlist）
+// Safari/iOS 通过此清单实现音视频分离播放
+// format=m3u8 返回主清单，内部引用 m3u8video / m3u8audio 子清单
+func buildM3U8MasterSegmentBase(file *model.VideoIndexFile, resourceId uint, key string) string {
+	var sb strings.Builder
+
+	sb.WriteString("#EXTM3U\n")
+	sb.WriteString("#EXT-X-VERSION:7\n")
+	sb.WriteString("\n")
+
+	// 音频组：引用音频子清单
+	sb.WriteString(fmt.Sprintf(
+		"#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",NAME=\"Audio\",DEFAULT=YES,AUTOSELECT=YES,URI=\"/api/v1/video/getVideoFile?resourceId=%d&quality=%s&format=m3u8audio&key=%s\"\n",
+		resourceId, file.Quality, key))
+	sb.WriteString("\n")
+
+	// 视频流：引用视频子清单
+	sb.WriteString(fmt.Sprintf("#EXT-X-STREAM-INF:BANDWIDTH=%d,RESOLUTION=%dx%d,FRAME-RATE=%.3f,CODECS=\"%s,%s\",AUDIO=\"audio\"\n",
+		file.VideoBandwidth+file.AudioBandwidth, file.Width, file.Height, file.FrameRate,
+		file.VideoCodec, file.AudioCodec))
+	sb.WriteString(fmt.Sprintf("/api/v1/video/getVideoFile?resourceId=%d&quality=%s&format=m3u8video&key=%s\n",
+		resourceId, file.Quality, key))
+
+	return sb.String()
+}
+
+// buildM3U8VideoSegmentBase 为视频流生成 HLS v7 媒体播放列表（从文件实时解析 sidx）
+func buildM3U8VideoSegmentBase(file *model.VideoIndexFile, key string) (string, error) {
+	videoPath := "./upload/video/" + file.DirName + "/" + file.VideoFile
+	entries, err := parseSidxBox(videoPath)
+	if err != nil {
+		return "", fmt.Errorf("parse video sidx failed: %w", err)
+	}
+	fmt.Printf("[HLS-DEBUG] video sidx: %d entries, initRange=%s\n", len(entries), file.VideoInitRange)
+	if len(entries) > 0 {
+		fmt.Printf("[HLS-DEBUG] video first entry: offset=%d size=%d dur=%.3f\n", entries[0].Offset, entries[0].Size, entries[0].Duration)
+		last := entries[len(entries)-1]
+		fmt.Printf("[HLS-DEBUG] video last entry: offset=%d size=%d dur=%.3f\n", last.Offset, last.Size, last.Duration)
+	}
+	streamURL := fmt.Sprintf("/api/v1/video/stream/%s?key=%s", file.VideoFile, key)
+	m3u8 := buildByteRangeM3U8(entries, streamURL, file.VideoInitRange)
+	fmt.Printf("[HLS-DEBUG] video m3u8 length: %d bytes\n", len(m3u8))
+	return m3u8, nil
+}
+
+// buildM3U8AudioSegmentBase 为音频流生成 HLS v7 媒体播放列表（从文件实时解析 sidx）
+func buildM3U8AudioSegmentBase(file *model.VideoIndexFile, key string) (string, error) {
+	audioPath := "./upload/video/" + file.DirName + "/" + file.AudioFile
+	entries, err := parseSidxBox(audioPath)
+	if err != nil {
+		return "", fmt.Errorf("parse audio sidx failed: %w", err)
+	}
+	fmt.Printf("[HLS-DEBUG] audio sidx: %d entries, initRange=%s\n", len(entries), file.AudioInitRange)
+	if len(entries) > 0 {
+		fmt.Printf("[HLS-DEBUG] audio first entry: offset=%d size=%d dur=%.3f\n", entries[0].Offset, entries[0].Size, entries[0].Duration)
+	}
+	streamURL := fmt.Sprintf("/api/v1/video/stream/%s?key=%s", file.AudioFile, key)
+	return buildByteRangeM3U8(entries, streamURL, file.AudioInitRange), nil
+}
+
+// buildByteRangeM3U8 从 sidx 条目生成带 EXT-X-BYTERANGE 的 HLS v7 媒体播放列表
+func buildByteRangeM3U8(entries []sidxEntry, streamURL, initRange string) string {
+	var sb strings.Builder
+
+	sb.WriteString("#EXTM3U\n")
+	sb.WriteString("#EXT-X-VERSION:7\n")
+
+	// 计算最大 segment 时长
+	maxDuration := 0.0
+	for _, e := range entries {
+		if e.Duration > maxDuration {
+			maxDuration = e.Duration
+		}
+	}
+	sb.WriteString(fmt.Sprintf("#EXT-X-TARGETDURATION:%d\n", int(maxDuration)+1))
+	sb.WriteString("#EXT-X-MEDIA-SEQUENCE:0\n")
+	sb.WriteString("#EXT-X-PLAYLIST-TYPE:VOD\n")
+
+	// EXT-X-MAP: 初始化段（ftyp + moov）
+	// initRange 格式为 "0-927"，需要转换为 BYTERANGE 的 length@offset
+	initParts := strings.Split(initRange, "-")
+	if len(initParts) == 2 {
+		start := parseRangeInt(initParts[0])
+		end := parseRangeInt(initParts[1])
+		length := end - start + 1
+		sb.WriteString(fmt.Sprintf("#EXT-X-MAP:URI=\"%s\",BYTERANGE=\"%d@%d\"\n", streamURL, length, start))
+	}
+
+	// 每个 fragment 作为一个 segment
+	for _, entry := range entries {
+		sb.WriteString(fmt.Sprintf("#EXTINF:%.6f,\n", entry.Duration))
+		sb.WriteString(fmt.Sprintf("#EXT-X-BYTERANGE:%d@%d\n", entry.Size, entry.Offset))
+		sb.WriteString(streamURL + "\n")
+	}
+
+	sb.WriteString("#EXT-X-ENDLIST\n")
+	return sb.String()
+}
+
+// parseRangeInt 将范围字符串解析为 int64
+func parseRangeInt(s string) int64 {
+	val := int64(0)
+	for _, c := range s {
+		if c >= '0' && c <= '9' {
+			val = val*10 + int64(c-'0')
+		}
+	}
+	return val
 }
 
 // =====================================================
@@ -347,6 +638,25 @@ func formatDuration(seconds float64) string {
 
 // 获取视频文件（后台管理）
 func GetVideoFileManage(ctx *gin.Context, resourceId uint, quality, format string) (string, error) {
+	// HLS 子清单请求
+	if format == "m3u8video" || format == "m3u8audio" {
+		existingKey := ctx.Query("key")
+		if existingKey == "" || resourceId == 0 {
+			return "", errors.New("参数无效")
+		}
+		var file model.VideoIndexFile
+		if err := global.Mysql.Where("resource_id = ? AND quality = ?", resourceId, quality).First(&file).Error; err != nil {
+			return "", errors.New("视频索引不存在")
+		}
+		if cache.GetVideoSlice(existingKey) == "" {
+			cache.SetVideoSlice(existingKey, file.DirName)
+		}
+		if format == "m3u8video" {
+			return buildM3U8VideoSegmentBase(&file, existingKey)
+		}
+		return buildM3U8AudioSegmentBase(&file, existingKey)
+	}
+
 	key := uuid.New().String()
 
 	var file model.VideoIndexFile
@@ -359,10 +669,10 @@ func GetVideoFileManage(ctx *gin.Context, resourceId uint, quality, format strin
 
 	// B站风格：SegmentBase 模式
 	if file.IsSegmentBase() {
-		if format == "dash" {
-			return buildMPDSegmentBase(&file, key), nil
+		if format == "m3u8" {
+			return buildM3U8MasterSegmentBase(&file, resourceId, key), nil
 		}
-		if format == "mpd" {
+		if format == "dash" || format == "mpd" {
 			return buildMPDSegmentBase(&file, key), nil
 		}
 		return buildPlayURLJSON(&file, key), nil

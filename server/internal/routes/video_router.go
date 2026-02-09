@@ -60,4 +60,6 @@ func CollectVideoRoutes(r *gin.RouterGroup) {
 	videoGroup.GET("getRelatedVideoList", api.GetRelatedVideoList)
 	// 搜索视频
 	videoGroup.POST("searchVideo", api.SearchVideo)
+	// 前端日志回传（调试用）
+	videoGroup.POST("clientLog", api.ClientLog)
 }

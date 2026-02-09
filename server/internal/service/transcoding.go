@@ -561,6 +561,7 @@ func encodeVideoOnly(ctx context.Context, videoID, resourceID uint, inputFile, o
 		"-sc_threshold", "0",
 		"-vsync", "cfr",
 		"-f", "mp4",
+		"-frag_duration", "2000000", // 每2秒一个fragment（微秒），与关键帧对齐
 		"-movflags", "+frag_keyframe+empty_moov+default_base_moof+dash+global_sidx", // fMP4 + 全局sidx for DASH SegmentBase
 		"-y", outputFile,
 	}
@@ -612,6 +613,7 @@ func encodeVideoOnlyGPU(ctx context.Context, videoID, resourceID uint, inputFile
 		"-sc_threshold", "0",
 		"-vsync", "cfr",
 		"-f", "mp4",
+		"-frag_duration", "2000000", // 每2秒一个fragment（微秒），与关键帧对齐
 		"-movflags", "+frag_keyframe+empty_moov+default_base_moof+dash+global_sidx", // fMP4 + 全局sidx for DASH SegmentBase
 		"-y", outputFile,
 	}
@@ -647,6 +649,9 @@ func encodeVideoOnlyGPU(ctx context.Context, videoID, resourceID uint, inputFile
 
 // SegmentBase模式：编码音频
 // 生成 fragmented MP4 (fMP4) 格式，包含 mvex box，用于 DASH SegmentBase
+// 注意：音频没有关键帧概念，frag_keyframe 对纯音频无效，
+// 必须用 -frag_duration 强制按时间分片，否则整个音频只有一个 fragment，
+// 导致 HLS v7 byte-range 模式下 iOS 播放器无法正常加载
 func encodeAudioOnly(ctx context.Context, inputFile, outputFile string) error {
 	command := []string{
 		"-i", inputFile,
@@ -657,6 +662,7 @@ func encodeAudioOnly(ctx context.Context, inputFile, outputFile string) error {
 		"-ac", "2",
 		"-af", "aresample=async=1",
 		"-f", "mp4",
+		"-frag_duration", "2000000", // 每2秒一个fragment（微秒），确保音频也分片
 		"-movflags", "+frag_keyframe+empty_moov+default_base_moof+dash+global_sidx", // fMP4 + 全局sidx for DASH SegmentBase
 		"-y", outputFile,
 	}

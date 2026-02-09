@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
@@ -16,7 +17,7 @@ import (
 func GetVideoFile(ctx *gin.Context) {
 	quality := ctx.Query("quality")
 	resourceId := utils.StringToUint(ctx.Query("resourceId"))
-	format := ctx.DefaultQuery("format", "m3u8") // m3u8 或 mpd
+	format := ctx.DefaultQuery("format", "m3u8") // m3u8 / mpd / dash / m3u8video / m3u8audio
 
 	file, err := service.GetVideoFile(ctx, resourceId, quality, format)
 	if err != nil {
@@ -24,12 +25,14 @@ func GetVideoFile(ctx *gin.Context) {
 		return
 	}
 
-	if format == "mpd" {
-		ctx.Writer.Header().Set("Content-type", "application/xml; charset=utf-8")
-	} else {
-		ctx.Writer.Header().Set("Content-type", "text/plain; charset=utf-8")
+	switch format {
+	case "mpd", "dash":
+		ctx.Data(http.StatusOK, "application/dash+xml; charset=utf-8", []byte(file))
+	case "m3u8", "m3u8video", "m3u8audio":
+		ctx.Data(http.StatusOK, "application/vnd.apple.mpegurl; charset=utf-8", []byte(file))
+	default:
+		ctx.Data(http.StatusOK, "application/json; charset=utf-8", []byte(file))
 	}
-	resp.OkWithString(ctx, file)
 }
 
 // 获取视频文件(后台管理)
@@ -49,12 +52,14 @@ func GetVideoFileManage(ctx *gin.Context) {
 		return
 	}
 
-	if format == "mpd" {
-		ctx.Writer.Header().Set("Content-type", "application/xml; charset=utf-8")
-	} else {
-		ctx.Writer.Header().Set("Content-type", "text/plain; charset=utf-8")
+	switch format {
+	case "mpd", "dash":
+		ctx.Data(http.StatusOK, "application/dash+xml; charset=utf-8", []byte(file))
+	case "m3u8", "m3u8video", "m3u8audio":
+		ctx.Data(http.StatusOK, "application/vnd.apple.mpegurl; charset=utf-8", []byte(file))
+	default:
+		ctx.Data(http.StatusOK, "application/json; charset=utf-8", []byte(file))
 	}
-	resp.OkWithString(ctx, file)
 }
 
 // 获取视频切片（兼容模式：SegmentList）
@@ -106,9 +111,15 @@ func GetVideoStream(ctx *gin.Context) {
 			return
 		}
 
+		// .m4s 文件 Go 标准库不识别 MIME 类型，需要手动设置
+		// 否则 iOS 原生 HLS 播放器可能无法识别
+		if strings.HasSuffix(file, ".m4s") {
+			ctx.Header("Content-Type", "video/iso.segment")
+		}
+
 		// 使用 http.ServeFile，它会自动处理：
 		// - Range 请求（返回 206）
-		// - Content-Type 检测
+		// - Content-Type 检测（对于已知类型）
 		// - 缓存头（Last-Modified, ETag）
 		// - 高效的文件传输
 		http.ServeFile(ctx.Writer, ctx.Request, filePath)
@@ -118,6 +129,21 @@ func GetVideoStream(ctx *gin.Context) {
 	// OSS 存储：重定向到 OSS URL
 	redirect := global.Storage.GetObjectUrl("video/" + dir + "/" + file)
 	ctx.Redirect(http.StatusFound, redirect)
+}
+
+// ClientLog 接收前端日志（调试用）
+func ClientLog(ctx *gin.Context) {
+	var body struct {
+		Logs []string `json:"logs"`
+	}
+	if err := ctx.ShouldBindJSON(&body); err != nil {
+		ctx.Status(http.StatusBadRequest)
+		return
+	}
+	for _, line := range body.Logs {
+		fmt.Printf("[CLIENT-LOG] %s\n", line)
+	}
+	ctx.Status(http.StatusOK)
 }
 
 // 获取图片文件
