@@ -114,7 +114,11 @@ onBeforeMount(() => {
   position: relative;
   min-height: 100vh;
   padding-top: 76px;
+<<<<<<< HEAD
   background-color: var(--bg-color);
+=======
+  background-color: var(--bg-page);
+>>>>>>> b0a844294acc32f7ac167ace96fdea590acff8ba
 
   .header {
     position: fixed;

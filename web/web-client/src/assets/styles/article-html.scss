@@ -4,10 +4,54 @@
   padding: 0 10px;
   white-space: pre-wrap;
   overflow: hidden;
+  color: var(--font-primary-1);
 
   img {
     max-width: 100%;
   }
+}
+
+/* 深色主题下的编辑器内容样式 */
+.dark .w-e-text {
+  background-color: var(--bg-elev-1) !important;
+  color: var(--font-primary-1) !important;
+}
+
+.dark .w-e-text-container {
+  background-color: var(--bg-elev-1) !important;
+}
+
+.dark .w-e-text-container [data-slate-editor] {
+  color: var(--font-primary-1) !important;
+}
+
+.dark .w-e-text-container [data-slate-editor] p {
+  color: var(--font-primary-1) !important;
+}
+
+.dark .w-e-text-container [data-slate-editor] h1,
+.dark .w-e-text-container [data-slate-editor] h2,
+.dark .w-e-text-container [data-slate-editor] h3,
+.dark .w-e-text-container [data-slate-editor] h4,
+.dark .w-e-text-container [data-slate-editor] h5,
+.dark .w-e-text-container [data-slate-editor] h6 {
+  color: var(--font-primary-1) !important;
+}
+
+.dark .w-e-text-container [data-slate-editor] strong {
+  color: var(--font-primary-1) !important;
+}
+
+.dark .w-e-text-container [data-slate-editor] em {
+  color: var(--font-primary-1) !important;
+}
+
+.dark .w-e-text-container [data-slate-editor] u {
+  color: var(--font-primary-1) !important;
+}
+
+.dark .w-e-text-container [data-slate-editor] a {
+  color: var(--primary-color) !important;
 }
 
 .seowhy {
