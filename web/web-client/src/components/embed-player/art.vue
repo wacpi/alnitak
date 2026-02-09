@@ -31,6 +31,31 @@ let dashPlayer: any = null;
 let hlsPlayerState: HlsPlayerState = { instance: null, videoElement: null, playPromise: null };
 let originalDanmaku: DanmakuType[] = [];
 
+// ===== 前端日志回传 =====
+const _logBuffer: string[] = [];
+let _logTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clog(...args: any[]) {
+  const msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+  console.log(msg);
+  _logBuffer.push(`[${new Date().toISOString()}] ${msg}`);
+  if (!_logTimer) {
+    _logTimer = setTimeout(flushLogs, 2000);
+  }
+}
+
+function flushLogs() {
+  _logTimer = null;
+  if (_logBuffer.length === 0) return;
+  const logs = _logBuffer.splice(0);
+  fetch('/api/v1/video/clientLog', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ logs }),
+  }).catch(() => {});
+}
+// ===========================
+
 const resourceNameMap: Record<string, string> = {
   "640x360_1000k_30": "360p",
   "854x480_1500k_30": "480p",
@@ -130,13 +155,20 @@ const getQualities = (qualityList: string[], resourceId: number, serverSupportsD
   });
 };
 
+// 检测是否为 Safari 或 iOS 设备（它们不完整支持 MSE / dashjs）
+const isSafariOrIOS = (): boolean => {
+  const ua = navigator.userAgent;
+  if (/iPad|iPhone|iPod/.test(ua)) return true;
+  if (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) return true;
+  if (/Safari/.test(ua) && !/Chrome|CriOS|FxiOS|Edg/.test(ua)) return true;
+  return false;
+};
+
 const supportsDashJs = (): boolean => {
-  const video = document.createElement('video');
+  if (isSafariOrIOS()) return false;
   return !!(
-    dashjs && dashjs.MediaPlayer ||
     (window as any).MediaSource ||
-    video.canPlayType('application/dash+xml') !== '' ||
-    (window as any).dashjs !== undefined
+    (window as any).ManagedMediaSource
   );
 };
 
@@ -153,15 +185,14 @@ const loadDanmaku = async () => {
 };
 
 const initPlayer = async () => {
-  console.log('[art.vue] initPlayer called');
+  clog('[art] initPlayer called, isSafariOrIOS=', isSafariOrIOS(), 'supportsDash=', supportsDashJs());
   const container = playerContainer.value;
-  console.log('[art.vue] container:', container);
   if (!container) {
-    console.warn('[art.vue] container is null, abort');
+    clog('[art] container is null, abort');
     return;
   }
   if (player) {
-    console.warn('[art.vue] player already exists, abort');
+    clog('[art] player already exists, abort');
     return;
   }
 
@@ -177,9 +208,9 @@ const initPlayer = async () => {
     console.warn('[art.vue] resource not found for part:', props.part);
     return;
   }
-  console.log('[art.vue] calling getResourceQualityApi with id:', resource.id);
+  clog('[art] calling getResourceQualityApi, id=', resource.id);
   const res = await getResourceQualityApi(resource.id);
-  console.log('[art.vue] getResourceQualityApi result:', res);
+  clog('[art] quality result, code=', res.data.code, 'count=', res.data.data?.quality?.length);
   let qualities = [];
   if (res.data.code === 200 && res.data.data.quality.length > 0) {
     // 从服务器获取是否支持 DASH（新资源 SegmentBase 模式）
@@ -188,10 +219,12 @@ const initPlayer = async () => {
   } else {
     qualities = [{ default: true, html: '默认', url: resource.url, type: 'm3u8' }];
   }
+  clog('[art] qualities:', qualities.map((q: any) => q.html + '(' + q.type + ')').join(', '));
 
   await loadDanmaku();
 
   const type = guessType(qualities[0].url, qualities[0]);
+  const isDash = type === 'dash';
 
   // 读取本地循环播放初始状态
   const loopInit = localStorage.getItem('artplayer-loop') === '1';
@@ -214,22 +247,29 @@ const initPlayer = async () => {
     hotkey: true,
     pip: true,
     theme: '#2196f3',
-    loop: loopInit,
+    // DASH 模式下禁用 artplayer 的 loop（它会 seek+play 导致 AbortError），
+    // 改用原生 video.loop，dashjs 能正确处理
+    loop: isDash ? false : loopInit,
   settings: [
     {
       html: '循环播放',
       icon: '<svg viewBox="0 0 1024 1024" width="20" height="20"><path d="M512 64C264.6 64 64 264.6 64 512h64c0-211.7 172.3-384 384-384s384 172.3 384 384-172.3 384-384 384c-70.7 0-137.2-19.2-194.1-52.6l90.1-90.1c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-144 144c-12.5 12.5-12.5 32.8 0 45.3l144 144c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3l-90.1-90.1C374.8 924.8 443.2 944 512 944c247.4 0 448-200.6 448-448S759.4 64 512 64z" fill="#2196f3"/></svg>',
       switch: loopInit,
-      onSwitch(item: any, $item: any, event: any): boolean {
+      onSwitch(item: any): boolean {
         const newLoop = !item.switch;
         localStorage.setItem('artplayer-loop', newLoop ? '1' : '0');
 
-        // 直接操作 player 对象
-        if (player && player.video) {
-          player.video.loop = newLoop;  // 设置视频循环状态
+        if (player) {
+          if (isDash) {
+            // DASH 模式：切换手动循环标记
+            dashLoopEnabled = newLoop;
+          } else {
+            // HLS 模式：用 artplayer 自身的 loop
+            player.option.loop = newLoop;
+          }
         }
 
-        return newLoop;  // 返回新状态
+        return newLoop;
       },
       name: 'loop-setting',  // 这里可以保留 name 属性
     },
@@ -239,6 +279,8 @@ const initPlayer = async () => {
     ],
 customType: {
       m3u8: function (video: HTMLVideoElement, url: string) {
+        clog('[m3u8] called, url=', url);
+        clog('[m3u8] Hls.isSupported=', Hls.isSupported(), 'canPlayType=', video.canPlayType('application/vnd.apple.mpegurl'));
         const savedVolumeState = getSavedVolumeState();
         const playbackState = getSavedPlaybackState(video);
         const volumeState = {
@@ -249,6 +291,7 @@ customType: {
         setupVolumePersistence(video);
 
         if (Hls.isSupported()) {
+          clog('[m3u8] using hls.js');
           createHlsPlayer(
             video,
             url,
@@ -260,38 +303,34 @@ customType: {
             }
           );
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+          clog('[m3u8] using native HLS (Safari/iOS)');
           video.src = url;
+          // 监听原生 HLS 事件
+          video.addEventListener('loadedmetadata', () => clog('[native-hls] loadedmetadata, duration=', video.duration));
+          video.addEventListener('canplay', () => clog('[native-hls] canplay'));
+          video.addEventListener('playing', () => clog('[native-hls] playing'));
+          video.addEventListener('waiting', () => clog('[native-hls] waiting'));
+          video.addEventListener('stalled', () => clog('[native-hls] stalled'));
+          video.addEventListener('error', () => {
+            const e = video.error;
+            clog('[native-hls] error:', e?.code, e?.message);
+          });
           if (playbackState.currentTime > 0) {
             video.currentTime = playbackState.currentTime;
           }
         }
       },
       dash: function (video: HTMLVideoElement, url: string) {
-        const playbackState = getSavedPlaybackState(video);
-
         if (dashPlayer) {
           try {
             const prevUrl = dashPlayer.getManifestUrl();
-            if (prevUrl !== url) {
-              console.log('[art.vue] DASH 切换URL:', prevUrl, '->', url);
-
-              const restoreState = { time: playbackState.currentTime, playing: playbackState.wasPlaying, restored: false };
-
-              dashPlayer.attachSource(url);
-
-              dashPlayer.on('streamInitialized', () => {
-                if (!restoreState.restored && restoreState.time > 0) {
-                  setTimeout(() => {
-                    if (dashPlayer && restoreState.playing) {
-                      dashPlayer.seek(restoreState.time);
-                      video.play().catch(() => {});
-                    }
-                  }, 100);
-                }
-              });
-
+            if (prevUrl === url) {
+              // 同一URL（循环播放），不重建 dashPlayer，让视频元素自行处理
               return;
             }
+            console.log('[art.vue] DASH 切换URL:', prevUrl, '->', url);
+            dashPlayer.attachSource(url);
+            return;
           } catch {
           }
           dashPlayer.reset();
@@ -315,6 +354,15 @@ customType: {
             },
           });
           dashPlayer.initialize(video, url, false);
+
+          // playbackEnded 兜底触发 ended 事件（DASH SegmentBase 可能不触发原生 ended）
+          // 用标志位防止与原生 ended 重复触发
+          let endedHandled = false;
+          video.addEventListener('ended', () => { endedHandled = true; });
+          dashPlayer.on('playbackEnded', () => {
+            if (endedHandled) { endedHandled = false; return; }
+            video.dispatchEvent(new Event('ended'));
+          });
         } else if (video.canPlayType('application/dash+xml')) {
           video.src = url;
         }
@@ -363,13 +411,25 @@ customType: {
 //    }
 //  });
 
+  // DASH 模式下手动处理循环播放
+  // artplayer 的 loop 会 seek+play 产生竞态，dashjs 的 SegmentBase 也不支持原生 video.loop
+  // 所以直接监听 video 的 ended 事件，用 dashjs seek 后延时 play
+  let dashLoopEnabled = isDash && loopInit;
+  if (isDash) {
+    player.on('video:ended', () => {
+      if (!dashLoopEnabled || !dashPlayer) return;
+      dashPlayer.seek(0);
+      setTimeout(() => {
+        player?.video?.play().catch(() => {});
+      }, 150);
+    });
+  }
+
   // 监听 ready 事件，安全地开始播放
   player.on('ready', () => {
-    // 使用 play() 的 Promise 来捕获可能的 AbortError
     const playPromise = player.play();
     if (playPromise !== undefined) {
       playPromise.catch((error: any) => {
-        // 忽略 AbortError 和 NotAllowedError（浏览器自动播放策略限制）
         if (error.name !== 'AbortError' && error.name !== 'NotAllowedError') {
           console.error('[art.vue] 播放错误:', error);
         }
@@ -419,6 +479,7 @@ watch(
 
 // 组件卸载时清理资源
 onBeforeUnmount(() => {
+  flushLogs();
   if (player) {
     player.destroy();
     player = null;

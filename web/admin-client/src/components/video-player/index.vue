@@ -6,7 +6,7 @@
 
 <script setup lang="ts">
 import Hls from "hls.js";
-import Dash from "dashjs";
+import * as dashjs from "dashjs";
 import Wplayer from 'wplayer-next';
 import { statusCode } from "@/utils/status-code";
 import { ref, shallowRef, onBeforeUnmount } from 'vue';
@@ -21,6 +21,8 @@ let player: any = null;
 const defaultQuality = ref('');
 const hls = shallowRef<Hls | null>(null);
 const dash = shallowRef<any>(null);
+// DASH 清晰度切换状态（Wplayer 创建新 video 后依赖此状态恢复进度）
+let lastPlaybackState: { time: number; playing: boolean } = { time: 0, playing: false };
 const options: PlayerOptionsType = {
   container: null,
   video: {
@@ -28,56 +30,56 @@ const options: PlayerOptionsType = {
     defaultQuality: 0,
     type: 'customHls',
     customType: {
-      // HLS 播放（兼容旧资源）
+      // HLS 播放（兼容旧资源 + Safari/iOS 原生 HLS）
       customHls: (video: HTMLVideoElement) => {
-        getVideoFileAPI(video.src).then((res) => {
-          if (!res.data) return;
-          if (!hls.value) hls.value = new Hls();
-          const indexFile = res.data.split('\n').map((line: string) => {
-            if (line.includes(".ts")) {
-              return getResourceUrl(line)
-            } else {
-              return line
-            }
+        if (Hls.isSupported()) {
+          getVideoFileAPI(video.src).then((res) => {
+            if (!res.data) return;
+            if (!hls.value) hls.value = new Hls();
+            const indexFile = res.data.split('\n').map((line: string) => {
+              if (line.includes(".ts")) {
+                return getResourceUrl(line)
+              } else {
+                return line
+              }
+            })
+            var blob = new Blob([indexFile.join('\n')], { type: 'text/plain' });
+            var blobUrl = URL.createObjectURL(blob);
+            hls.value.loadSource(blobUrl);
+            hls.value.attachMedia(video);
+            hls.value.on(Hls.Events.ERROR, () => {
+              console.error("资源加载失败");
+            });
           })
-          var blob = new Blob([indexFile.join('\n')], { type: 'text/plain' });
-          var blobUrl = URL.createObjectURL(blob);
-          hls.value.loadSource(blobUrl);
-          hls.value.attachMedia(video);
-          hls.value.on(Hls.Events.ERROR, () => {
-            console.error("资源加载失败");
-          });
-        })
+        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+          // Safari/iOS 原生 HLS 播放
+          video.src = video.src;
+        }
       },
       // DASH 播放（新资源 SegmentBase 模式）
+      // Wplayer 切换清晰度会创建全新 video 元素，无法复用旧 dashPlayer
       customDash: (video: HTMLVideoElement) => {
-        console.log('[DASH] 初始化播放器, src:', video.src);
+        const savedTime = lastPlaybackState.time;
+        const wasPlaying = lastPlaybackState.playing;
 
-        // 保存当前播放位置（用于切换清晰度时恢复）
-        const savedTime = video.currentTime > 0 ? video.currentTime : 0;
-        const wasPlaying = !video.paused;
-        console.log('[DASH] 保存播放位置:', savedTime, '是否正在播放:', wasPlaying);
-
-        // 销毁旧的 DASH 实例
+        // 销毁旧实例
         if (dash.value) {
           dash.value.reset();
           dash.value = null;
         }
 
-        // 创建新的 DASH 实例
-        dash.value = Dash.MediaPlayer().create();
-        // 优化缓冲配置
+        dash.value = dashjs.MediaPlayer().create();
         dash.value.updateSettings({
           streaming: {
             buffer: {
               bufferTimeDefault: 12,
               bufferTimeAtTopQuality: 30,
               bufferTimeAtTopQualityLongForm: 60,
+              bufferPruningInterval: 10,
+              bufferToKeep: 20,
             },
           },
-          debug: {
-            logLevel: 3, // WARN level
-          },
+          debug: { logLevel: 3 },
         });
         // 后台管理接口需要认证，通过 RequestModifier 注入 token
         const token = storageData.get('token');
@@ -96,35 +98,38 @@ const options: PlayerOptionsType = {
         }
         dash.value.initialize(video, video.src, false);
 
-        // 恢复播放位置（使用字符串事件名，兼容 dashjs 5.x）
+        // 流初始化完成后触发元数据事件
         dash.value.on('streamInitialized', () => {
-          console.log('[DASH] 流初始化完成');
-
-          // 恢复播放位置
-          if (savedTime > 0) {
-            console.log('[DASH] 恢复播放位置到:', savedTime);
-            video.currentTime = savedTime;
-          }
-
-          // 如果之前正在播放，继续播放
-          if (wasPlaying) {
-            video.play().catch((err: any) => {
-              if (err.name !== 'AbortError') {
-                console.error('[DASH] 自动播放失败:', err);
-              }
-            });
-          }
-
-          // 手动触发事件，让播放器更新时长
           video.dispatchEvent(new Event('loadedmetadata'));
         });
 
-        // 监听错误（使用字符串事件名）
+        // 恢复播放位置
+        if (savedTime > 0) {
+          let restored = false;
+          dash.value.on('playbackTimeUpdated', function onRestore() {
+            if (restored) return;
+            restored = true;
+            dash.value.off('playbackTimeUpdated', onRestore);
+            dash.value.seek(savedTime);
+            if (wasPlaying) {
+              video.play().catch((err: any) => {
+                if (err.name !== 'AbortError') console.error('[DASH] 播放失败:', err);
+              });
+            }
+          });
+        }
+
+        // playbackEnded 兜底触发 ended 事件
+        let endedHandled = false;
+        video.addEventListener('ended', () => { endedHandled = true; });
+        dash.value.on('playbackEnded', () => {
+          if (endedHandled) { endedHandled = false; return; }
+          video.dispatchEvent(new Event('ended'));
+        });
+
         dash.value.on('error', (e: any) => {
           console.error('[DASH] 播放错误:', e);
         });
-
-        console.log('[DASH] 播放器初始化完成');
       },
     },
   },
@@ -140,9 +145,17 @@ const loadVideo = async (resourceId: number) => {
 
     options.container = el;
     player = new Wplayer(options);
+    // 保存清晰度偏好
     player.on('quality_start', (quality: PlayerQualityType) => {
       localStorage.setItem('default-video-quality', quality.name);
     })
+
+    // 持续保存播放状态（Wplayer 切换清晰度会创建新 video，customDash 依赖此状态恢复进度）
+    player.on('timeupdate', () => {
+      if (player?.video && player.video.currentTime > 0) {
+        lastPlaybackState = { time: player.video.currentTime, playing: !player.video.paused };
+      }
+    });
   }
 }
 
@@ -193,13 +206,21 @@ const getQualityDisplayName = (qualityStr: string): string => {
   return qualityStr.split('_')[0] || qualityStr;
 }
 
+// 检测是否为 Safari 或 iOS 设备（它们不完整支持 MSE / dashjs）
+const isSafariOrIOS = (): boolean => {
+  const ua = navigator.userAgent;
+  if (/iPad|iPhone|iPod/.test(ua)) return true;
+  if (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) return true;
+  if (/Safari/.test(ua) && !/Chrome|CriOS|FxiOS|Edg/.test(ua)) return true;
+  return false;
+};
+
 // 检测是否支持 dash.js
 const supportsDashJs = (): boolean => {
-  const video = document.createElement('video');
+  if (isSafariOrIOS()) return false;
   return !!(
-    (window.MediaSource || (window as any).webkitMediaSource) ||
-    video.canPlayType('application/dash+xml') !== '' ||
-    (window as any).dashjs !== undefined
+    (window as any).MediaSource ||
+    (window as any).ManagedMediaSource
   );
 }
 
