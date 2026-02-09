@@ -30,6 +30,8 @@ const playerContainer = ref<HTMLElement | null>(null);
 let player: any = null;
 let dashPlayer: any = null;
 let originalDanmaku: DanmakuType[] = [];
+// DASH 清晰度切换状态（Wplayer 创建新 video 后依赖此状态恢复进度）
+let lastPlaybackState: { time: number; playing: boolean } = { time: 0, playing: false };
 const hlsPlayerState: HlsPlayerState = { instance: null, videoElement: null, playPromise: null };
 
 const setDanmaku = (data: DanmakuType[]) => {
@@ -124,14 +126,14 @@ const getQualities = (qualityList: string[], resourceId: number) => {
   return { qualities: mapped, supportDash };
 };
 
-// 检测是否支持 dash.js
+// 检测是否支持 DASH 播放
 const supportsDashJs = (): boolean => {
-  const video = document.createElement('video')
-  return !!(
-    (window as any).MediaSource ||
-    video.canPlayType('application/dash+xml') !== '' ||
-    (window as any).dashjs !== undefined
-  )
+  const ua = navigator.userAgent
+  // Safari / iOS 不使用 DASH
+  if (/iPad|iPhone|iPod/.test(ua)) return false
+  if (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) return false
+  if (/Safari/.test(ua) && !/Chrome|CriOS|FxiOS|Edg/.test(ua)) return false
+  return !!((window as any).MediaSource || (window as any).ManagedMediaSource)
 }
 
 const loadDanmaku = async () => {
@@ -234,16 +236,58 @@ const initPlayer = async () => {
             }
           );
         },
+        // Wplayer 切换清晰度会创建全新 video 元素，无法复用旧 dashPlayer
         customDash: function (video: HTMLVideoElement) {
-          console.log('[embed-player] customDash called', video.src);
+          const savedTime = lastPlaybackState.time;
+          const wasPlaying = lastPlaybackState.playing;
+
+          // 销毁旧实例
           if (dashPlayer) {
             dashPlayer.reset();
             dashPlayer = null;
           }
+
           dashPlayer = dashjs.MediaPlayer().create();
+          dashPlayer.updateSettings({
+            streaming: {
+              buffer: {
+                bufferTimeDefault: 12,
+                bufferTimeAtTopQuality: 30,
+                bufferTimeAtTopQualityLongForm: 60,
+                bufferPruningInterval: 10,
+                bufferToKeep: 20,
+              },
+            },
+            debug: { logLevel: 3 },
+          });
           dashPlayer.initialize(video, video.src, false);
-          dashPlayer.on(dashjs.MediaPlayer.events.ERROR, (_e: any, err: any) => {
-            console.error('[embed-player] DASH 播放错误:', err);
+
+          // 恢复播放位置
+          if (savedTime > 0) {
+            let restored = false;
+            dashPlayer.on('playbackTimeUpdated', function onRestore() {
+              if (restored) return;
+              restored = true;
+              dashPlayer.off('playbackTimeUpdated', onRestore);
+              dashPlayer.seek(savedTime);
+              if (wasPlaying) {
+                video.play().catch((err: any) => {
+                  if (err.name !== 'AbortError') console.error('[embed-player] DASH 播放失败:', err);
+                });
+              }
+            });
+          }
+
+          // playbackEnded 兜底触发 ended 事件
+          let endedHandled = false;
+          video.addEventListener('ended', () => { endedHandled = true; });
+          dashPlayer.on('playbackEnded', () => {
+            if (endedHandled) { endedHandled = false; return; }
+            video.dispatchEvent(new Event('ended'));
+          });
+
+          dashPlayer.on('error', (e: any) => {
+            console.error('[embed-player] DASH 播放错误:', e);
           });
         },
       },
@@ -255,6 +299,13 @@ const initPlayer = async () => {
   });
   /* === 播放器实例化片段 end === */
   console.log('[embed-player] Wplayer instance', player);
+
+  // 持续保存播放状态（Wplayer 切换清晰度会创建新 video，customDash 依赖此状态恢复进度）
+  player.on('timeupdate', () => {
+    if (player?.video && player.video.currentTime > 0) {
+      lastPlaybackState = { time: player.video.currentTime, playing: !player.video.paused };
+    }
+  });
 
   // 新增：强制设置 video 元素属性，确保自动静音播放生效
   setTimeout(() => {

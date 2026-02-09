@@ -7,4 +7,5 @@ interface ResourceType {
   duration: number;
   status: number;
   quality: number;
+  fileId?: number;
 }
