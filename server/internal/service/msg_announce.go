@@ -30,7 +30,7 @@ func AddAnnounce(ctx *gin.Context, addAnnounceReq dto.AddAnnounceReq) error {
 func DeleteAnnounce(ctx *gin.Context, id uint) error {
 	if err := global.Mysql.Where("id = ?", id).Delete(&model.Announce{}).Error; err != nil {
 		utils.ErrorLog("删除公告失败", "announce", err.Error())
-		return errors.New("删除角色失败")
+		return errors.New("删除公告失败")
 	}
 
 	return nil
