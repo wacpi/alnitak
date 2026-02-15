@@ -170,12 +170,25 @@ func AddPlaylistVideo(ctx *gin.Context, req dto.PlaylistVideoAddReq) error {
 		Select("COALESCE(MAX(sort), 0)").Scan(&maxSort)
 
 	addCount := 0
+	var skippedVids []uint
 	for _, vid := range req.Vids {
 		// 校验视频存在且审核通过
 		var video model.Video
 		if err := global.Mysql.Where("id = ? AND uid = ? AND status = ?", vid, userId, global.AUDIT_APPROVED).
 			First(&video).Error; err != nil {
 			continue // 跳过不符合条件的视频
+		}
+
+		// 检查视频是否已在用户的其他合集中
+		var otherCount int64
+		global.Mysql.Model(&model.PlaylistVideo{}).
+			Joins("INNER JOIN playlist ON playlist.id = playlist_video.playlist_id AND playlist.deleted_at IS NULL").
+			Where("playlist_video.vid = ? AND playlist.uid = ? AND playlist_video.playlist_id != ? AND playlist_video.deleted_at IS NULL",
+				vid, userId, req.PlaylistID).
+			Count(&otherCount)
+		if otherCount > 0 {
+			skippedVids = append(skippedVids, vid)
+			continue // 已在其他合集中，跳过
 		}
 
 		// 检查是否已在合集中（包含软删除的记录）
@@ -204,6 +217,10 @@ func AddPlaylistVideo(ctx *gin.Context, req dto.PlaylistVideoAddReq) error {
 			Sort:       maxSort,
 		})
 		addCount++
+	}
+
+	if len(skippedVids) > 0 && addCount == 0 {
+		return errors.New("所选视频已在其他合集中，无法重复添加")
 	}
 
 	if addCount > 0 {
@@ -322,6 +339,28 @@ func GetPlaylistVideoList(ctx *gin.Context, playlistID uint, page, pageSize int)
 		Scan(&list)
 
 	return
+}
+
+// GetMyPlaylistVideoIds 获取当前用户所有合集中的视频ID（用于前端去重检查）
+func GetMyPlaylistVideoIds(ctx *gin.Context) map[uint]uint {
+	userId := ctx.GetUint("userId")
+	result := make(map[uint]uint)
+
+	var items []struct {
+		Vid        uint
+		PlaylistID uint
+	}
+	global.Mysql.Model(&model.PlaylistVideo{}).
+		Select("playlist_video.vid, playlist_video.playlist_id").
+		Joins("INNER JOIN playlist ON playlist.id = playlist_video.playlist_id AND playlist.deleted_at IS NULL").
+		Where("playlist.uid = ? AND playlist_video.deleted_at IS NULL", userId).
+		Scan(&items)
+
+	for _, item := range items {
+		result[item.Vid] = item.PlaylistID
+	}
+
+	return result
 }
 
 // GetVideoPlaylists 获取视频所属的公开合集列表

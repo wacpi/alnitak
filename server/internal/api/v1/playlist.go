@@ -259,6 +259,12 @@ func GetPlaylistReviewRecord(ctx *gin.Context) {
 	resp.OkWithData(ctx, gin.H{"review": review})
 }
 
+// GetMyPlaylistVideoIds 获取当前用户所有合集中的视频ID映射
+func GetMyPlaylistVideoIds(ctx *gin.Context) {
+	result := service.GetMyPlaylistVideoIds(ctx)
+	resp.OkWithData(ctx, gin.H{"videoPlaylistMap": result})
+}
+
 // GetVideoPlaylists 获取视频所属的合集列表
 func GetVideoPlaylists(ctx *gin.Context) {
 	videoId := utils.StringToUint(ctx.Query("vid"))

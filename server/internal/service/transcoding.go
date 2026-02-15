@@ -19,7 +19,7 @@ import (
 )
 
 // getMP4InitRange 从 fMP4 文件中提取初始化范围
-// 返回: initRange (0 到 moov 结束), indexRange (sidx 范围，如果没有 sidx 则用 moov)
+// 返回: initRange (0 到 moov 结束), indexRange (sidx 范围，如果没有 sidx 则用整个文件)
 // 用于 DASH SegmentBase 模式
 func getMP4InitRange(filePath string) (initRange, indexRange string, err error) {
 	file, err := os.Open(filePath)
@@ -92,13 +92,14 @@ parseLoop:
 	// initRange: 从文件开头到 moov 结束（ftyp + moov）
 	initRange = fmt.Sprintf("0-%d", moovEnd-1)
 
-	// indexRange: 优先使用 sidx，否则用 moov 起始位置
+	// indexRange: 优先使用 sidx，否则使用整个文件范围
 	if sidxEnd > 0 {
+		// 有 sidx box，使用 sidx 的范围
 		indexRange = fmt.Sprintf("%d-%d", sidxStart, sidxEnd-1)
 	} else {
-		// 没有 sidx，使用 moov 结束后的位置作为索引起点
-		// 对于 fMP4，播放器会从 moov 中的 mvex 获取信息
-		indexRange = fmt.Sprintf("0-%d", moovEnd-1)
+		// 没有 sidx，使用整个文件作为索引范围（从 moov 结束后开始）
+		// 对于 fMP4 音视频分离，播放器需要能够请求任意位置的数据
+		indexRange = fmt.Sprintf("%d-%d", moovEnd, fileSize-1)
 	}
 
 	return initRange, indexRange, nil

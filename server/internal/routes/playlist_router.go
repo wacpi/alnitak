@@ -22,6 +22,8 @@ func CollectPlaylistRoutes(r *gin.RouterGroup) {
 		// 获取自己的合集列表
 		playlistAuth.GET("myList", api.GetMyPlaylist)
 
+		// 获取用户所有合集中的视频ID映射
+		playlistAuth.GET("video/myVideoIds", api.GetMyPlaylistVideoIds)
 		// 添加视频到合集
 		playlistAuth.POST("video/add", api.AddPlaylistVideo)
 		// 从合集移除视频
