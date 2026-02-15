@@ -55,13 +55,15 @@
           <div class="danmaku-list-container">
             <danmaku-list ref="danmakuListRef" :height="danmakuListHeight"></danmaku-list>
           </div>
-          <!-- 视频分集 -->
-          <div v-if="videoInfo && videoInfo.resources.length > 1">
-            <part-list ref="partListRef" :resources="videoInfo.resources" :active="currentPart"
-              @change="changePart"></part-list>
-          </div>
-          <!-- 合集列表 -->
-          <video-collection ref="collectionRef" v-if="videoInfo" :vid="videoInfo.vid"></video-collection>
+          <!-- 合并的分P和合集列表 -->
+          <video-collection 
+            ref="collectionRef" 
+            v-if="videoInfo" 
+            :vid="videoInfo.vid"
+            :resources="videoInfo.resources"
+            :current-part="currentPart"
+            @change-part="changePart"
+          ></video-collection>
           <!-- 相关推荐 -->
           <recommend-list ref="recommendListRef" v-if="videoInfo" :vid="videoInfo.vid"
             :show-autoplay-control="!videoInfo || (videoInfo.resources.length <= 1 && !hasCollection)"></recommend-list>
@@ -140,59 +142,60 @@ const hasCollection = computed(() => !!collectionRef.value?.hasPlaylist);
 const onVideoEnded = () => {
   console.log('视频播放结束，检查自动连播状态');
 
-  // 判断是多分集还是单集
-  const hasMultipleParts = videoInfo.value && videoInfo.value.resources.length > 1;
-
-  if (hasMultipleParts) {
-    // 多分集：检查分集自动连播
-    if (partListRef.value?.autonext) {
-      const nextPart = partListRef.value.getNextPart?.();
-      console.log('自动连播下一分集:', nextPart);
-
-      if (nextPart) {
-        setTimeout(() => {
-          changePart(nextPart);
-        }, 1000);// 这里设置延迟时间：3000毫秒 = 3秒
-      } else {
-        console.log('已是最后一集，检查合集/推荐视频');
-        checkCollectionAutoplay();
-      }
+  // 优先检查当前视频是否有分P
+  const hasParts = (videoInfo.value?.resources?.length || 0) > 1
+  const curPart = currentPart.value
+  
+  if (hasParts) {
+    // 当前视频有分P，检查是否还有下一个分P
+    if (curPart < (videoInfo.value?.resources?.length || 0)) {
+      // 切换到下一个分P
+      setTimeout(() => {
+        changePart(curPart + 1)
+      }, 1000)
+      return
     }
-  } else {
-    // 单集：检查合集自动连播，再检查推荐
-    checkCollectionAutoplay();
   }
-};
-
-// 检查合集自动连播
-const checkCollectionAutoplay = () => {
-  if (collectionRef.value?.autonext) {
-    const nextVideo = collectionRef.value.getNextVideo?.();
+  
+  // 没有分P或已是最后一个分P，检查合集自动连播
+  const collectionRefVal = collectionRef.value
+  console.log('合集自动连播状态:', collectionRefVal?.autonext)
+  if (collectionRefVal?.autonext) {
+    const nextVideo = collectionRefVal.getNextVideo?.()
+    console.log('合集下一个视频:', nextVideo)
     if (nextVideo) {
       setTimeout(() => {
-        navigateTo(`/video/${nextVideo.vid}`);
-      }, 1000);
-      return;
+        if (nextVideo.resourceId) {
+          navigateTo(`/video/${nextVideo.vid}?resourceId=${nextVideo.resourceId}`)
+        } else {
+          navigateTo(`/video/${nextVideo.vid}`)
+        }
+      }, 1000)
+      return
     }
   }
+  
   // 合集没有下一个或未开启，检查推荐
-  checkRecommendAutoplay();
+  checkRecommendAutoplay()
 };
 
 // 检查推荐视频自动连播
 const checkRecommendAutoplay = () => {
-  if (recommendListRef.value?.autonext) {
-    const nextVideo = recommendListRef.value.getNextVideo?.();
-    console.log('自动连播下一个推荐视频:', nextVideo);
-
-    if (nextVideo) {
-      setTimeout(() => {
-        navigateTo(`/video/${nextVideo.vid}`);
-      }, 3000);
-    } else {
-      console.log('没有更多推荐视频了');
-    }
+  const recommendRef = recommendListRef.value
+  console.log('检查推荐列表:', recommendRef?.videoList?.value?.length)
+  
+  // 直接检查推荐列表是否有视频，有的话就播放
+  const videoList = recommendRef?.videoList?.value
+  if (videoList && videoList.length > 0) {
+    const nextVideo = videoList[0]
+    console.log('播放推荐列表第一个视频:', nextVideo)
+    setTimeout(() => {
+      navigateTo(`/video/${nextVideo.vid}`)
+    }, 3000)
+    return
   }
+  
+  console.log('没有推荐视频了')
 };
 
 const onPlayerReady = () => {

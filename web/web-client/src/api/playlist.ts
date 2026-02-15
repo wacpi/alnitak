@@ -54,3 +54,8 @@ export const getMyPlaylistVideoIdsAPI = () => {
 export const getVideoPlaylistsAPI = (vid: number) => {
   return request.get(`v1/playlist/video/playlists?vid=${vid}`);
 }
+
+// 获取合集视频列表（包含多分P展开）
+export const getPlaylistVideoListWithPartsAPI = (vid: number) => {
+  return request.get(`v1/playlist/video/listWithParts?vid=${vid}`);
+}

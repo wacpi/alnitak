@@ -1,8 +1,9 @@
 <template>
-  <div v-if="playlist" class="collection-list">
+  <!-- 有分P列表或合集列表时才显示 -->
+  <div v-if="mergedList.length > 0" class="collection-list">
     <div class="collection-head">
-      <span class="title">{{ playlist.title }}</span>
-      <span class="count">({{ currentIndex }}/{{ videoList.length }})</span>
+      <span class="title">{{ listType === 'parts' ? '视频分集' : displayTitle }}</span>
+      <span class="count">({{ currentIndex }}/{{ displayCount }})</span>
       <span class="view-mode-switch" @click="toggleViewMode" title="切换显示模式">
         <svg v-if="isNumberMode" class="icon" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 24 24" width="16" height="16">
           <path d="M3.02134 15.21437C3.02134 13.79417 4.17261 12.64294 5.59277 12.64294L8.67849 12.64294C10.09869 12.64294 11.24991 13.79417 11.24991 15.21437L11.24991 18.30009C11.24991 19.7202 10.09869 20.87151 8.67849 20.87151L5.59277 20.87151C4.17261 20.87151 3.02134 19.7202 3.02134 18.30009L3.02134 15.21437zM5.59277 14.35723C5.11939 14.35723 4.73563 14.74097 4.73563 15.21437L4.73563 18.30009C4.73563 18.7734 5.11939 19.15723 5.59277 19.15723L8.67849 19.15723C9.15189 19.15723 9.53563 18.7734 9.53563 18.30009L9.53563 15.21437C9.53563 14.74097 9.15189 14.35723 8.67849 14.35723L5.59277 14.35723z" fill="currentColor"></path>
@@ -27,9 +28,9 @@
     <el-scrollbar max-height="340px">
       <ul v-if="!isNumberMode" class="list-box">
         <li
-          v-for="(item, index) in videoList"
+          v-for="(item, index) in mergedList"
           :key="item.vid + '-' + item.resourceId"
-          :class="['list-item', item.vid === props.vid ? 'active-item' : '']"
+          :class="['list-item', isActiveItem(item, index) ? 'active-item' : '']"
           @click="goVideo(item)"
         >
           <div class="item-content">
@@ -41,9 +42,9 @@
       </ul>
       <div v-else class="number-grid">
         <div
-          v-for="(item, index) in videoList"
+          v-for="(item, index) in mergedList"
           :key="item.vid + '-' + item.resourceId"
-          :class="['number-item', item.vid === props.vid ? 'active-number' : '']"
+          :class="['number-item', isActiveItem(item, index) ? 'active-number' : '']"
           @click="goVideo(item)"
         >
           {{ index + 1 }}
@@ -55,12 +56,13 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, readonly } from 'vue'
-import { getVideoPlaylistsAPI, getPlaylistVideoListAPI } from '@/api/playlist'
-import { asyncGetVideoInfoAPI } from '@/api/video'
+import { getPlaylistVideoListWithPartsAPI } from '@/api/playlist'
 import { statusCode } from '@/utils/status-code'
 
 const props = defineProps<{
   vid: number
+  resources?: Array<ResourceType>  // 当前视频的分P列表
+  currentPart?: number  // 当前播放的分P序号
 }>()
 
 interface VideoItem {
@@ -81,18 +83,75 @@ interface PlaylistInfo {
 
 const playlist = ref<PlaylistInfo | null>(null)
 const videoList = ref<VideoItem[]>([])
+const partList = ref<VideoItem[]>([])  // 分P列表
 const autonext = ref(false)
 const isNumberMode = ref(false)
-const isExpanding = ref(false)  // 是否正在展开分P
+
+// 合并后的列表：根据列表类型显示对应的列表
+const mergedList = computed(() => {
+  // 优先显示合集列表（包含展开的多分P视频）
+  if (playlist.value && videoList.value.length > 0) {
+    return videoList.value
+  }
+  // 没有合集但有分P，显示分P列表
+  if (partList.value.length > 0) {
+    return partList.value
+  }
+  return []
+})
+
+// 当前展示的标题
+const displayTitle = computed(() => {
+  if (playlist.value) {
+    return playlist.value.title
+  }
+  if (partList.value.length > 0) {
+    return '视频分集'
+  }
+  return ''
+})
+
+// 当前列表类型（用于判断是否有合集）
+const listType = computed(() => {
+  if (playlist.value && videoList.value.length > 0) {
+    return 'collection'  // 合集
+  }
+  if (partList.value.length > 0) {
+    return 'parts'  // 仅分P
+  }
+  return ''
+})
+
+// 当前展示的数量
+const displayCount = computed(() => mergedList.value.length)
 
 const toggleViewMode = () => {
   isNumberMode.value = !isNumberMode.value
 }
 
 const currentIndex = computed(() => {
-  // 优先精确匹配 vid + resourceId（当前分P）
-  const exactMatchIdx = videoList.value.findIndex(v => v.vid === props.vid)
-  return exactMatchIdx >= 0 ? exactMatchIdx + 1 : 0
+  const currentPart = props.currentPart || 1
+  
+  // 分P列表类型：直接用分P序号
+  if (listType.value === 'parts') {
+    return currentPart
+  }
+  
+  // 合集类型：精确匹配 vid + resourceId
+  const matchIdx = mergedList.value.findIndex((item) => {
+    if (item.vid === props.vid && item.resourceId) {
+      // 找到当前视频的所有分P项
+      const currentPartItems = mergedList.value.filter(v => v.vid === props.vid)
+      if (currentPartItems.length > 1) {
+        // 多分P视频，精确匹配resourceId
+        const currentPartIdx = currentPartItems.findIndex(v => v.resourceId === item.resourceId)
+        return (currentPartIdx + 1) === currentPart
+      }
+      return true
+    }
+    return item.vid === props.vid
+  })
+  return matchIdx >= 0 ? matchIdx + 1 : 0
 })
 
 const formatDuration = (seconds: number) => {
@@ -102,9 +161,48 @@ const formatDuration = (seconds: number) => {
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 
+// 判断列表项是否为当前播放项
+const isActiveItem = (item: VideoItem, index: number) => {
+  const currentPart = props.currentPart || 1
+  
+  // 分P列表类型：精确匹配分P序号
+  if (listType.value === 'parts') {
+    return (index + 1) === currentPart
+  }
+  
+  // 合集类型：需要精确匹配 vid + resourceId
+  if (item.vid === props.vid && item.resourceId) {
+    // 找到当前播放的分P对应的索引
+    const currentPartItems = mergedList.value.filter(v => v.vid === props.vid)
+    const currentPartIdx = currentPartItems.findIndex(v => v.resourceId === item.resourceId)
+    // 判断是否是当前分P
+    if (currentPartItems.length > 1) {
+      // 多分P视频，精确匹配resourceId
+      return currentPartIdx + 1 === currentPart
+    } else {
+      // 只有一个，直接匹配vid
+      return item.vid === props.vid
+    }
+  }
+  
+  return false
+}
+
+const emits = defineEmits(['changePart'])
+
 const goVideo = (item: VideoItem) => {
-  if (item.vid !== props.vid) {
-    // 如果有分P信息，跳转到对应分P
+  // 如果是同一个视频的不同分P
+  if (item.vid === props.vid && item.resourceId) {
+    // 找到当前视频在mergedList中的所有分P项
+    const currentVideoParts = mergedList.value.filter(v => v.vid === props.vid)
+    // 找到点击的项是第几个分P
+    const partIndex = currentVideoParts.findIndex(v => v.resourceId === item.resourceId)
+    if (partIndex >= 0) {
+      // 发送相对当前视频的分P序号（从1开始）
+      emits('changePart', partIndex + 1)
+    }
+  } else if (item.vid !== props.vid) {
+    // 切换到其他视频
     if (item.resourceId) {
       navigateTo(`/video/${item.vid}?resourceId=${item.resourceId}`)
     } else {
@@ -113,88 +211,136 @@ const goVideo = (item: VideoItem) => {
   }
 }
 
-// 获取下一个合集视频
-const getNextVideo = () => {
-  // 优先精确匹配当前分P
-  const exactMatchIdx = videoList.value.findIndex(v => v.vid === props.vid)
-  if (exactMatchIdx >= 0 && exactMatchIdx < videoList.value.length - 1) {
-    return videoList.value[exactMatchIdx + 1]
-  }
-  // 如果没有精确匹配，尝试模糊匹配第一个相同vid
-  const fuzzyIdx = videoList.value.findIndex(v => v.vid === props.vid)
-  if (fuzzyIdx >= 0 && fuzzyIdx < videoList.value.length - 1) {
-    return videoList.value[fuzzyIdx + 1]
+// 获取下一个分P序号
+const getNextPart = () => {
+  const currentPart = props.currentPart || 1
+  
+  if (listType.value === 'parts') {
+    // 分P类型：下一个分P序号
+    if (currentPart < mergedList.value.length) {
+      return currentPart + 1
+    }
+  } else {
+    // 合集类型：检查当前视频是否有下一个分P
+    const currentPartItems = mergedList.value.filter(v => v.vid === props.vid)
+    if (currentPartItems.length > 1) {
+      // 找到当前分P的位置
+      const currentPartIdx = currentPartItems.findIndex((item, idx) => idx + 1 === currentPart)
+      if (currentPartIdx >= 0 && currentPartIdx < currentPartItems.length - 1) {
+        return currentPart + 1
+      }
+    }
   }
   return null
 }
 
+// 获取下一个视频
+const getNextVideo = () => {
+  const currentPart = props.currentPart || 1
+  
+  if (listType.value === 'parts') {
+    // 分P类型：下一个分P
+    const currentIdx = currentPart - 1
+    if (currentIdx >= 0 && currentIdx < mergedList.value.length - 1) {
+      return mergedList.value[currentIdx + 1]
+    }
+  } else {
+    // 合集类型：精确匹配 vid + resourceId
+    const matchIdx = mergedList.value.findIndex((item) => {
+      if (item.vid === props.vid && item.resourceId) {
+        const currentPartItems = mergedList.value.filter(v => v.vid === props.vid)
+        if (currentPartItems.length > 1) {
+          const currentPartIdx = currentPartItems.findIndex(v => v.resourceId === item.resourceId)
+          return (currentPartIdx + 1) === currentPart
+        }
+        return true
+      }
+      return item.vid === props.vid
+    })
+    if (matchIdx >= 0 && matchIdx < mergedList.value.length - 1) {
+      return mergedList.value[matchIdx + 1]
+    }
+  }
+  return null
+}
+
+// 处理分P列表
+const loadPartList = () => {
+  // 优先使用API返回的当前视频分P列表
+  if (props.resources && props.resources.length > 0) {
+    partList.value = props.resources.map((resource, index) => ({
+      vid: props.vid,
+      title: '',
+      cover: '',
+      duration: resource.duration || 0,
+      clicks: 0,
+      desc: '',
+      resourceId: resource.id,
+      partTitle: resource.title || `P${index + 1}`
+    }))
+  } else {
+    partList.value = []
+  }
+}
+
+// 使用新API加载合集数据
 const loadPlaylist = async (vid: number) => {
   playlist.value = null
   videoList.value = []
+  partList.value = []
+
+  // 优先使用 props.resources 设置分P列表（页面已有数据）
+  if (props.resources && props.resources.length > 0) {
+    partList.value = props.resources.map((resource, index) => ({
+      vid: vid,
+      title: '',
+      cover: '',
+      duration: resource.duration || 0,
+      clicks: 0,
+      desc: '',
+      resourceId: resource.id,
+      partTitle: resource.title || `P${index + 1}`
+    }))
+  }
 
   try {
-    const res = await getVideoPlaylistsAPI(vid)
+    const res = await getPlaylistVideoListWithPartsAPI(vid)
     if (res.data.code !== statusCode.OK) return
-    const playlists = res.data.data.playlists || []
-    if (playlists.length === 0) return
-
-    const first = playlists[0]
-    playlist.value = { id: first.id, title: first.title }
-
-    const listRes = await getPlaylistVideoListAPI(first.id, 1, 200)
-    if (listRes.data.code === statusCode.OK) {
-      const rawVideos = listRes.data.data.videos || []
-      
-      // 展开多分P视频
-      await expandMultiPartVideos(rawVideos)
+    
+    const data = res.data.data
+    
+    // 设置是否有合集
+    const hasCollection = data.hasCollection === true
+    
+    if (hasCollection && data.playlist) {
+      // 有合集
+      playlist.value = { id: data.playlist.id, title: data.playlist.title }
+      videoList.value = (data.videos || []).map((v: any) => ({
+        vid: v.vid,
+        title: v.title,
+        cover: v.cover,
+        duration: v.duration,
+        clicks: v.clicks,
+        desc: v.desc,
+        resourceId: v.resourceId,
+        partTitle: v.partTitle
+      }))
+    } else if (!hasCollection && !partList.value.length && data.currentVideoParts && data.currentVideoParts.length > 0) {
+      // 没有合集、没有props资源、但API返回了分P
+      partList.value = data.currentVideoParts.map((r: any, index: number) => ({
+        vid: vid,
+        title: '',
+        cover: '',
+        duration: r.duration || 0,
+        clicks: 0,
+        desc: '',
+        resourceId: r.resourceId,
+        partTitle: r.title || `P${index + 1}`
+      }))
     }
   } catch {
     // 静默处理
   }
-}
-
-// 展开多分P视频：将多分P视频的每个分P作为独立项添加到列表
-const expandMultiPartVideos = async (rawVideos: VideoItem[]) => {
-  if (isExpanding.value) return
-  isExpanding.value = true
-  
-  const expandedList: VideoItem[] = []
-  
-  for (const video of rawVideos) {
-    try {
-      const infoRes = await asyncGetVideoInfoAPI(video.vid)
-      const videoInfo = infoRes.data?.data
-      
-      if (videoInfo && videoInfo.resources && videoInfo.resources.length > 1) {
-        // 视频有多分P，展开为多个项
-        for (const resource of videoInfo.resources) {
-          expandedList.push({
-            vid: video.vid,  // 主稿件ID不变
-            title: video.title,  // 主标题
-            cover: video.cover,
-            duration: resource.duration || 0,
-            clicks: video.clicks,
-            desc: video.desc,
-            resourceId: resource.id,  // 资源ID用于播放特定分P
-            partTitle: resource.title  // 分P标题
-          })
-        }
-      } else {
-        // 单分P或无资源，保持原样
-        expandedList.push({
-          ...video,
-          resourceId: videoInfo?.resources?.[0]?.id,
-          partTitle: videoInfo?.resources?.[0]?.title
-        })
-      }
-    } catch {
-      // 获取视频详情失败，保持原样
-      expandedList.push(video)
-    }
-  }
-  
-  videoList.value = expandedList
-  isExpanding.value = false
 }
 
 onMounted(() => {
@@ -202,6 +348,7 @@ onMounted(() => {
   autonext.value = saved === 'true'
   const savedViewMode = localStorage.getItem('video-collection-view-mode')
   isNumberMode.value = savedViewMode === 'number'
+  // 加载数据（包含合集和当前视频分P）
   if (props.vid) loadPlaylist(props.vid)
 })
 
@@ -217,11 +364,21 @@ watch(() => props.vid, (newVid) => {
   if (newVid) loadPlaylist(newVid)
 })
 
+// 监听resources变化（备用，如果API没返回分P则使用props）
+watch(() => props.resources, () => {
+  // 只有当partList为空且props有资源时才使用
+  if (partList.value.length === 0 && props.resources && props.resources.length > 0) {
+    loadPartList()
+  }
+})
+
 const hasPlaylist = computed(() => !!playlist.value)
 
 defineExpose({
-  autonext: readonly(autonext),
+  autonext: computed(() => autonext.value),
   getNextVideo,
+  getNextPart,
+  listType,
   hasPlaylist
 })
 </script>
