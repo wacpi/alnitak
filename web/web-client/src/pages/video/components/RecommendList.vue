@@ -86,7 +86,7 @@ const resetPlayIndex = (vid: number) => {
 
 // 暴露给父组件
 defineExpose({
-  autonext: readonly(autonext),
+  autonext: autonext,
   videoList: readonly(videoList),
   getNextVideo,
   resetPlayIndex
