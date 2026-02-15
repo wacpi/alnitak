@@ -1,6 +1,6 @@
 <template>
   <!-- 有分P列表或合集列表时才显示 -->
-  <div v-if="mergedList.length > 0" class="collection-list">
+  <div v-if="mergedList.length > 1" class="collection-list">
     <div class="collection-head">
       <span class="title">{{ listType === 'parts' ? '视频分集' : displayTitle }}</span>
       <span class="count">({{ currentIndex }}/{{ displayCount }})</span>
