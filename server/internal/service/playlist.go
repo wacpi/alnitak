@@ -412,3 +412,112 @@ func selectPrimaryPlaylist(playlists []vo.VideoPlaylistResp, userId uint) vo.Vid
 	// 2. 选择第一个合集
 	return playlists[0]
 }
+
+// GetPlaylistVideoListWithParts 获取合集视频列表（包含多分P展开和当前视频分P）
+func GetPlaylistVideoListWithParts(ctx *gin.Context, videoId uint) gin.H {
+	// 1. 获取视频所属的合集
+	_, playlists := GetVideoPlaylists(videoId)
+
+	if len(playlists) == 0 {
+		// 没有合集，返回当前视频的分P列表
+		resources := GetVideoResources(videoId)
+		currentParts := make([]gin.H, 0)
+		for _, r := range resources {
+			currentParts = append(currentParts, gin.H{
+				"ID":       r.ID,
+				"Title":    r.Title,
+				"Duration": r.Duration,
+			})
+		}
+		return gin.H{
+			"playlist":          nil,
+			"videos":            []interface{}{},
+			"currentVideoParts": currentParts,
+			"hasCollection":     false,
+		}
+	}
+
+	// 2. 获取合集信息
+	first := playlists[0]
+	playlistInfo := gin.H{
+		"id":    first.ID,
+		"title": first.Title,
+	}
+
+	// 3. 获取合集视频列表
+	_, rawVideos := GetPlaylistVideoList(ctx, first.ID, 1, 200)
+
+	// 4. 展开多分P视频
+	videos := make([]gin.H, 0)
+	for _, v := range rawVideos {
+		// 获取该视频的资源列表
+		resources := GetVideoResources(v.Vid)
+
+		if len(resources) > 1 {
+			// 多分P，展开为多项
+			for _, r := range resources {
+				videos = append(videos, gin.H{
+					"vid":        v.Vid,
+					"title":      v.Title,
+					"cover":      v.Cover,
+					"duration":   r.Duration,
+					"clicks":     v.Clicks,
+					"desc":       v.Desc,
+					"resourceId": r.ID,
+					"partTitle":  r.Title,
+				})
+			}
+		} else if len(resources) == 1 {
+			// 单分P
+			videos = append(videos, gin.H{
+				"vid":        v.Vid,
+				"title":      v.Title,
+				"cover":      v.Cover,
+				"duration":   resources[0].Duration,
+				"clicks":     v.Clicks,
+				"desc":       v.Desc,
+				"resourceId": resources[0].ID,
+				"partTitle":  nil,
+			})
+		} else {
+			// 无资源
+			videos = append(videos, gin.H{
+				"vid":        v.Vid,
+				"title":      v.Title,
+				"cover":      v.Cover,
+				"duration":   0,
+				"clicks":     v.Clicks,
+				"desc":       v.Desc,
+				"resourceId": nil,
+				"partTitle":  nil,
+			})
+		}
+	}
+
+	// 5. 获取当前视频的分P列表
+	currentParts := make([]gin.H, 0)
+	currentResources := GetVideoResources(videoId)
+	for _, r := range currentResources {
+		currentParts = append(currentParts, gin.H{
+			"resourceId": r.ID,
+			"title":      r.Title,
+			"duration":   r.Duration,
+		})
+	}
+
+	return gin.H{
+		"playlist":          playlistInfo,
+		"videos":            videos,
+		"currentVideoParts": currentParts,
+		"hasCollection":     true,
+	}
+}
+
+// GetVideoResources 获取视频的资源列表（分P）
+func GetVideoResources(videoId uint) []model.Resource {
+	var resources []model.Resource
+	global.Mysql.Where("vid = ? AND status = ?", videoId, global.AUDIT_APPROVED).
+		Order("id ASC").
+		Find(&resources)
+	return resources
+}

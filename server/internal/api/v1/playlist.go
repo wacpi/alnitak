@@ -176,6 +176,18 @@ func GetPlaylistVideoList(ctx *gin.Context) {
 	resp.OkWithData(ctx, gin.H{"total": total, "videos": list})
 }
 
+// 获取合集视频列表（包含多分P展开和当前视频分P）
+func GetPlaylistVideoListWithParts(ctx *gin.Context) {
+	videoID := utils.StringToUint(ctx.Query("vid"))
+	if videoID == 0 {
+		resp.FailWithMessage(ctx, "参数有误")
+		return
+	}
+
+	data := service.GetPlaylistVideoListWithParts(ctx, videoID)
+	resp.OkWithData(ctx, data)
+}
+
 // 获取全站合集列表（后台管理）
 func GetPlaylistListManage(ctx *gin.Context) {
 	page := utils.StringToInt(ctx.DefaultQuery("page", "1"))

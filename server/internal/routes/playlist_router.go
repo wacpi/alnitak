@@ -50,10 +50,12 @@ func CollectPlaylistRoutes(r *gin.RouterGroup) {
 	playlistGroup.GET("video/list", api.GetPlaylistVideoList)
 	// 获取用户的公开合集列表
 	playlistGroup.GET("userList", api.GetUserPlaylist)
-	
+
 	// 视频合集相关接口（无需登录）
 	// 获取视频所属的合集列表
 	playlistGroup.GET("video/playlists", api.GetVideoPlaylists)
 	// 获取视频的主要合集
 	playlistGroup.GET("video/primaryPlaylist", api.GetVideoPrimaryPlaylist)
+	// 获取合集视频列表（包含多分P展开）
+	playlistGroup.GET("video/listWithParts", api.GetPlaylistVideoListWithParts)
 }
