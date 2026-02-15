@@ -31,31 +31,6 @@ let dashPlayer: any = null;
 let hlsPlayerState: HlsPlayerState = { instance: null, videoElement: null, playPromise: null };
 let originalDanmaku: DanmakuType[] = [];
 
-// ===== 前端日志回传 =====
-const _logBuffer: string[] = [];
-let _logTimer: ReturnType<typeof setTimeout> | null = null;
-
-function clog(...args: any[]) {
-  const msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
-  console.log(msg);
-  _logBuffer.push(`[${new Date().toISOString()}] ${msg}`);
-  if (!_logTimer) {
-    _logTimer = setTimeout(flushLogs, 2000);
-  }
-}
-
-function flushLogs() {
-  _logTimer = null;
-  if (_logBuffer.length === 0) return;
-  const logs = _logBuffer.splice(0);
-  fetch('/api/v1/video/clientLog', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ logs }),
-  }).catch(() => {});
-}
-// ===========================
-
 const resourceNameMap: Record<string, string> = {
   "640x360_1000k_30": "360p",
   "854x480_1500k_30": "480p",
@@ -185,41 +160,31 @@ const loadDanmaku = async () => {
 };
 
 const initPlayer = async () => {
-  clog('[art] initPlayer called, isSafariOrIOS=', isSafariOrIOS(), 'supportsDash=', supportsDashJs());
   const container = playerContainer.value;
   if (!container) {
-    clog('[art] container is null, abort');
     return;
   }
   if (player) {
-    clog('[art] player already exists, abort');
     return;
   }
 
-  // 防御性检查：确保 videoInfo 和 resources 存在
   if (!props.videoInfo?.resources?.length) {
     console.warn('[art.vue] videoInfo.resources is empty or undefined');
     return;
   }
 
   const resource = props.videoInfo.resources[props.part - 1];
-  console.log('[art.vue] resource:', resource);
   if (!resource?.id) {
-    console.warn('[art.vue] resource not found for part:', props.part);
     return;
   }
-  clog('[art] calling getResourceQualityApi, id=', resource.id);
   const res = await getResourceQualityApi(resource.id);
-  clog('[art] quality result, code=', res.data.code, 'count=', res.data.data?.quality?.length);
   let qualities = [];
   if (res.data.code === 200 && res.data.data.quality.length > 0) {
-    // 从服务器获取是否支持 DASH（新资源 SegmentBase 模式）
     const serverSupportsDash = res.data.data.supportsDash === true;
     qualities = getQualities(res.data.data.quality, resource.id, serverSupportsDash);
   } else {
     qualities = [{ default: true, html: '默认', url: resource.url, type: 'm3u8' }];
   }
-  clog('[art] qualities:', qualities.map((q: any) => q.html + '(' + q.type + ')').join(', '));
 
   await loadDanmaku();
 
@@ -279,8 +244,6 @@ const initPlayer = async () => {
     ],
 customType: {
       m3u8: function (video: HTMLVideoElement, url: string) {
-        clog('[m3u8] called, url=', url);
-        clog('[m3u8] Hls.isSupported=', Hls.isSupported(), 'canPlayType=', video.canPlayType('application/vnd.apple.mpegurl'));
         const savedVolumeState = getSavedVolumeState();
         const playbackState = getSavedPlaybackState(video);
         const volumeState = {
@@ -291,30 +254,18 @@ customType: {
         setupVolumePersistence(video);
 
         if (Hls.isSupported()) {
-          clog('[m3u8] using hls.js');
           createHlsPlayer(
             video,
             url,
             hlsPlayerState,
             { ...playbackState, volume: volumeState.volume, muted: volumeState.muted },
             {
-              maxBufferLength: 30,
-              maxMaxBufferLength: 60,
+              maxBufferLength: 60,
+              maxMaxBufferLength: 120,
             }
           );
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-          clog('[m3u8] using native HLS (Safari/iOS)');
           video.src = url;
-          // 监听原生 HLS 事件
-          video.addEventListener('loadedmetadata', () => clog('[native-hls] loadedmetadata, duration=', video.duration));
-          video.addEventListener('canplay', () => clog('[native-hls] canplay'));
-          video.addEventListener('playing', () => clog('[native-hls] playing'));
-          video.addEventListener('waiting', () => clog('[native-hls] waiting'));
-          video.addEventListener('stalled', () => clog('[native-hls] stalled'));
-          video.addEventListener('error', () => {
-            const e = video.error;
-            clog('[native-hls] error:', e?.code, e?.message);
-          });
           if (playbackState.currentTime > 0) {
             video.currentTime = playbackState.currentTime;
           }
@@ -325,10 +276,8 @@ customType: {
           try {
             const prevUrl = dashPlayer.getManifestUrl();
             if (prevUrl === url) {
-              // 同一URL（循环播放），不重建 dashPlayer，让视频元素自行处理
               return;
             }
-            console.log('[art.vue] DASH 切换URL:', prevUrl, '->', url);
             dashPlayer.attachSource(url);
             return;
           } catch {
@@ -342,15 +291,15 @@ customType: {
           dashPlayer.updateSettings({
             streaming: {
               buffer: {
-                bufferTimeDefault: 12,
-                bufferTimeAtTopQuality: 30,
-                bufferTimeAtTopQualityLongForm: 60,
-                bufferPruningInterval: 10,
-                bufferToKeep: 20,
+                bufferTimeDefault: 20,
+                bufferTimeAtTopQuality: 40,
+                bufferTimeAtTopQualityLongForm: 90,
+                bufferPruningInterval: 15,
+                bufferToKeep: 40,
               },
             },
             debug: {
-              logLevel: 3,
+              logLevel: 0,
             },
           });
           dashPlayer.initialize(video, url, false);
@@ -379,25 +328,18 @@ customType: {
         fontSize: 25,
         antiOverlap: true,
         synchronousPlayback: false,
-        heatmap: false, // 禁用热力图，避免切换清晰度时 NaN 错误
+        heatmap: false,
         width: 512,
         points: [],
         filter: (danmu: any) => (danmu.text || danmu.content || '').length <= 100,
         beforeVisible: () => true,
         visible: true,
-		//弹幕输入框
         emitter: false,
-		
         maxLength: 200,
         lockTime: 5,
         theme: 'dark',
-        beforeEmit(danmu: any) {
-          return new Promise((resolve) => {
-            console.log(danmu);
-            setTimeout(() => {
-              resolve(true);
-            }, 300);
-          });
+        beforeEmit() {
+          return Promise.resolve(true);
         },
       }),
     ],
@@ -431,7 +373,6 @@ customType: {
     if (playPromise !== undefined) {
       playPromise.catch((error: any) => {
         if (error.name !== 'AbortError' && error.name !== 'NotAllowedError') {
-          console.error('[art.vue] 播放错误:', error);
         }
       });
     }
@@ -450,13 +391,7 @@ customType: {
 };
 
 onMounted(() => {
-  console.log('[art.vue] onMounted, videoInfo:', props.videoInfo);
-  console.log('[art.vue] onMounted, container:', playerContainer.value);
-
-  // 使用 nextTick 确保 DOM 完全渲染后再初始化
   nextTick(() => {
-    console.log('[art.vue] nextTick, resources:', props.videoInfo?.resources);
-    console.log('[art.vue] nextTick, container after tick:', playerContainer.value);
     if (props.videoInfo?.resources?.length) {
       initPlayer();
     }
@@ -467,7 +402,6 @@ onMounted(() => {
 watch(
   () => props.videoInfo,
   (newVal) => {
-    console.log('[art.vue] watch videoInfo changed:', newVal);
     if (newVal?.resources?.length && !player && playerContainer.value) {
       nextTick(() => {
         initPlayer();
@@ -479,7 +413,6 @@ watch(
 
 // 组件卸载时清理资源
 onBeforeUnmount(() => {
-  flushLogs();
   if (player) {
     player.destroy();
     player = null;

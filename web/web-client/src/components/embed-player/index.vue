@@ -24,8 +24,6 @@ const props = defineProps<{
   progress: number | null;
 }>();
 
-console.log('[embed-player] props:', props);
-
 const playerContainer = ref<HTMLElement | null>(null);
 let player: any = null;
 let dashPlayer: any = null;
@@ -104,7 +102,6 @@ const getQualityDisplayName = (qualityStr: string): string => {
 };
 
 const getQualities = (qualityList: string[], resourceId: number) => {
-  console.log('[embed-player] getQualities', qualityList, resourceId);
   // 主站同款排序
   const sorted = [...qualityList].sort((a, b) => {
     const wa = parseInt(a.split('x')[0], 10);
@@ -122,7 +119,6 @@ const getQualities = (qualityList: string[], resourceId: number) => {
     name: getQualityDisplayName(item),
     url: supportDash ? getVideoFileUrlDash(resourceId, item) : getVideoFileUrl(resourceId, item),
   }));
-  console.log('[embed-player] qualities mapped:', mapped);
   return { qualities: mapped, supportDash };
 };
 
@@ -139,9 +135,7 @@ const supportsDashJs = (): boolean => {
 const loadDanmaku = async () => {
   const vid = props.videoInfo.vid;
   const part = props.part;
-  console.log('[embed-player] loadDanmaku start', vid, part);
   const res = await getDanmakuAPI(vid, part);
-  console.log('[embed-player] getDanmakuAPI result:', res);
   setDanmaku(res.data.code === 200 && Array.isArray(res.data.data.danmaku) ? res.data.data.danmaku : []);
   injectDanmaku();
 }
@@ -164,7 +158,6 @@ const shouldMuted = mutedParam === '1' || mutedParam === 'true';
 
 const initPlayer = async () => {
   const container = playerContainer.value;
-  console.log('[embed-player] initPlayer, container:', container);
   if (!container) return;
   if (player) return;
 
@@ -183,12 +176,9 @@ const initPlayer = async () => {
   // 确保 Hls.js 在全局可用
   if (!(window as any).Hls) {
     (window as any).Hls = Hls;
-    console.log('[embed-player] Hls.js injected to window');
   }
 
-  console.log('[embed-player] resource:', resource);
-  const res = await getResourceQualityApi(resource.id);
-  console.log('[embed-player] getResourceQualityApi result:', res);
+  const resource = props.videoInfo.resources[props.part - 1];
   let qualities: any[] = [];
   let supportDash = false;
   if (res.data.code === 200 && res.data.data.quality.length > 0) {
@@ -200,7 +190,6 @@ const initPlayer = async () => {
     supportDash = false;
   }
 
-  console.log('[embed-player] Wplayer qualities', qualities, 'supportDash:', supportDash);
   /* === 播放器实例化片段 start === */
   player = new Wplayer({
     container,
@@ -212,7 +201,6 @@ const initPlayer = async () => {
       type: supportDash ? 'customDash' : 'customHls',
       customType: {
         customHls: function (video: HTMLVideoElement) {
-          console.log('[embed-player] customHls called', video.src);
           const savedVolumeState = getSavedVolumeState();
           const playbackState = getSavedPlaybackState(video);
           const volumeState = {
@@ -258,7 +246,7 @@ const initPlayer = async () => {
                 bufferToKeep: 20,
               },
             },
-            debug: { logLevel: 3 },
+            debug: { logLevel: 0 },
           });
           dashPlayer.initialize(video, video.src, false);
 
@@ -298,7 +286,6 @@ const initPlayer = async () => {
     muted: shouldMuted,
   });
   /* === 播放器实例化片段 end === */
-  console.log('[embed-player] Wplayer instance', player);
 
   // 持续保存播放状态（Wplayer 切换清晰度会创建新 video，customDash 依赖此状态恢复进度）
   player.on('timeupdate', () => {
@@ -326,11 +313,9 @@ const initPlayer = async () => {
 
   // 加载弹幕
   await loadDanmaku();
-  console.log('[embed-player] loadDanmaku finished');
 };
 
 onMounted(() => {
-  console.log('[embed-player] onMounted');
   nextTick(() => {
     if (props.videoInfo?.resources?.length) {
       initPlayer();
@@ -355,7 +340,6 @@ onBeforeUnmount(() => {
 watch(
   () => props.videoInfo,
   (newVal) => {
-    console.log('[embed-player] watch videoInfo changed:', newVal);
     if (newVal?.resources?.length && !player && playerContainer.value) {
       nextTick(() => {
         initPlayer();

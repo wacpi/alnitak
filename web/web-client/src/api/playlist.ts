@@ -45,6 +45,11 @@ export const getPlaylistReviewRecordAPI = (id: number) => {
   return request.get(`v1/playlist/getPlaylistReviewRecord?id=${id}`);
 }
 
+// 获取用户所有合集中的视频ID映射
+export const getMyPlaylistVideoIdsAPI = () => {
+  return request.get('v1/playlist/video/myVideoIds');
+}
+
 // 获取视频所属的合集列表
 export const getVideoPlaylistsAPI = (vid: number) => {
   return request.get(`v1/playlist/video/playlists?vid=${vid}`);
