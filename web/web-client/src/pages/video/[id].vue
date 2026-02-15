@@ -182,20 +182,20 @@ const onVideoEnded = () => {
 // 检查推荐视频自动连播
 const checkRecommendAutoplay = () => {
   const recommendRef = recommendListRef.value
-  console.log('检查推荐列表:', recommendRef?.videoList?.value?.length)
+  console.log('检查推荐自动连播:', recommendRef?.autonext, recommendRef?.getNextVideo?.())
   
-  // 直接检查推荐列表是否有视频，有的话就播放
-  const videoList = recommendRef?.videoList?.value
-  if (videoList && videoList.length > 0) {
-    const nextVideo = videoList[0]
-    console.log('播放推荐列表第一个视频:', nextVideo)
-    setTimeout(() => {
-      navigateTo(`/video/${nextVideo.vid}`)
-    }, 3000)
-    return
+  if (recommendRef?.autonext) {
+    const nextVideo = recommendRef.getNextVideo?.();
+    console.log('自动连播下一个推荐视频:', nextVideo);
+
+    if (nextVideo) {
+      setTimeout(() => {
+        navigateTo(`/video/${nextVideo.vid}`);
+      }, 3000);
+    } else {
+      console.log('没有更多推荐视频了');
+    }
   }
-  
-  console.log('没有推荐视频了')
 };
 
 const onPlayerReady = () => {
