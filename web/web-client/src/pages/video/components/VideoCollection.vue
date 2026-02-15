@@ -28,13 +28,13 @@
       <ul v-if="!isNumberMode" class="list-box">
         <li
           v-for="(item, index) in videoList"
-          :key="item.vid"
+          :key="item.vid + '-' + item.resourceId"
           :class="['list-item', item.vid === props.vid ? 'active-item' : '']"
-          @click="goVideo(item.vid)"
+          @click="goVideo(item)"
         >
           <div class="item-content">
             <span class="item-index">{{ index + 1 }}</span>
-            <span class="item-title">{{ item.title }}</span>
+            <span class="item-title">{{ item.partTitle || item.title }}</span>
           </div>
           <div class="item-duration">{{ formatDuration(item.duration) }}</div>
         </li>
@@ -42,9 +42,9 @@
       <div v-else class="number-grid">
         <div
           v-for="(item, index) in videoList"
-          :key="item.vid"
+          :key="item.vid + '-' + item.resourceId"
           :class="['number-item', item.vid === props.vid ? 'active-number' : '']"
-          @click="goVideo(item.vid)"
+          @click="goVideo(item)"
         >
           {{ index + 1 }}
         </div>
@@ -56,6 +56,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, readonly } from 'vue'
 import { getVideoPlaylistsAPI, getPlaylistVideoListAPI } from '@/api/playlist'
+import { asyncGetVideoInfoAPI } from '@/api/video'
 import { statusCode } from '@/utils/status-code'
 
 const props = defineProps<{
@@ -69,6 +70,8 @@ interface VideoItem {
   duration: number
   clicks: number
   desc: string
+  resourceId?: number  // 分P的资源ID，用于播放
+  partTitle?: string  // 分P的标题
 }
 
 interface PlaylistInfo {
@@ -80,14 +83,16 @@ const playlist = ref<PlaylistInfo | null>(null)
 const videoList = ref<VideoItem[]>([])
 const autonext = ref(false)
 const isNumberMode = ref(false)
+const isExpanding = ref(false)  // 是否正在展开分P
 
 const toggleViewMode = () => {
   isNumberMode.value = !isNumberMode.value
 }
 
 const currentIndex = computed(() => {
-  const idx = videoList.value.findIndex(v => v.vid === props.vid)
-  return idx >= 0 ? idx + 1 : 0
+  // 优先精确匹配 vid + resourceId（当前分P）
+  const exactMatchIdx = videoList.value.findIndex(v => v.vid === props.vid)
+  return exactMatchIdx >= 0 ? exactMatchIdx + 1 : 0
 })
 
 const formatDuration = (seconds: number) => {
@@ -97,17 +102,28 @@ const formatDuration = (seconds: number) => {
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 
-const goVideo = (vid: number) => {
-  if (vid !== props.vid) {
-    navigateTo(`/video/${vid}`)
+const goVideo = (item: VideoItem) => {
+  if (item.vid !== props.vid) {
+    // 如果有分P信息，跳转到对应分P
+    if (item.resourceId) {
+      navigateTo(`/video/${item.vid}?resourceId=${item.resourceId}`)
+    } else {
+      navigateTo(`/video/${item.vid}`)
+    }
   }
 }
 
 // 获取下一个合集视频
 const getNextVideo = () => {
-  const idx = videoList.value.findIndex(v => v.vid === props.vid)
-  if (idx >= 0 && idx < videoList.value.length - 1) {
-    return videoList.value[idx + 1]
+  // 优先精确匹配当前分P
+  const exactMatchIdx = videoList.value.findIndex(v => v.vid === props.vid)
+  if (exactMatchIdx >= 0 && exactMatchIdx < videoList.value.length - 1) {
+    return videoList.value[exactMatchIdx + 1]
+  }
+  // 如果没有精确匹配，尝试模糊匹配第一个相同vid
+  const fuzzyIdx = videoList.value.findIndex(v => v.vid === props.vid)
+  if (fuzzyIdx >= 0 && fuzzyIdx < videoList.value.length - 1) {
+    return videoList.value[fuzzyIdx + 1]
   }
   return null
 }
@@ -127,11 +143,58 @@ const loadPlaylist = async (vid: number) => {
 
     const listRes = await getPlaylistVideoListAPI(first.id, 1, 200)
     if (listRes.data.code === statusCode.OK) {
-      videoList.value = listRes.data.data.videos || []
+      const rawVideos = listRes.data.data.videos || []
+      
+      // 展开多分P视频
+      await expandMultiPartVideos(rawVideos)
     }
   } catch {
     // 静默处理
   }
+}
+
+// 展开多分P视频：将多分P视频的每个分P作为独立项添加到列表
+const expandMultiPartVideos = async (rawVideos: VideoItem[]) => {
+  if (isExpanding.value) return
+  isExpanding.value = true
+  
+  const expandedList: VideoItem[] = []
+  
+  for (const video of rawVideos) {
+    try {
+      const infoRes = await asyncGetVideoInfoAPI(video.vid)
+      const videoInfo = infoRes.data?.data
+      
+      if (videoInfo && videoInfo.resources && videoInfo.resources.length > 1) {
+        // 视频有多分P，展开为多个项
+        for (const resource of videoInfo.resources) {
+          expandedList.push({
+            vid: video.vid,  // 主稿件ID不变
+            title: video.title,  // 主标题
+            cover: video.cover,
+            duration: resource.duration || 0,
+            clicks: video.clicks,
+            desc: video.desc,
+            resourceId: resource.id,  // 资源ID用于播放特定分P
+            partTitle: resource.title  // 分P标题
+          })
+        }
+      } else {
+        // 单分P或无资源，保持原样
+        expandedList.push({
+          ...video,
+          resourceId: videoInfo?.resources?.[0]?.id,
+          partTitle: videoInfo?.resources?.[0]?.title
+        })
+      }
+    } catch {
+      // 获取视频详情失败，保持原样
+      expandedList.push(video)
+    }
+  }
+  
+  videoList.value = expandedList
+  isExpanding.value = false
 }
 
 onMounted(() => {

@@ -41,14 +41,15 @@
       <el-dialog v-model="addDialogVisible" title="添加视频到合集" width="600">
         <div class="add-video-list">
           <div v-if="myVideos.length === 0" class="empty-tip">暂无可添加的视频</div>
-          <div v-for="v in myVideos" :key="v.vid" class="add-video-item">
-            <el-checkbox v-model="v.checked" :disabled="v.inPlaylist"></el-checkbox>
+          <div v-for="v in myVideos" :key="v.vid" class="add-video-item" :class="{ 'is-disabled': v.inOtherPlaylist }">
+            <el-checkbox v-model="v.checked" :disabled="v.inPlaylist || v.inOtherPlaylist"></el-checkbox>
             <div class="add-cover">
               <img v-if="v.cover" :src="getResourceUrl(v.cover)" alt="封面">
             </div>
             <div class="add-info">
               <span class="add-title">{{ v.title }}</span>
               <span v-if="v.inPlaylist" class="in-playlist">已在合集中</span>
+              <span v-else-if="v.inOtherPlaylist" class="in-other-playlist">已在其他合集中</span>
             </div>
           </div>
         </div>
@@ -68,6 +69,7 @@ import {
   addPlaylistVideoAPI,
   delPlaylistVideoAPI,
   sortPlaylistVideoAPI,
+  getMyPlaylistVideoIdsAPI,
 } from '@/api/playlist';
 import { getAllVideoAPI } from '@/api/video';
 import { statusCode } from '@/utils/status-code';
@@ -92,6 +94,7 @@ interface MyVideoItem {
   cover: string;
   checked: boolean;
   inPlaylist: boolean;
+  inOtherPlaylist: boolean; // 是否已在其他合集中
 }
 
 const videoList = ref<PlaylistVideoItem[]>([]);
@@ -160,17 +163,32 @@ const adding = ref(false);
 const myVideos = ref<MyVideoItem[]>([]);
 
 const showAddDialog = async () => {
-  const res = await getAllVideoAPI();
-  if (res.data.code === statusCode.OK) {
-    const videos = res.data.data.videos || [];
+  const [videoRes, mapRes] = await Promise.all([
+    getAllVideoAPI(),
+    getMyPlaylistVideoIdsAPI(),
+  ]);
+  if (videoRes.data.code === statusCode.OK) {
+    const videos = videoRes.data.data.videos || [];
     const existingVids = new Set(videoList.value.map(v => v.vid));
-    myVideos.value = videos.map((v: any) => ({
-      vid: v.vid,
-      title: v.title,
-      cover: v.cover,
-      checked: false,
-      inPlaylist: existingVids.has(v.vid),
-    }));
+    // videoPlaylistMap: vid -> playlistId（该视频已在哪个合集中）
+    const videoPlaylistMap: Record<number, number> = mapRes.data.code === statusCode.OK
+      ? (mapRes.data.data.videoPlaylistMap || {})
+      : {};
+    myVideos.value = videos.map((v: any) => {
+      const vid = v.vid;
+      const belongsToPlaylistId = videoPlaylistMap[vid];
+      const inCurrentPlaylist = existingVids.has(vid);
+      // 已在其他合集中（不是当前合集）
+      const inOtherPlaylist = belongsToPlaylistId !== undefined && belongsToPlaylistId !== playlistId.value && !inCurrentPlaylist;
+      return {
+        vid,
+        title: v.title,
+        cover: v.cover,
+        checked: false,
+        inPlaylist: inCurrentPlaylist,
+        inOtherPlaylist,
+      };
+    });
   }
   addDialogVisible.value = true;
 }
@@ -336,6 +354,10 @@ onBeforeMount(() => {
     padding: 8px 0;
     border-bottom: 1px solid var(--border-color);
 
+    &.is-disabled {
+      opacity: 0.5;
+    }
+
     .add-cover {
       width: 80px;
       height: 48px;
@@ -362,6 +384,12 @@ onBeforeMount(() => {
       .in-playlist {
         font-size: 12px;
         color: var(--font-primary-3);
+        margin-left: 8px;
+      }
+
+      .in-other-playlist {
+        font-size: 12px;
+        color: #E6A23C;
         margin-left: 8px;
       }
     }

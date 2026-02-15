@@ -166,7 +166,9 @@ const options: PlayerOptionsType = {
       },
     },
   },
-  danmaku: {}
+  danmaku: {
+    data: [],
+  }
 }
 
 // ===== 弹幕过滤配置 =====
