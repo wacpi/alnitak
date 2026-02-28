@@ -4,9 +4,7 @@ import { updateTokenAPI } from "@/api/auth";
 import { statusCode } from "./status-code";
 import { globalConfig as config, } from "./global-config";
 import { storageData as storage } from "./storage-data";
-import { useRouter } from "vue-router";
-
-const router = useRouter();
+import router from "@/router";
 
 let requests: any[] = [];
 let isRefreshing = false;

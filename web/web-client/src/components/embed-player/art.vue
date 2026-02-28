@@ -8,7 +8,7 @@ import Artplayer from 'artplayer';
 import Hls from 'hls.js';
 import * as dashjs from 'dashjs';
 import artplayerPluginDanmuku from 'artplayer-plugin-danmuku';
-import { getResourceQualityApi, getVideoFileUrl, getVideoFileUrlDash } from '@/api/video';
+import { getResourceQualityApi, getVideoFileUrl, getVideoFileUrlDash, getVideoFileUrlDashUnified } from '@/api/video';
 import { getDanmakuAPI } from '@/api/danmaku';
 import {
   createHlsPlayer,
@@ -30,6 +30,10 @@ let player: any = null;
 let dashPlayer: any = null;
 let hlsPlayerState: HlsPlayerState = { instance: null, videoElement: null, playPromise: null };
 let originalDanmaku: DanmakuType[] = [];
+
+// DASH 统一 MPD 模式状态
+let dashUnifiedMode = false;
+let dashQualityMap: Map<string, number> = new Map();
 
 const resourceNameMap: Record<string, string> = {
   "640x360_1000k_30": "360p",
@@ -103,7 +107,7 @@ function guessType(url: string, qualityItem?: any) {
   return 'mp4';
 }
 
-const getQualities = (qualityList: string[], resourceId: number, serverSupportsDash: boolean) => {
+const getQualities = (qualityList: string[], resourceId: number, serverSupportsDash: boolean, qualityOrderFromServer: string[] = []) => {
   const sorted = [...qualityList].sort((a, b) => {
     const wa = parseInt(a.split('x')[0], 10);
     const wb = parseInt(b.split('x')[0], 10);
@@ -118,10 +122,30 @@ const getQualities = (qualityList: string[], resourceId: number, serverSupportsD
   // 读取保存的清晰度偏好
   const savedQuality = localStorage.getItem('artplayer-quality');
 
+  if (useDash && qualityOrderFromServer.length > 0) {
+    // 统一 DASH MPD 模式
+    dashUnifiedMode = true;
+    dashQualityMap = new Map();
+    qualityOrderFromServer.forEach((q, index) => {
+      dashQualityMap.set(getQualityDisplayName(q), index);
+    });
+
+    const unifiedMpdUrl = getVideoFileUrlDashUnified(resourceId);
+    return sorted.map((item, idx) => {
+      const displayName = getQualityDisplayName(item);
+      return {
+        default: savedQuality ? displayName === savedQuality : idx === 0,
+        html: displayName,
+        url: unifiedMpdUrl,
+        type: 'dash',
+      };
+    });
+  }
+
+  dashUnifiedMode = false;
   return sorted.map((item, idx) => {
     const displayName = getQualityDisplayName(item);
     return {
-      // 如果有保存的清晰度且匹配，则设为默认；否则使用第一个
       default: savedQuality ? displayName === savedQuality : idx === 0,
       html: displayName,
       url: useDash ? getVideoFileUrlDash(resourceId, item) : getVideoFileUrl(resourceId, item),
@@ -181,7 +205,8 @@ const initPlayer = async () => {
   let qualities = [];
   if (res.data.code === 200 && res.data.data.quality.length > 0) {
     const serverSupportsDash = res.data.data.supportsDash === true;
-    qualities = getQualities(res.data.data.quality, resource.id, serverSupportsDash);
+    const qualityOrderFromServer = (res.data.data.qualityOrder as string[]) || [];
+    qualities = getQualities(res.data.data.quality, resource.id, serverSupportsDash, serverSupportsDash ? qualityOrderFromServer : []);
   } else {
     qualities = [{ default: true, html: '默认', url: resource.url, type: 'm3u8' }];
   }
@@ -271,17 +296,15 @@ customType: {
           }
         }
       },
-      dash: function (video: HTMLVideoElement, url: string) {
+      dash: function (video: HTMLVideoElement, url: string, art: any) {
+        // 统一 MPD 模式下，如果 dashPlayer 已存在且 URL 相同，跳过重复初始化
         if (dashPlayer) {
           try {
             const prevUrl = dashPlayer.getManifestUrl();
             if (prevUrl === url) {
               return;
             }
-            dashPlayer.attachSource(url);
-            return;
-          } catch {
-          }
+          } catch {}
           dashPlayer.reset();
           dashPlayer = null;
         }
@@ -297,6 +320,9 @@ customType: {
                 bufferPruningInterval: 15,
                 bufferToKeep: 40,
               },
+              abr: {
+                autoSwitchBitrate: { video: false, audio: false },
+              },
             },
             debug: {
               logLevel: 0,
@@ -304,13 +330,19 @@ customType: {
           });
           dashPlayer.initialize(video, url, false);
 
+          // 保存到 art.dash（官方推荐模式）
+          art.dash = dashPlayer;
+
           // playbackEnded 兜底触发 ended 事件（DASH SegmentBase 可能不触发原生 ended）
-          // 用标志位防止与原生 ended 重复触发
           let endedHandled = false;
           video.addEventListener('ended', () => { endedHandled = true; });
           dashPlayer.on('playbackEnded', () => {
             if (endedHandled) { endedHandled = false; return; }
             video.dispatchEvent(new Event('ended'));
+          });
+
+          dashPlayer.on('error', (e: any) => {
+            console.error('[art.vue] DASH 播放错误:', e);
           });
         } else if (video.canPlayType('application/dash+xml')) {
           video.src = url;
@@ -383,9 +415,18 @@ customType: {
     if (item.html) {
       localStorage.setItem('artplayer-quality', item.html);
     }
-    const newType = guessType(item.url, item);
-    if (player && player.switchUrl) {
-      player.switchUrl(item.url, newType);
+
+    if (dashUnifiedMode && dashPlayer) {
+      // 统一 MPD 模式：通过 dash.js API 无缝切换，不重新加载 MPD
+      const dashIndex = dashQualityMap.get(item.html);
+      if (dashIndex !== undefined) {
+        dashPlayer.setRepresentationForTypeByIndex('video', dashIndex, true);
+      }
+    } else {
+      // HLS 或旧 DASH 模式：使用 switchQuality 保持进度
+      if (player && player.switchQuality) {
+        player.switchQuality(item.url);
+      }
     }
   });
 };

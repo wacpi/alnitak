@@ -10,11 +10,12 @@
 
 <script setup lang="ts">
 import Hls from "hls.js";
+import * as dashjs from "dashjs";
 import Wplayer from 'wplayer-next';
 import { ref, shallowRef, watch, onMounted, onBeforeUnmount } from 'vue';
 import { getDanmakuAPI, sendDanmakuAPI } from "@/api/danmaku";
 import DanmakuSend from "./components/DanmakuSend.vue";
-import { getResourceQualityApi, getVideoFileUrl } from "@/api/video";
+import { getResourceQualityApi, getVideoFileUrl, getVideoFileUrlDash, getVideoFileUrlDashUnified } from "@/api/video";
 import { addHistoryAPI, getHistoryProgressAPI } from "@/api/history";
 import { statusCode } from "@/utils/status-code";
 import { useMessage } from "naive-ui";
@@ -31,7 +32,22 @@ const message = useMessage();
 let player: any = null;
 const defaultQuality = ref('');
 const hls = shallowRef<Hls | null>(null);
+const dash = shallowRef<any>(null);
 const danmakuSendRef = ref<InstanceType<typeof DanmakuSend> | null>(null);
+
+// DASH 统一 MPD 模式状态
+let dashUnifiedMode = false;
+let dashQualityMap: Map<string, number> = new Map();
+
+// 检测是否支持 DASH 播放
+const supportsDashJs = (): boolean => {
+  const ua = navigator.userAgent;
+  // Safari / iOS 不使用 DASH
+  if (/iPad|iPhone|iPod/.test(ua)) return false;
+  if (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) return false;
+  if (/Safari/.test(ua) && !/Chrome|CriOS|FxiOS|Edg/.test(ua)) return false;
+  return !!((window as any).MediaSource || (window as any).ManagedMediaSource);
+};
 const options: PlayerOptionsType = {
   container: null,
   video: {
@@ -47,6 +63,50 @@ const options: PlayerOptionsType = {
         hls.value.attachMedia(video);
         hls.value.on(Hls.Events.ERROR, () => {
           console.error("资源加载失败");
+        });
+      },
+      // DASH 播放（统一 MPD 模式）
+      customDash: function (video: HTMLVideoElement) {
+        // 统一 MPD 模式下，如果 dashPlayer 已存在且 URL 相同，跳过重复初始化
+        if (dash.value) {
+          try {
+            const prevUrl = dash.value.getManifestUrl();
+            if (prevUrl === video.src) {
+              return;
+            }
+          } catch {}
+          dash.value.reset();
+          dash.value = null;
+        }
+
+        dash.value = dashjs.MediaPlayer().create();
+        dash.value.updateSettings({
+          streaming: {
+            buffer: {
+              bufferTimeDefault: 12,
+              bufferTimeAtTopQuality: 30,
+              bufferTimeAtTopQualityLongForm: 60,
+              bufferPruningInterval: 10,
+              bufferToKeep: 20,
+            },
+            abr: {
+              autoSwitchBitrate: { video: false, audio: false },
+            },
+          },
+          debug: { logLevel: 0 },
+        });
+        dash.value.initialize(video, video.src, false);
+
+        // playbackEnded 兜底触发 ended 事件
+        let endedHandled = false;
+        video.addEventListener('ended', () => { endedHandled = true; });
+        dash.value.on('playbackEnded', () => {
+          if (endedHandled) { endedHandled = false; return; }
+          video.dispatchEvent(new Event('ended'));
+        });
+
+        dash.value.on('error', (e: any) => {
+          console.error('[mobile DASH] 播放错误:', e);
         });
       },
     },
@@ -81,8 +141,33 @@ const loadPart = async (part: number) => {
     player.on('quality_start', (quality: PlayerQualityType) => {
       localStorage.setItem('default-video-quality', quality.name);
     })
-    filterDanmaku({ disableLeave, disableType });
 
+    // 统一 DASH 模式：拦截 Wplayer 的清晰度切换，改用 dash.js API 无缝切换
+    if (dashUnifiedMode) {
+      player.switchQuality = function (index: number | string) {
+        const idx = typeof index === 'string' ? parseInt(index) : index;
+        if (idx === player.qualityIndex) return;
+
+        const quality = player.options.video.quality[idx];
+        if (!quality) return;
+
+        player.qualityIndex = idx;
+        player.quality = quality;
+        const qualityText = player.template?.qualityButton?.querySelector('.wplayer-quality-text');
+        if (qualityText) qualityText.textContent = quality.name;
+
+        const dashIndex = dashQualityMap.get(quality.name);
+        if (dashIndex !== undefined && dash.value) {
+          dash.value.setRepresentationForTypeByIndex('video', dashIndex, true);
+          player.notice(`切换至 ${quality.name}`, 1000, undefined, 'switch-quality');
+        }
+
+        localStorage.setItem('default-video-quality', quality.name);
+        player.events.trigger('quality_start', quality);
+      };
+    }
+
+    filterDanmaku({ disableLeave, disableType });
   }
 }
 
@@ -158,16 +243,41 @@ const loadResource = async (part: number) => {
       return fpsB - fpsA;
     });
 
-    options.video.quality = qualities.map((item: string, index: number) => {
-      const name = getQualityDisplayName(item);
-      if (name === defaultQuality.value) {
-        options.video.defaultQuality = index;
-      }
-      return {
-        name,
-        url: getVideoFileUrl(resource.id, item),
-      };
-    });
+    const serverSupportsDash = res.data.data.supportsDash === true;
+    const useDash = supportsDashJs() && serverSupportsDash;
+    const qualityOrderFromServer = (res.data.data.qualityOrder as string[]) || [];
+
+    if (useDash && qualityOrderFromServer.length > 0) {
+      // 统一 DASH MPD 模式
+      dashUnifiedMode = true;
+      dashQualityMap = new Map();
+      qualityOrderFromServer.forEach((q: string, index: number) => {
+        dashQualityMap.set(getQualityDisplayName(q), index);
+      });
+
+      const unifiedMpdUrl = getVideoFileUrlDashUnified(resource.id);
+      options.video.quality = qualities.map((item: string, index: number) => {
+        const name = getQualityDisplayName(item);
+        if (name === defaultQuality.value) {
+          options.video.defaultQuality = index;
+        }
+        return { name, url: unifiedMpdUrl };
+      });
+      options.video.type = 'customDash';
+    } else {
+      dashUnifiedMode = false;
+      options.video.quality = qualities.map((item: string, index: number) => {
+        const name = getQualityDisplayName(item);
+        if (name === defaultQuality.value) {
+          options.video.defaultQuality = index;
+        }
+        return {
+          name,
+          url: useDash ? getVideoFileUrlDash(resource.id, item) : getVideoFileUrl(resource.id, item),
+        };
+      });
+      options.video.type = useDash ? 'customDash' : 'customHls';
+    }
   }
 }
 
@@ -284,6 +394,15 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   if (timer) clearInterval(timer);
+  if (player) player.destroy();
+  if (hls.value) {
+    hls.value.destroy();
+    hls.value = null;
+  }
+  if (dash.value) {
+    dash.value.reset();
+    dash.value = null;
+  }
 })
 </script>
 

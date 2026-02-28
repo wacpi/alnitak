@@ -1,5 +1,4 @@
 import request, { baseURL } from '@/utils/request';
-import { storageData } from '@/utils/storage-data';
 
 // 获取视频列表
 export const getVideoListAPI = (data: VideoListParam) => {
@@ -34,6 +33,11 @@ export const getVideoFileUrl = (resourceId: number | string, quality: string) =>
 // 获取视频文件URL (DASH mpd)
 export const getVideoFileUrlDash = (resourceId: number | string, quality: string) => {
   return `${baseURL}/api/v1/video/getVideoFileManage?resourceId=${resourceId}&quality=${quality}&format=mpd`
+}
+
+// 获取统一DASH MPD URL（所有清晰度合并到一个MPD，用于无缝切换）
+export const getVideoFileUrlDashUnified = (resourceId: number | string) => {
+  return `${baseURL}/api/v1/video/getVideoFileManage?resourceId=${resourceId}&format=dash-unified`
 }
 
 // 获取视频文件URL

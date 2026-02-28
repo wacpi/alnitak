@@ -66,6 +66,11 @@ export const getVideoFileUrlDash = (resourceId: number, quality: string) => {
   return `${baseURL}/api/v1/video/getVideoFile?resourceId=${resourceId}&quality=${quality}&format=dash`;
 }
 
+// 获取统一DASH MPD URL（所有清晰度合并到一个MPD，用于无缝切换）
+export const getVideoFileUrlDashUnified = (resourceId: number) => {
+  return `${baseURL}/api/v1/video/getVideoFile?resourceId=${resourceId}&format=dash-unified`;
+}
+
 // 获取视频播放信息（JSON格式，类似B站）
 export const getVideoPlayInfo = (resourceId: number, quality: string) => {
   return request.get(`v1/video/getVideoFile?resourceId=${resourceId}&quality=${quality}`);
