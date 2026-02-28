@@ -57,10 +57,11 @@ func GetResourceQuality(ctx *gin.Context) {
 		return
 	}
 
-	// 返回给前端（包含 quality 和 supportsDash）
+	// 返回给前端（包含 quality、supportsDash 和 qualityOrder）
 	resp.OkWithData(ctx, gin.H{
 		"quality":      info.Quality,
 		"supportsDash": info.SupportsDash,
+		"qualityOrder": info.QualityOrder,
 	})
 }
 
@@ -79,10 +80,11 @@ func GetResourceQualityManage(ctx *gin.Context) {
 		return
 	}
 
-	// 返回给前端（包含 quality 和 supportsDash）
+	// 返回给前端（包含 quality、supportsDash 和 qualityOrder）
 	resp.OkWithData(ctx, gin.H{
 		"quality":      info.Quality,
 		"supportsDash": info.SupportsDash,
+		"qualityOrder": info.QualityOrder,
 	})
 }
 

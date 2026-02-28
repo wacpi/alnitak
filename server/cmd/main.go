@@ -37,6 +37,8 @@ func main() {
 	}
 	// 初始化雪花ID
 	initialize.InitSnowflake()
+	// 初始化GPU检测
+
 	// 初始化mysql
 	global.Mysql = mysql.Init(global.Config.Mysql)
 	initialize.InitTables()

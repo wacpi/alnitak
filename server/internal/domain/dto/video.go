@@ -6,7 +6,13 @@ type VideoListReq struct {
 }
 
 type VideoFileReq struct {
-	Hash string
+	Hash   string
+	FileID uint
+}
+
+type VideoCheckResp struct {
+	Chunks []int `json:"chunks"`
+	FileID uint  `json:"fileID"`
 }
 
 type ReviewListReq struct {

@@ -26,7 +26,7 @@ func GetVideoFile(ctx *gin.Context) {
 	}
 
 	switch format {
-	case "mpd", "dash":
+	case "mpd", "dash", "dash-unified":
 		ctx.Data(http.StatusOK, "application/dash+xml; charset=utf-8", []byte(file))
 	case "m3u8", "m3u8video", "m3u8audio":
 		ctx.Data(http.StatusOK, "application/vnd.apple.mpegurl; charset=utf-8", []byte(file))
@@ -53,7 +53,7 @@ func GetVideoFileManage(ctx *gin.Context) {
 	}
 
 	switch format {
-	case "mpd", "dash":
+	case "mpd", "dash", "dash-unified":
 		ctx.Data(http.StatusOK, "application/dash+xml; charset=utf-8", []byte(file))
 	case "m3u8", "m3u8video", "m3u8audio":
 		ctx.Data(http.StatusOK, "application/vnd.apple.mpegurl; charset=utf-8", []byte(file))

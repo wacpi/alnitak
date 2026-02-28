@@ -81,36 +81,32 @@ func UploadVideoChunk(ctx *gin.Context) {
 }
 
 func UploadVideoMerge(ctx *gin.Context) {
-	// 获取参数
 	var videoFileReq dto.VideoFileReq
 	if err := ctx.Bind(&videoFileReq); err != nil {
 		resp.FailWithMessage(ctx, "请求参数有误")
 		return
 	}
 
-	if err := service.UploadVideoMerge(ctx, videoFileReq); err != nil {
+	if err := service.UploadVideoMerge(ctx, videoFileReq.FileID); err != nil {
 		resp.FailWithMessage(ctx, err.Error())
 		return
 	}
 
-	// 返回给前端
 	resp.Ok(ctx)
 }
 
 func UploadVideoCheck(ctx *gin.Context) {
-	// 获取参数
 	var videoFileReq dto.VideoFileReq
 	if err := ctx.Bind(&videoFileReq); err != nil {
 		resp.FailWithMessage(ctx, "请求参数有误")
 		return
 	}
 
-	chunks, err := service.UploadVideoCheck(ctx, videoFileReq)
+	result, err := service.UploadVideoCheck(ctx, videoFileReq)
 	if err != nil {
 		resp.FailWithMessage(ctx, err.Error())
 		return
 	}
 
-	// 返回给前端
-	resp.OkWithData(ctx, gin.H{"chunks": chunks})
+	resp.OkWithData(ctx, gin.H{"chunks": result.Chunks, "fileID": result.FileID})
 }

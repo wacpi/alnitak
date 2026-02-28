@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"time"
+
+	"gorm.io/gorm"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -21,7 +24,13 @@ import (
 
 func UploadVideoInfo(ctx *gin.Context, uploadVideoReq dto.UploadVideoReq) error {
 	userId := ctx.GetUint("userId")
-	v, _ := FindVideoById(uploadVideoReq.Vid)
+
+	// 修复 1: 显式处理错误，防止 v 为 nil 导致的崩溃
+	v, err := FindVideoById(uploadVideoReq.Vid)
+	if err != nil {
+		return errors.New("视频不存在")
+	}
+
 	if cache.GetUploadImage(uploadVideoReq.Cover) != userId {
 		// 查询是否与旧封面图一致
 		if v.Cover != uploadVideoReq.Cover {
@@ -37,22 +46,32 @@ func UploadVideoInfo(ctx *gin.Context, uploadVideoReq dto.UploadVideoReq) error 
 		return errors.New("分区不存在")
 	}
 
-	if err := global.Mysql.Model(&model.Video{}).Where("id = ?", uploadVideoReq.Vid).Updates(
-		map[string]interface{}{
-			"title":        uploadVideoReq.Title,
-			"cover":        uploadVideoReq.Cover,
-			"desc":         uploadVideoReq.Desc,
-			"tags":         uploadVideoReq.Tags,
-			"copyright":    uploadVideoReq.Copyright,
-			"partition_id": uploadVideoReq.PartitionId,
-			"status":       getVideoStatus(uploadVideoReq.Vid),
-		},
-	).Error; err != nil {
-		utils.ErrorLog("修改视频失败", "video", err.Error())
+	// 修复 2: 使用事务处理，确保视频信息更新和资源状态检查的一致性
+	err = global.Mysql.Transaction(func(tx *gorm.DB) error {
+		// 更新视频基本信息
+		if err := tx.Model(&model.Video{}).Where("id = ?", uploadVideoReq.Vid).Updates(
+			map[string]interface{}{
+				"title":        uploadVideoReq.Title,
+				"cover":        uploadVideoReq.Cover,
+				"desc":         uploadVideoReq.Desc,
+				"tags":         uploadVideoReq.Tags,
+				"copyright":    uploadVideoReq.Copyright,
+				"partition_id": uploadVideoReq.PartitionId,
+				"status":       getVideoStatus(uploadVideoReq.Vid), // 重新计算整体状态
+			},
+		).Error; err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		utils.ErrorLog("修改视频信息失败", "video", err.Error())
 		return errors.New("修改失败")
 	}
 
-	// 上传视频信息后删除缓存，让下次查询时重新加载最新数据
+	// 清除缓存
 	cache.DelVideoInfo(uploadVideoReq.Vid)
 
 	return nil
@@ -73,82 +92,44 @@ func GetVideoStatus(ctx *gin.Context, vid uint) (video vo.VideoStatusResp, err e
 
 // GetVideoFile 获取视频文件（返回 DASH MPD / HLS M3U8 / 播放信息 JSON）
 func GetVideoFile(ctx *gin.Context, resourceId uint, quality, format string) (string, error) {
-	// ========== HLS 子清单请求（m3u8video / m3u8audio） ==========
-	// 由主清单引用，key 由 query 参数传入（复用已有的 key）
-	if format == "m3u8video" || format == "m3u8audio" {
-		existingKey := ctx.Query("key")
-		if existingKey == "" {
-			return "", errors.New("missing key")
+	// HLS 子清单无需校验审核状态（已有 key 鉴权）
+	if format != "m3u8video" && format != "m3u8audio" {
+		if !IsResourceExist(resourceId) {
+			return "", errors.New("资源不存在")
 		}
-		// 不校验 resourceId（主清单已校验过），通过 quality 查找索引
-		var file model.VideoIndexFile
-		if resourceId > 0 {
-			if err := global.Mysql.Where("resource_id = ? AND quality = ?", resourceId, quality).First(&file).Error; err != nil {
-				return "", errors.New("视频索引不存在")
-			}
-		} else {
-			return "", errors.New("resourceId 无效")
-		}
-		// 确保 key 对应的目录缓存仍有效
-		if cache.GetVideoSlice(existingKey) == "" {
-			cache.SetVideoSlice(existingKey, file.DirName)
-		}
-		if format == "m3u8video" {
-			return buildM3U8VideoSegmentBase(&file, existingKey)
-		}
-		return buildM3U8AudioSegmentBase(&file, existingKey)
 	}
 
-	// ========== 常规请求 ==========
-	if !IsResourceExist(resourceId) {
-		return "", errors.New("资源不存在")
-	}
-
-	key := uuid.New().String()
-
-	// 从 VideoIndexFile 元数据动态生成
-	var file model.VideoIndexFile
-	err := global.Mysql.Where("resource_id = ? AND quality = ?", resourceId, quality).First(&file).Error
-	if err != nil {
-		return "", errors.New("视频索引不存在")
-	}
-
-	cache.SetVideoSlice(key, file.DirName)
-
-	// B站风格：SegmentBase 模式（音视频分离）
-	if file.IsSegmentBase() {
-		// format=m3u8 返回 HLS v7 主清单（Safari/iOS 兼容）
-		if format == "m3u8" {
-			return buildM3U8MasterSegmentBase(&file, resourceId, key), nil
-		}
-		// format=dash 或 format=mpd 返回原始 MPD XML
-		if format == "dash" || format == "mpd" {
-			return buildMPDSegmentBase(&file, key), nil
-		}
-		// 默认返回 JSON 格式（类似B站 playurl 接口）
-		return buildPlayURLJSON(&file, key), nil
-	}
-
-	// 兼容模式：SegmentList 切片模式
-	if file.IsSegmentList() {
-		if format == "mpd" {
-			return buildMPDSegmentList(&file, key), nil
-		}
-		return buildM3U8SegmentList(&file, key), nil
-	}
-
-	// 兼容旧数据（Content字段存储完整m3u8）
-	return buildFromLegacyContent(&file, key, format)
+	return getVideoFileInternal(ctx, resourceId, quality, format)
 }
 
 // =====================================================
 // B站风格：SegmentBase 模式（音视频分离，字节范围请求）
 // =====================================================
 
+// getMediaFileURL 获取媒体文件的直链 URL（支持本地和OSS）
+func getMediaFileURL(dirName, fileName, key string) string {
+	if global.Config.Storage.OssType == "local" {
+		domain := global.Config.Storage.Domain
+		if domain == "" {
+			return fmt.Sprintf("/api/v1/video/stream/%s?key=%s", fileName, key)
+		}
+		return fmt.Sprintf("%s/api/v1/video/stream/%s?key=%s", domain, fileName, key)
+	}
+	// OSS 存储：获取签名直链
+	objectKey := "video/" + dirName + "/" + fileName
+	return global.Storage.GetObjectUrl(objectKey)
+}
+
 // buildMPDSegmentBase 生成 DASH MPD（SegmentBase 模式，类似B站）
 func buildMPDSegmentBase(file *model.VideoIndexFile, key string) string {
 	// ISO 8601 时长格式
 	durationStr := formatDuration(file.TotalDuration)
+
+	// 【关键】使用直链并进行 XML 转义
+	videoURL := getMediaFileURL(file.DirName, file.VideoFile, key)
+	audioURL := getMediaFileURL(file.DirName, file.AudioFile, key)
+	safeVideoURL := xmlEscape(videoURL)
+	safeAudioURL := xmlEscape(audioURL)
 
 	var sb strings.Builder
 	sb.WriteString(`<?xml version="1.0" encoding="UTF-8"?>`)
@@ -162,7 +143,7 @@ func buildMPDSegmentBase(file *model.VideoIndexFile, key string) string {
 	sb.WriteString(fmt.Sprintf(`      <Representation id="%s" bandwidth="%d" width="%d" height="%d" frameRate="%.3f" codecs="%s">`,
 		file.Quality, file.VideoBandwidth, file.Width, file.Height, file.FrameRate, file.VideoCodec))
 	sb.WriteString("\n")
-	sb.WriteString(fmt.Sprintf(`        <BaseURL>/api/v1/video/stream/%s?key=%s</BaseURL>`, file.VideoFile, key))
+	sb.WriteString(fmt.Sprintf(`        <BaseURL>%s</BaseURL>`, safeVideoURL))
 	sb.WriteString("\n")
 	sb.WriteString(fmt.Sprintf(`        <SegmentBase indexRange="%s">`, file.VideoIndexRange))
 	sb.WriteString("\n")
@@ -178,7 +159,7 @@ func buildMPDSegmentBase(file *model.VideoIndexFile, key string) string {
 	sb.WriteString(fmt.Sprintf(`      <Representation id="audio" bandwidth="%d" codecs="%s">`,
 		file.AudioBandwidth, file.AudioCodec))
 	sb.WriteString("\n")
-	sb.WriteString(fmt.Sprintf(`        <BaseURL>/api/v1/video/stream/%s?key=%s</BaseURL>`, file.AudioFile, key))
+	sb.WriteString(fmt.Sprintf(`        <BaseURL>%s</BaseURL>`, safeAudioURL))
 	sb.WriteString("\n")
 	if file.AudioIndexRange != "" {
 		sb.WriteString(fmt.Sprintf(`        <SegmentBase indexRange="%s">`, file.AudioIndexRange))
@@ -196,11 +177,77 @@ func buildMPDSegmentBase(file *model.VideoIndexFile, key string) string {
 	return sb.String()
 }
 
+// buildMPDSegmentBaseUnified 生成包含所有清晰度的统一 DASH MPD（无缝切换）
+func buildMPDSegmentBaseUnified(files []model.VideoIndexFile, key string) string {
+	// 按码率升序排列（dash.js Representation index 0 = 最低画质）
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].VideoBandwidth < files[j].VideoBandwidth
+	})
+
+	durationStr := formatDuration(files[0].TotalDuration)
+
+	var sb strings.Builder
+	sb.WriteString(`<?xml version="1.0" encoding="UTF-8"?>`)
+	sb.WriteString("\n")
+	sb.WriteString(fmt.Sprintf(`<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="%s" minBufferTime="PT1.5S" profiles="urn:mpeg:dash:profile:isoff-on-demand:2011">`, durationStr))
+	sb.WriteString("\n  <Period>\n")
+
+	// ========== 视频 AdaptationSet（包含所有清晰度 Representation） ==========
+	sb.WriteString(`    <AdaptationSet mimeType="video/mp4" segmentAlignment="true" startWithSAP="1">`)
+	sb.WriteString("\n")
+	for _, file := range files {
+		videoURL := getMediaFileURL(file.DirName, file.VideoFile, key)
+		// 【关键修复：转义 URL】
+		safeVideoURL := xmlEscape(videoURL)
+
+		sb.WriteString(fmt.Sprintf(`      <Representation id="%s" bandwidth="%d" width="%d" height="%d" frameRate="%.3f" codecs="%s">`,
+			file.Quality, file.VideoBandwidth, file.Width, file.Height, file.FrameRate, file.VideoCodec))
+		sb.WriteString("\n")
+		sb.WriteString(fmt.Sprintf(`        <BaseURL>%s</BaseURL>`, safeVideoURL))
+		sb.WriteString("\n")
+		sb.WriteString(fmt.Sprintf(`        <SegmentBase indexRange="%s">`, file.VideoIndexRange))
+		sb.WriteString("\n")
+		sb.WriteString(fmt.Sprintf(`          <Initialization range="%s"/>`, file.VideoInitRange))
+		sb.WriteString("\n")
+		sb.WriteString("        </SegmentBase>\n")
+		sb.WriteString("      </Representation>\n")
+	}
+	sb.WriteString("    </AdaptationSet>\n")
+
+	// ========== 音频 AdaptationSet（音频共享，取第一条记录） ==========
+	audio := files[0]
+	audioURL := getMediaFileURL(audio.DirName, audio.AudioFile, key)
+	// 【关键修复：转义 URL】
+	safeAudioURL := xmlEscape(audioURL)
+
+	sb.WriteString(`    <AdaptationSet mimeType="audio/mp4" segmentAlignment="true" startWithSAP="1">`)
+	sb.WriteString("\n")
+	sb.WriteString(fmt.Sprintf(`      <Representation id="audio" bandwidth="%d" codecs="%s">`,
+		audio.AudioBandwidth, audio.AudioCodec))
+	sb.WriteString("\n")
+	sb.WriteString(fmt.Sprintf(`        <BaseURL>%s</BaseURL>`, safeAudioURL))
+	sb.WriteString("\n")
+	if audio.AudioIndexRange != "" {
+		sb.WriteString(fmt.Sprintf(`        <SegmentBase indexRange="%s">`, audio.AudioIndexRange))
+		sb.WriteString("\n")
+		sb.WriteString(fmt.Sprintf(`          <Initialization range="%s"/>`, audio.AudioInitRange))
+		sb.WriteString("\n")
+		sb.WriteString("        </SegmentBase>\n")
+	}
+	sb.WriteString("      </Representation>\n")
+	sb.WriteString("    </AdaptationSet>\n")
+
+	sb.WriteString("  </Period>\n")
+	sb.WriteString("</MPD>")
+
+	return sb.String()
+}
+
 // buildPlayURLJSON 生成类似B站的 playurl JSON 格式
 func buildPlayURLJSON(file *model.VideoIndexFile, key string) string {
-	// 构建类似B站的响应格式
-	videoURL := fmt.Sprintf("/api/v1/video/stream/%s?key=%s", file.VideoFile, key)
-	audioURL := fmt.Sprintf("/api/v1/video/stream/%s?key=%s", file.AudioFile, key)
+	// 【关键】使用直链而不是 API 端点，让 player 可以直接加载
+	videoURL := getMediaFileURL(file.DirName, file.VideoFile, key)
+	audioURL := getMediaFileURL(file.DirName, file.AudioFile, key)
 
 	json := fmt.Sprintf(`{
   "code": 0,
@@ -407,18 +454,31 @@ func buildM3U8MasterSegmentBase(file *model.VideoIndexFile, resourceId uint, key
 	sb.WriteString("#EXT-X-VERSION:7\n")
 	sb.WriteString("\n")
 
+	// 【关键】构建子清单的完整 URL
+	var baseURL string
+	if global.Config.Storage.OssType == "local" && global.Config.Storage.Domain != "" {
+		baseURL = global.Config.Storage.Domain
+	}
+
 	// 音频组：引用音频子清单
+	audioURI := fmt.Sprintf("/api/v1/video/getVideoFile?resourceId=%d&quality=%s&format=m3u8audio&key=%s", resourceId, file.Quality, key)
+	if baseURL != "" {
+		audioURI = baseURL + audioURI
+	}
 	sb.WriteString(fmt.Sprintf(
-		"#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",NAME=\"Audio\",DEFAULT=YES,AUTOSELECT=YES,URI=\"/api/v1/video/getVideoFile?resourceId=%d&quality=%s&format=m3u8audio&key=%s\"\n",
-		resourceId, file.Quality, key))
+		"#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",NAME=\"Audio\",DEFAULT=YES,AUTOSELECT=YES,URI=\"%s\"\n",
+		audioURI))
 	sb.WriteString("\n")
 
 	// 视频流：引用视频子清单
+	videoURI := fmt.Sprintf("/api/v1/video/getVideoFile?resourceId=%d&quality=%s&format=m3u8video&key=%s", resourceId, file.Quality, key)
+	if baseURL != "" {
+		videoURI = baseURL + videoURI
+	}
 	sb.WriteString(fmt.Sprintf("#EXT-X-STREAM-INF:BANDWIDTH=%d,RESOLUTION=%dx%d,FRAME-RATE=%.3f,CODECS=\"%s,%s\",AUDIO=\"audio\"\n",
 		file.VideoBandwidth+file.AudioBandwidth, file.Width, file.Height, file.FrameRate,
 		file.VideoCodec, file.AudioCodec))
-	sb.WriteString(fmt.Sprintf("/api/v1/video/getVideoFile?resourceId=%d&quality=%s&format=m3u8video&key=%s\n",
-		resourceId, file.Quality, key))
+	sb.WriteString(videoURI + "\n")
 
 	return sb.String()
 }
@@ -430,16 +490,8 @@ func buildM3U8VideoSegmentBase(file *model.VideoIndexFile, key string) (string, 
 	if err != nil {
 		return "", fmt.Errorf("parse video sidx failed: %w", err)
 	}
-	fmt.Printf("[HLS-DEBUG] video sidx: %d entries, initRange=%s\n", len(entries), file.VideoInitRange)
-	if len(entries) > 0 {
-		fmt.Printf("[HLS-DEBUG] video first entry: offset=%d size=%d dur=%.3f\n", entries[0].Offset, entries[0].Size, entries[0].Duration)
-		last := entries[len(entries)-1]
-		fmt.Printf("[HLS-DEBUG] video last entry: offset=%d size=%d dur=%.3f\n", last.Offset, last.Size, last.Duration)
-	}
-	streamURL := fmt.Sprintf("/api/v1/video/stream/%s?key=%s", file.VideoFile, key)
-	m3u8 := buildByteRangeM3U8(entries, streamURL, file.VideoInitRange)
-	fmt.Printf("[HLS-DEBUG] video m3u8 length: %d bytes\n", len(m3u8))
-	return m3u8, nil
+	streamURL := getMediaFileURL(file.DirName, file.VideoFile, key)
+	return buildByteRangeM3U8(entries, streamURL, file.VideoInitRange), nil
 }
 
 // buildM3U8AudioSegmentBase 为音频流生成 HLS v7 媒体播放列表（从文件实时解析 sidx）
@@ -449,11 +501,7 @@ func buildM3U8AudioSegmentBase(file *model.VideoIndexFile, key string) (string, 
 	if err != nil {
 		return "", fmt.Errorf("parse audio sidx failed: %w", err)
 	}
-	fmt.Printf("[HLS-DEBUG] audio sidx: %d entries, initRange=%s\n", len(entries), file.AudioInitRange)
-	if len(entries) > 0 {
-		fmt.Printf("[HLS-DEBUG] audio first entry: offset=%d size=%d dur=%.3f\n", entries[0].Offset, entries[0].Size, entries[0].Duration)
-	}
-	streamURL := fmt.Sprintf("/api/v1/video/stream/%s?key=%s", file.AudioFile, key)
+	streamURL := getMediaFileURL(file.DirName, file.AudioFile, key)
 	return buildByteRangeM3U8(entries, streamURL, file.AudioInitRange), nil
 }
 
@@ -529,8 +577,18 @@ func buildM3U8SegmentList(file *model.VideoIndexFile, key string) string {
 	sb.WriteString("#EXT-X-MEDIA-SEQUENCE:0\n")
 	sb.WriteString("#EXT-X-PLAYLIST-TYPE:VOD\n")
 
+	// 【关键】构建基础 URL
+	var baseURL string
+	if global.Config.Storage.OssType == "local" && global.Config.Storage.Domain != "" {
+		baseURL = global.Config.Storage.Domain
+	}
+
 	if isFMP4 {
-		sb.WriteString(fmt.Sprintf("#EXT-X-MAP:URI=\"/api/v1/video/slice/%s?key=%s\"\n", file.InitFile, key))
+		initURI := fmt.Sprintf("/api/v1/video/slice/%s?key=%s", file.InitFile, key)
+		if baseURL != "" {
+			initURI = baseURL + initURI
+		}
+		sb.WriteString(fmt.Sprintf("#EXT-X-MAP:URI=\"%s\"\n", initURI))
 	}
 
 	for i := 0; i < file.SegmentCount; i++ {
@@ -546,7 +604,12 @@ func buildM3U8SegmentList(file *model.VideoIndexFile, key string) string {
 		fileName := fmt.Sprintf("%s_%05d%s", file.Quality, i, ext)
 
 		sb.WriteString(fmt.Sprintf("#EXTINF:%.3f,\n", duration))
-		sb.WriteString(fmt.Sprintf("/api/v1/video/slice/%s?key=%s\n", fileName, key))
+
+		segmentURI := fmt.Sprintf("/api/v1/video/slice/%s?key=%s", fileName, key)
+		if baseURL != "" {
+			segmentURI = baseURL + segmentURI
+		}
+		sb.WriteString(segmentURI + "\n")
 	}
 
 	sb.WriteString("#EXT-X-ENDLIST\n")
@@ -560,6 +623,12 @@ func buildMPDSegmentList(file *model.VideoIndexFile, key string) string {
 	codec := file.Codec
 	if codec == "" {
 		codec = "avc1.640028"
+	}
+
+	// 【关键】构建基础 URL
+	var baseURL string
+	if global.Config.Storage.OssType == "local" && global.Config.Storage.Domain != "" {
+		baseURL = global.Config.Storage.Domain
 	}
 
 	var sb strings.Builder
@@ -576,7 +645,11 @@ func buildMPDSegmentList(file *model.VideoIndexFile, key string) string {
 	if file.InitFile != "" {
 		sb.WriteString(fmt.Sprintf(`        <SegmentList timescale="1000" duration="%d">`, int(file.SegmentDuration*1000)))
 		sb.WriteString("\n")
-		sb.WriteString(fmt.Sprintf(`          <Initialization sourceURL="/api/v1/video/slice/%s?key=%s"/>`, file.InitFile, key))
+		initURL := fmt.Sprintf("/api/v1/video/slice/%s?key=%s", file.InitFile, key)
+		if baseURL != "" {
+			initURL = baseURL + initURL
+		}
+		sb.WriteString(fmt.Sprintf(`          <Initialization sourceURL="%s"/>`, initURL))
 		sb.WriteString("\n")
 	} else {
 		sb.WriteString(fmt.Sprintf(`        <SegmentList timescale="1000" duration="%d">`, int(file.SegmentDuration*1000)))
@@ -589,7 +662,11 @@ func buildMPDSegmentList(file *model.VideoIndexFile, key string) string {
 			ext = ".ts"
 		}
 		fileName := fmt.Sprintf("%s_%05d%s", file.Quality, i, ext)
-		sb.WriteString(fmt.Sprintf(`          <SegmentURL media="/api/v1/video/slice/%s?key=%s"/>`, fileName, key))
+		segmentURL := fmt.Sprintf("/api/v1/video/slice/%s?key=%s", fileName, key)
+		if baseURL != "" {
+			segmentURL = baseURL + segmentURL
+		}
+		sb.WriteString(fmt.Sprintf(`          <SegmentURL media="%s"/>`, segmentURL))
 		sb.WriteString("\n")
 	}
 
@@ -636,29 +713,58 @@ func formatDuration(seconds float64) string {
 	return fmt.Sprintf("PT%dH%dM%dS", hours, minutes, secs)
 }
 
-// 获取视频文件（后台管理）
+// 获取视频文件（后台管理，不校验审核状态）
 func GetVideoFileManage(ctx *gin.Context, resourceId uint, quality, format string) (string, error) {
-	// HLS 子清单请求
+	return getVideoFileInternal(ctx, resourceId, quality, format)
+}
+
+// getVideoFileInternal 获取视频文件的公共逻辑（DASH MPD / HLS M3U8 / JSON）
+func getVideoFileInternal(ctx *gin.Context, resourceId uint, quality, format string) (string, error) {
+	// ========== HLS 子清单请求（m3u8video / m3u8audio） ==========
 	if format == "m3u8video" || format == "m3u8audio" {
 		existingKey := ctx.Query("key")
 		if existingKey == "" || resourceId == 0 {
 			return "", errors.New("参数无效")
 		}
+
 		var file model.VideoIndexFile
 		if err := global.Mysql.Where("resource_id = ? AND quality = ?", resourceId, quality).First(&file).Error; err != nil {
 			return "", errors.New("视频索引不存在")
 		}
+
 		if cache.GetVideoSlice(existingKey) == "" {
 			cache.SetVideoSlice(existingKey, file.DirName)
 		}
+
 		if format == "m3u8video" {
 			return buildM3U8VideoSegmentBase(&file, existingKey)
 		}
 		return buildM3U8AudioSegmentBase(&file, existingKey)
 	}
 
+	// ========== 常规请求 ==========
 	key := uuid.New().String()
 
+	// 统一 DASH MPD（所有清晰度合并到一个 MPD）
+	if format == "dash-unified" {
+		var files []model.VideoIndexFile
+		if err := global.Mysql.Where("resource_id = ?", resourceId).Find(&files).Error; err != nil || len(files) == 0 {
+			return "", errors.New("视频索引不存在")
+		}
+		var sbFiles []model.VideoIndexFile
+		for _, f := range files {
+			if f.IsSegmentBase() {
+				sbFiles = append(sbFiles, f)
+			}
+		}
+		if len(sbFiles) == 0 {
+			return "", errors.New("无SegmentBase资源")
+		}
+		cache.SetVideoSlice(key, sbFiles[0].DirName)
+		return buildMPDSegmentBaseUnified(sbFiles, key), nil
+	}
+
+	// 从 VideoIndexFile 元数据动态生成
 	var file model.VideoIndexFile
 	err := global.Mysql.Where("resource_id = ? AND quality = ?", resourceId, quality).First(&file).Error
 	if err != nil {
@@ -667,7 +773,7 @@ func GetVideoFileManage(ctx *gin.Context, resourceId uint, quality, format strin
 
 	cache.SetVideoSlice(key, file.DirName)
 
-	// B站风格：SegmentBase 模式
+	// B站风格：SegmentBase 模式（音视频分离）
 	if file.IsSegmentBase() {
 		if format == "m3u8" {
 			return buildM3U8MasterSegmentBase(&file, resourceId, key), nil
@@ -686,7 +792,7 @@ func GetVideoFileManage(ctx *gin.Context, resourceId uint, quality, format strin
 		return buildM3U8SegmentList(&file, key), nil
 	}
 
-	// 兼容旧数据
+	// 兼容旧数据（Content字段存储完整m3u8）
 	return buildFromLegacyContent(&file, key, format)
 }
 
@@ -765,6 +871,13 @@ func DeleteVideo(ctx *gin.Context, id uint) error {
 		return errors.New("视频不存在")
 	}
 
+	return deleteVideoAndRelatedData(id, video.Uid, &video)
+}
+
+// deleteVideoAndRelatedData 删除视频及所有关联数据（公共逻辑）
+// ownerUid: 视频所有者的UID（用于引用计数处理）
+// video: 视频信息（可为nil，此时不清理分区/热门缓存）
+func deleteVideoAndRelatedData(id, ownerUid uint, video *model.Video) error {
 	// 停止正在进行的转码进程并清理文件
 	StopTranscodingAndCleanup(id)
 
@@ -780,13 +893,12 @@ func DeleteVideo(ctx *gin.Context, id uint) error {
 
 		// 处理 VideoFile 引用计数（全局去重）
 		if resource.FileID != 0 {
-			// 减少引用计数，如果计数为0则删除VideoFile记录
-			decreaseVideoFileRefCount(resource.FileID, userId, resource.ID, indexFile.DirName)
+			decreaseVideoFileRefCount(resource.FileID, ownerUid, resource.ID, indexFile.DirName)
 		} else if indexFile.DirName != "" {
 			// 兼容旧数据：通过 DirName 查找 VideoFile
 			var vf model.VideoFile
 			if global.Mysql.Where("dir_name = ?", indexFile.DirName).First(&vf).Error == nil {
-				decreaseVideoFileRefCount(vf.ID, userId, resource.ID, indexFile.DirName)
+				decreaseVideoFileRefCount(vf.ID, ownerUid, resource.ID, indexFile.DirName)
 			}
 		}
 
@@ -837,13 +949,10 @@ func DeleteVideo(ctx *gin.Context, id uint) error {
 	}
 
 	// 清理所有相关缓存
-	// 1. 删除分区视频列表中的视频ID
-	cache.DelVideoId(video.PartitionId, video.ID)
-
-	// 2. 删除热门视频列表中的视频ID
-	cache.DelSingleHotVideoId(video.ID)
-
-	// 3. 删除视频信息缓存
+	if video != nil && video.ID != 0 {
+		cache.DelVideoId(video.PartitionId, video.ID)
+		cache.DelSingleHotVideoId(video.ID)
+	}
 	cache.DelVideoInfo(id)
 
 	return nil
@@ -911,94 +1020,10 @@ func GetVideoListManage(videoListReq dto.VideoListReq) (total int64, videos []vo
 
 // 删除视频(后台管理)
 func DeleteVideoManage(ctx *gin.Context, id uint) error {
-	// 先查询视频信息，用于删除缓存
 	var video model.Video
 	global.Mysql.Model(&model.Video{}).Where("id = ?", id).First(&video)
 
-	// 停止正在进行的转码进程并清理文件
-	StopTranscodingAndCleanup(id)
-
-	// 先查询关联的资源记录，用于后续删除相关文件
-	var resources []model.Resource
-	global.Mysql.Where("vid = ?", id).Find(&resources)
-
-	// 删除关联的m3u8索引文件记录和处理视频文件记录（通过resource_id关联）
-	for _, resource := range resources {
-		// 查找VideoIndexFile获取DirName
-		var indexFile model.VideoIndexFile
-		global.Mysql.Where("resource_id = ?", resource.ID).First(&indexFile)
-
-		// 处理 VideoFile 引用计数（全局去重）
-		if resource.FileID != 0 {
-			// 减少引用计数，如果计数为0则删除VideoFile记录
-			decreaseVideoFileRefCount(resource.FileID, video.Uid, resource.ID, indexFile.DirName)
-		} else if indexFile.DirName != "" {
-			// 兼容旧数据：通过 DirName 查找 VideoFile
-			var vf model.VideoFile
-			if global.Mysql.Where("dir_name = ?", indexFile.DirName).First(&vf).Error == nil {
-				decreaseVideoFileRefCount(vf.ID, video.Uid, resource.ID, indexFile.DirName)
-			}
-		}
-
-		// 删除VideoIndexFile记录
-		if err := global.Mysql.Where("resource_id = ?", resource.ID).Delete(&model.VideoIndexFile{}).Error; err != nil {
-			utils.ErrorLog("删除视频关联m3u8索引文件失败", "video", err.Error())
-		}
-	}
-
-	// 删除关联的资源记录
-	if err := global.Mysql.Where("vid = ?", id).Delete(&model.Resource{}).Error; err != nil {
-		utils.ErrorLog("删除视频关联资源失败", "video", err.Error())
-	}
-
-	// 删除关联的评论
-	if err := global.Mysql.Where("cid = ? and type = 0", id).Delete(&model.Comment{}).Error; err != nil {
-		utils.ErrorLog("删除视频关联评论失败", "video", err.Error())
-	}
-
-	// 删除关联的弹幕
-	if err := global.Mysql.Where("vid = ?", id).Delete(&model.Danmaku{}).Error; err != nil {
-		utils.ErrorLog("删除视频关联弹幕失败", "video", err.Error())
-	}
-
-	// 删除关联的收藏记录
-	if err := global.Mysql.Where("vid = ?", id).Delete(&model.CollectVideo{}).Error; err != nil {
-		utils.ErrorLog("删除视频关联收藏记录失败", "video", err.Error())
-	}
-
-	// 删除关联的点赞记录
-	if err := global.Mysql.Where("vid = ?", id).Delete(&model.LikeVideo{}).Error; err != nil {
-		utils.ErrorLog("删除视频关联点赞记录失败", "video", err.Error())
-	}
-
-	// 删除关联的历史记录
-	if err := global.Mysql.Where("vid = ?", id).Delete(&model.History{}).Error; err != nil {
-		utils.ErrorLog("删除视频关联历史记录失败", "video", err.Error())
-	}
-
-	// 删除关联的AT消息（cid是内容ID，type=0表示视频）
-	if err := global.Mysql.Where("cid = ? and type = 0", id).Delete(&model.AtMessage{}).Error; err != nil {
-		utils.ErrorLog("删除视频关联AT消息失败", "video", err.Error())
-	}
-
-	if err := global.Mysql.Where("id = ?", id).Delete(&model.Video{}).Error; err != nil {
-		utils.ErrorLog("删除视频失败", "video", err.Error())
-		return errors.New("删除视频失败")
-	}
-
-	// 清理所有相关缓存
-	if video.ID != 0 {
-		// 1. 删除分区视频列表中的视频ID
-		cache.DelVideoId(video.PartitionId, id)
-
-		// 2. 删除热门视频列表中的视频ID
-		cache.DelSingleHotVideoId(id)
-	}
-
-	// 3. 删除视频信息缓存
-	cache.DelVideoInfo(id)
-
-	return nil
+	return deleteVideoAndRelatedData(id, video.Uid, &video)
 }
 
 // 获取待审核视频列表
@@ -1166,7 +1191,8 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 
 	// 使用数据库中正确的DirName构建路径
 	dirName := videoFile.DirName
-	inputPath := "./upload/video/" + dirName + "/upload.mp4"
+	suffix := utils.GetFileSuffix(videoFile.OriginalName)
+	inputPath := "./upload/video/" + dirName + "/upload" + suffix
 
 	// 检查原始文件是否存在
 	if _, err := os.Stat(inputPath); os.IsNotExist(err) {
@@ -1174,8 +1200,34 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 		return errors.New("原始视频文件不存在，无法重新转码")
 	}
 
-	// 停止正在进行的转码进程并清理旧资源
-	StopTranscodingAndCleanup(videoId)
+	// 检查是否有正在进行的转码进程
+	if HasTranscodingProcess(videoId) {
+		processCount := GetTranscodingProcessCount(videoId)
+		utils.InfoLog(fmt.Sprintf("【重新转码】VideoID=%d 存在%d个转码进程，将停止后重新转码", videoId, processCount), "transcoding")
+		StopTranscodingAndCleanup(videoId)
+	} else {
+		utils.InfoLog(fmt.Sprintf("【重新转码】VideoID=%d 没有正在运行的转码进程", videoId), "transcoding")
+	}
+
+	// 重置GPU状态，尝试恢复GPU转码
+	ResetGPUState()
+
+	// 收集所有需要清理的目录（去重）
+	dirsToClean := make(map[string]bool)
+	dirsToClean[dirName] = true
+	for _, resource := range resources {
+		var indexFile model.VideoIndexFile
+		global.Mysql.Where("resource_id = ?", resource.ID).First(&indexFile)
+		if indexFile.DirName != "" {
+			dirsToClean[indexFile.DirName] = true
+		}
+	}
+
+	// 删除OSS上的旧转码文件（必须在删除本地文件之前执行）
+	for d := range dirsToClean {
+		deleteOldTranscodedFilesFromOSS(d)
+		deleteOldTranscodedFilesLocal(d)
+	}
 
 	// 删除旧的 VideoIndexFile 记录
 	for _, resource := range resources {
@@ -1189,11 +1241,61 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 		global.Mysql.Model(&resource).Update("deleted_at", time.Now())
 	}
 
-	// 复用原file_id
-	newFileID := videoFile.ID
-
 	// 为每个分P创建新的资源记录并启动转码
+	// 检查是否有多个分P使用同一个目录，如果需要串行处理
+	type transcodingTask struct {
+		resource      model.Resource
+		inputFilePath string
+		dirNameStr    string
+		fileID        uint
+	}
+
+	var tasks []transcodingTask
 	for _, resource := range resources {
+		var inputFilePath string
+		var dirNameStr string
+		var fileID uint
+		var fileSuffix string
+
+		// 尝试通过resource的FileID获取对应的VideoFile
+		if resource.FileID != 0 {
+			var vf model.VideoFile
+			global.Mysql.Where("id = ?", resource.FileID).First(&vf)
+			if vf.ID != 0 && vf.DirName != "" {
+				fileSuffix = utils.GetFileSuffix(vf.OriginalName)
+				inputFilePath = "./upload/video/" + vf.DirName + "/upload" + fileSuffix
+				dirNameStr = vf.DirName
+				fileID = vf.ID
+			}
+		}
+
+		// 如果FileID为0或未找到VideoFile，尝试通过VideoIndexFile查找DirName
+		if dirNameStr == "" {
+			var indexFile model.VideoIndexFile
+			global.Mysql.Where("resource_id = ?", resource.ID).First(&indexFile)
+			if indexFile.DirName != "" {
+				// 通过 DirName 查找 VideoFile 获取后缀
+				var vf model.VideoFile
+				global.Mysql.Where("dir_name = ?", indexFile.DirName).First(&vf)
+				fileSuffix = utils.GetFileSuffix(vf.OriginalName)
+				inputFilePath = "./upload/video/" + indexFile.DirName + "/upload" + fileSuffix
+				dirNameStr = indexFile.DirName
+				fileID = resource.FileID
+			}
+		}
+
+		// 如果仍然没有找到，使用默认的dirName（来自第一个资源的VideoFile）
+		if dirNameStr == "" {
+			inputFilePath = inputPath
+			dirNameStr = dirName
+			fileID = videoFile.ID
+		}
+
+		if _, err := os.Stat(inputFilePath); os.IsNotExist(err) {
+			utils.ErrorLog("分P原始视频文件不存在，跳过", "transcoding", inputFilePath)
+			continue
+		}
+
 		// 创建新的资源记录
 		newResource := model.Resource{
 			Vid:       videoId,
@@ -1202,19 +1304,40 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 			CodecName: resource.CodecName,
 			Status:    global.VIDEO_PROCESSING,
 			Duration:  resource.Duration,
-			FileID:    newFileID,
+			FileID:    fileID,
 		}
 		if err := global.Mysql.Create(&newResource).Error; err != nil {
 			utils.ErrorLog("创建新资源记录失败", "transcoding", err.Error())
 			continue
 		}
 
-		// 准备转码信息（使用原始文件目录作为输出目录）
+		tasks = append(tasks, transcodingTask{
+			resource:      newResource,
+			inputFilePath: inputFilePath,
+			dirNameStr:    dirNameStr,
+			fileID:        fileID,
+		})
+	}
+
+	// 检查是否所有任务使用同一个目录
+	sameDir := true
+	if len(tasks) > 1 {
+		firstDir := tasks[0].dirNameStr
+		for _, task := range tasks[1:] {
+			if task.dirNameStr != firstDir {
+				sameDir = false
+				break
+			}
+		}
+	}
+
+	// 为每个分P启动转码
+	for _, task := range tasks {
 		transcodingInfo := &dto.TranscodingInfo{
 			VideoID:    videoId,
-			ResourceID: newResource.ID,
-			InputFile:  inputPath,
-			OutputDir:  "./upload/video/" + dirName + "/", // 使用原始目录
+			ResourceID: task.resource.ID,
+			InputFile:  task.inputFilePath,
+			OutputDir:  "./upload/video/" + task.dirNameStr + "/",
 		}
 
 		// 解析视频信息
@@ -1226,11 +1349,17 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 		transcodingInfo.Width = info.Width
 		transcodingInfo.Height = info.Height
 		transcodingInfo.Duration = info.Duration
-		transcodingInfo.DirName = dirName // 使用原始目录名
+		transcodingInfo.DirName = task.dirNameStr
 		transcodingInfo.CodecName = info.CodecName
 		transcodingInfo.FPS = info.FPS
 		transcodingInfo.FPS30 = info.FPS30
 		transcodingInfo.FPS60 = info.FPS60
+
+		// 如果多个分P使用同一目录，需要串行处理（等待上一个完成）
+		if sameDir && len(tasks) > 1 {
+			// 等待一下，让前一个转码任务有机会启动
+			time.Sleep(2 * time.Second)
+		}
 
 		// 启动转码（异步）
 		go VideoTransCoding(transcodingInfo)
@@ -1241,6 +1370,90 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 
 	utils.InfoLog(fmt.Sprintf("【重新转码】VideoID=%d, 资源数=%d", videoId, len(resources)), "transcoding")
 	return nil
+}
+
+// deleteOldTranscodedFilesFromOSS 删除OSS上指定目录的旧转码文件
+func deleteOldTranscodedFilesFromOSS(dirName string) {
+	if global.Config.Storage.OssType == "local" {
+		return
+	}
+
+	if dirName == "" {
+		return
+	}
+
+	localDir := "./upload/video/" + dirName + "/"
+	files, err := os.ReadDir(localDir)
+	if err != nil {
+		utils.InfoLog(fmt.Sprintf("【OSS清理】读取目录失败: %s, 跳过OSS清理", localDir), "transcoding")
+		return
+	}
+
+	objectKeys := make(map[string]bool)
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+		fileName := file.Name()
+		// 跳过原始上传文件（upload.mkv, upload.mp4 等）
+		if strings.HasPrefix(fileName, "upload.") {
+			continue
+		}
+		objectKeys[fileName] = true
+	}
+
+	if len(objectKeys) == 0 {
+		utils.InfoLog(fmt.Sprintf("【OSS清理】目录 %s 没有需要清理的文件", dirName), "transcoding")
+		return
+	}
+
+	deletedCount := 0
+	for fileName := range objectKeys {
+		objectKey := "video/" + dirName + "/" + fileName
+		if err := global.Storage.DeleteObject(objectKey); err != nil {
+			utils.ErrorLog(fmt.Sprintf("【OSS清理】删除文件失败: %s", objectKey), "transcoding", err.Error())
+		} else {
+			deletedCount++
+		}
+	}
+
+	utils.InfoLog(fmt.Sprintf("【OSS清理】目录 %s 清理完成, 删除 %d/%d 个文件", dirName, deletedCount, len(objectKeys)), "transcoding")
+}
+
+// deleteOldTranscodedFilesLocal 删除本地旧转码文件
+func deleteOldTranscodedFilesLocal(dirName string) {
+	if dirName == "" {
+		return
+	}
+
+	localDir := "./upload/video/" + dirName + "/"
+	files, err := os.ReadDir(localDir)
+	if err != nil {
+		utils.InfoLog(fmt.Sprintf("【本地清理】读取目录失败: %s, 跳过本地清理", localDir), "transcoding")
+		return
+	}
+
+	deletedCount := 0
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+		fileName := file.Name()
+		// 跳过原始上传文件和封面
+		if strings.HasPrefix(fileName, "upload.") || fileName == "cover.jpg" {
+			continue
+		}
+		filePath := localDir + fileName
+		if err := os.Remove(filePath); err != nil {
+			utils.ErrorLog(fmt.Sprintf("【本地清理】删除文件失败: %s", filePath), "transcoding", err.Error())
+		} else {
+			deletedCount++
+		}
+	}
+
+	if deletedCount > 0 {
+		utils.InfoLog(fmt.Sprintf("【本地清理】目录 %s 清理完成, 删除 %d 个文件", dirName, deletedCount), "transcoding")
+	}
 }
 
 // 通过视频ID查询视频
@@ -1288,24 +1501,42 @@ func VideoWriteCache(videoId uint) (video vo.VideoResp) {
 
 // 获取视频状态
 func getVideoStatus(videoId uint) int {
-	var processingCount int64 // 转码中的资源数量
-	var failedCount int64     // 转码失败的资源数量
-	var totalCount int64      // 总资源数量
+	var processingCount int64
+	var failedCount int64
+	var totalCount int64
 
+	// 获取该视频下的所有资源总数
 	global.Mysql.Model(&model.Resource{}).Where("vid = ?", videoId).Count(&totalCount)
+
+	if totalCount == 0 {
+		return global.VIDEO_PROCESSING
+	}
+
+	// 统计转码中和失败的数量
 	global.Mysql.Model(&model.Resource{}).Where("vid = ? and status = ?", videoId, global.VIDEO_PROCESSING).Count(&processingCount)
 	global.Mysql.Model(&model.Resource{}).Where("vid = ? and status = ?", videoId, global.PROCESSING_FAIL).Count(&failedCount)
 
-	// 如果所有资源都失败了，返回处理失败状态
-	if failedCount == totalCount && totalCount > 0 {
+	// 修复：逻辑优先级调整
+	// 1. 只要有一个还在转码，整体就是转码中
+	if processingCount > 0 {
+		return global.VIDEO_PROCESSING
+	}
+
+	// 2. 如果没有转码中的，但有失败的，且失败+成功的总数等于总数（此处简化为失败>0）
+	// 如果你希望只要有一个失败整体就显失败，用这个：
+	if failedCount > 0 {
 		return global.PROCESSING_FAIL
 	}
 
-	// 如果还有转码中的资源，返回提交审核状态
-	if processingCount > 0 {
-		return global.SUBMIT_REVIEW
-	}
-
-	// 所有资源都完成了（至少有一个成功），返回待审核状态
+	// 3. 全部资源都转码完成且无失败，进入待审核状态
 	return global.WAITING_REVIEW
+}
+
+func xmlEscape(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	s = strings.ReplaceAll(s, "'", "&apos;")
+	s = strings.ReplaceAll(s, "\"", "&quot;")
+	return s
 }

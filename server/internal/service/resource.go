@@ -2,6 +2,8 @@ package service
 
 import (
 	"errors"
+	"fmt"
+	"sort"
 
 	"github.com/gin-gonic/gin"
 	"interastral-peace.com/alnitak/internal/cache"
@@ -64,10 +66,14 @@ func DeleteResource(ctx *gin.Context, id uint) error {
 		utils.ErrorLog("删除m3u8索引文件失败", "resource", err.Error())
 	}
 
-	// 删除关联的视频文件记录
-	if indexFile.DirName != "" {
-		if err := global.Mysql.Where("dir_name = ?", indexFile.DirName).Delete(&model.VideoFile{}).Error; err != nil {
-			utils.ErrorLog("删除视频文件记录失败", "resource", err.Error())
+	// 处理 VideoFile 引用计数（全局去重）
+	if resource.FileID != 0 {
+		decreaseVideoFileRefCount(resource.FileID, userId, resource.ID, indexFile.DirName)
+	} else if indexFile.DirName != "" {
+		// 兼容旧数据：通过 DirName 查找 VideoFile
+		var vf model.VideoFile
+		if global.Mysql.Where("dir_name = ?", indexFile.DirName).First(&vf).Error == nil {
+			decreaseVideoFileRefCount(vf.ID, userId, resource.ID, indexFile.DirName)
 		}
 	}
 
@@ -113,7 +119,8 @@ func GetRelatedResources(fileID uint, excludeVid uint) (resources []vo.RelatedRe
 // ResourceQualityInfo 资源清晰度信息（包含类型）
 type ResourceQualityInfo struct {
 	Quality      []string `json:"quality"`
-	SupportsDash bool     `json:"supportsDash"` // 是否支持 DASH（SegmentBase 模式）
+	SupportsDash bool     `json:"supportsDash"`           // 是否支持 DASH（SegmentBase 模式）
+	QualityOrder []string `json:"qualityOrder,omitempty"` // 按码率升序排列（对应 dash.js Representation 索引）
 }
 
 // 获取视频资源支持的分辨率信息
@@ -122,6 +129,16 @@ func GetResourceQuality(ctx *gin.Context, id uint) (*ResourceQualityInfo, error)
 		return nil, errors.New("资源不存在")
 	}
 
+	return buildResourceQualityInfo(id)
+}
+
+// 获取视频资源支持的分辨率信息(后台管理，不校验审核状态)
+func GetResourceQualityManage(ctx *gin.Context, id uint) (*ResourceQualityInfo, error) {
+	return buildResourceQualityInfo(id)
+}
+
+// buildResourceQualityInfo 构建资源清晰度信息（公共逻辑）
+func buildResourceQualityInfo(id uint) (*ResourceQualityInfo, error) {
 	var files []model.VideoIndexFile
 	if err := global.Mysql.Where("resource_id = ?", id).Find(&files).Error; err != nil {
 		utils.ErrorLog("分辨率信息获取失败", "resource", err.Error())
@@ -135,32 +152,25 @@ func GetResourceQuality(ctx *gin.Context, id uint) (*ResourceQualityInfo, error)
 
 	for _, f := range files {
 		result.Quality = append(result.Quality, f.Quality)
-		// 只要有一个是 SegmentBase 模式就支持 DASH
 		if f.IsSegmentBase() {
 			result.SupportsDash = true
 		}
 	}
 
-	return result, nil
-}
-
-// 获取视频资源支持的分辨率信息(后台管理)
-func GetResourceQualityManage(ctx *gin.Context, id uint) (*ResourceQualityInfo, error) {
-	var files []model.VideoIndexFile
-	if err := global.Mysql.Where("resource_id = ?", id).Find(&files).Error; err != nil {
-		utils.ErrorLog("分辨率信息获取失败", "resource", err.Error())
-		return nil, errors.New("获取失败")
-	}
-
-	result := &ResourceQualityInfo{
-		Quality:      make([]string, 0, len(files)),
-		SupportsDash: false,
-	}
-
-	for _, f := range files {
-		result.Quality = append(result.Quality, f.Quality)
-		if f.IsSegmentBase() {
-			result.SupportsDash = true
+	// 生成按码率升序排列的清晰度列表（与统一 MPD 中 Representation 顺序一致）
+	if result.SupportsDash {
+		sbFiles := make([]model.VideoIndexFile, 0, len(files))
+		for _, f := range files {
+			if f.IsSegmentBase() {
+				sbFiles = append(sbFiles, f)
+			}
+		}
+		sort.Slice(sbFiles, func(i, j int) bool {
+			return sbFiles[i].VideoBandwidth < sbFiles[j].VideoBandwidth
+		})
+		result.QualityOrder = make([]string, 0, len(sbFiles))
+		for _, f := range sbFiles {
+			result.QualityOrder = append(result.QualityOrder, f.Quality)
 		}
 	}
 
@@ -231,8 +241,15 @@ func ReplaceResource(ctx *gin.Context, replaceReq dto.ReplaceResourceReq) (vo.Re
 		var oldFileInfo model.VideoFile
 		global.Mysql.Where("dir_name = ?", oldIndexFile.DirName).First(&oldFileInfo)
 		if oldFileInfo.Hash == replaceReq.Hash {
-			// 哈希值相同，无需替换
-			return vo.ResourceResp{}, errors.New("视频文件相同，无需替换")
+			// 哈希值相同，无需转码，直接更新为待审核状态
+			if err := global.Mysql.Model(&model.Resource{}).Where("id = ?", replaceReq.ResourceID).Update("status", global.WAITING_REVIEW).Error; err != nil {
+				utils.ErrorLog("更新资源状态失败", "resource", err.Error())
+				return vo.ResourceResp{}, errors.New("更新资源状态失败")
+			}
+			var newResource model.Resource
+			global.Mysql.Where("id = ?", replaceReq.ResourceID).First(&newResource)
+			utils.InfoLog(fmt.Sprintf("【替换资源】hash相同，跳过转码，设为待审核 resourceID=%d", replaceReq.ResourceID), "resource")
+			return vo.ResourceToResourceResp(newResource), nil
 		}
 
 		// 检查旧视频文件是否被其他资源使用
@@ -253,7 +270,8 @@ func ReplaceResource(ctx *gin.Context, replaceReq dto.ReplaceResourceReq) (vo.Re
 	}
 
 	// 读取新视频信息
-	uploadVideoPath := "./upload/video/" + newFileInfo.DirName + "/upload.mp4"
+	suffix := utils.GetFileSuffix(newFileInfo.OriginalName)
+	uploadVideoPath := "./upload/video/" + newFileInfo.DirName + "/upload" + suffix
 	transcodingInfo, err := ProcessVideoInfo(uploadVideoPath)
 	if err != nil {
 		return vo.ResourceResp{}, errors.New("读取视频信息失败")
@@ -276,7 +294,8 @@ func ReplaceResource(ctx *gin.Context, replaceReq dto.ReplaceResourceReq) (vo.Re
 	transcodingInfo.DirName = newFileInfo.DirName
 	transcodingInfo.ResourceID = replaceReq.ResourceID
 	transcodingInfo.OutputDir = "./upload/video/" + newFileInfo.DirName + "/"
-	transcodingInfo.InputFile = transcodingInfo.OutputDir + "upload.mp4"
+	transcodingInfo.InputFile = transcodingInfo.OutputDir + "upload" + suffix
+	transcodingInfo.Suffix = suffix
 	go VideoTransCoding(transcodingInfo)
 
 	// 清除视频信息缓存

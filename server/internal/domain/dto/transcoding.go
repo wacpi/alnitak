@@ -13,4 +13,5 @@ type TranscodingInfo struct {
 	FPS        string  // 视频帧率
 	FPS30      string  // 30帧实际帧率
 	FPS60      string  // 60帧实际帧率
+	Suffix     string  // 原始文件后缀（如 .mkv）
 }
