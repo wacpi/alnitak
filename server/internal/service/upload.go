@@ -341,6 +341,8 @@ func UploadVideoChunk(ctx *gin.Context, file *multipart.FileHeader) error {
 	// 4️⃣ 秒传判断
 	if videoFile.Status == model.FileStatusReady {
 		utils.InfoLog("秒传成功："+fileHash, "upload")
+		chunkDir := filepath.Join("./upload/video", videoFile.DirName, "chunks")
+		_ = os.RemoveAll(chunkDir)
 		return nil
 	}
 
@@ -389,16 +391,17 @@ func UploadVideoMerge(ctx *gin.Context, videoFileReq dto.VideoFileReq) error {
 		return errors.New("缺少文件标识参数")
 	}
 
+	fileDir := filepath.Join("./upload/video", fileInfo.DirName)
+	chunkDir := filepath.Join(fileDir, "chunks")
+
 	// 2️⃣ 原子切换状态：Uploading → Merging
 	result := global.Mysql.Model(&fileInfo).
 		Where("status = ?", model.FileStatusUploading).
 		Update("status", model.FileStatusMerging)
 	if result.RowsAffected == 0 {
+		_ = os.RemoveAll(chunkDir)
 		return nil
 	}
-
-	fileDir := filepath.Join("./upload/video", fileInfo.DirName)
-	chunkDir := filepath.Join(fileDir, "chunks")
 	suffix := utils.GetFileSuffix(fileInfo.OriginalName)
 	outputFile := filepath.Join(fileDir, "upload"+suffix)
 

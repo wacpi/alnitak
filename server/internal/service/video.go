@@ -1171,58 +1171,78 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 		return errors.New("该视频没有可转码的资源")
 	}
 
-	// 获取原始上传文件信息
-	var videoFile model.VideoFile
-	if resources[0].FileID != 0 {
-		global.Mysql.Where("id = ?", resources[0].FileID).First(&videoFile)
-	} else {
-		// 兼容旧数据：通过DirName查找
-		var indexFile model.VideoIndexFile
-		global.Mysql.Where("resource_id = ?", resources[0].ID).First(&indexFile)
-		if indexFile.DirName != "" {
-			global.Mysql.Where("dir_name = ?", indexFile.DirName).First(&videoFile)
+	// ========== 第1步：为每个分P查找原始文件 ==========
+	type resourceFileInfo struct {
+		resource model.Resource
+		vf       model.VideoFile
+	}
+	var rfInfos []resourceFileInfo
+
+	for _, resource := range resources {
+		var vf model.VideoFile
+		found := false
+
+		// 方式1：通过 FileID 查找
+		if resource.FileID != 0 {
+			if err := global.Mysql.Where("id = ?", resource.FileID).First(&vf).Error; err == nil && vf.DirName != "" {
+				found = true
+			}
 		}
+
+		// 方式2：通过 VideoIndexFile.DirName 查找
+		if !found {
+			var indexFile model.VideoIndexFile
+			if err := global.Mysql.Where("resource_id = ?", resource.ID).First(&indexFile).Error; err == nil && indexFile.DirName != "" {
+				if err := global.Mysql.Where("dir_name = ?", indexFile.DirName).First(&vf).Error; err == nil && vf.DirName != "" {
+					found = true
+				}
+			}
+		}
+
+		if !found {
+			utils.ErrorLog("分P找不到原始文件记录，跳过", "transcoding",
+				fmt.Sprintf("resourceID=%d, title=%s", resource.ID, resource.Title))
+			continue
+		}
+
+		// 检查源文件是否存在
+		suffix := utils.GetFileSuffix(vf.OriginalName)
+		inputPath := "./upload/video/" + vf.DirName + "/upload" + suffix
+		if _, err := os.Stat(inputPath); os.IsNotExist(err) {
+			utils.ErrorLog("分P原始视频文件不存在，跳过", "transcoding", inputPath)
+			continue
+		}
+
+		rfInfos = append(rfInfos, resourceFileInfo{resource: resource, vf: vf})
 	}
 
-	if videoFile.ID == 0 || videoFile.DirName == "" {
-		return errors.New("找不到原始视频文件，无法重新转码")
+	if len(rfInfos) == 0 {
+		return errors.New("所有分P的原始文件都不存在，无法重新转码")
 	}
 
-	// 使用数据库中正确的DirName构建路径
-	dirName := videoFile.DirName
-	suffix := utils.GetFileSuffix(videoFile.OriginalName)
-	inputPath := "./upload/video/" + dirName + "/upload" + suffix
-
-	// 检查原始文件是否存在
-	if _, err := os.Stat(inputPath); os.IsNotExist(err) {
-		utils.ErrorLog("原始视频文件不存在", "transcoding", inputPath)
-		return errors.New("原始视频文件不存在，无法重新转码")
-	}
-
-	// 检查是否有正在进行的转码进程
+	// ========== 第2步：停止旧进程、清理旧数据 ==========
 	if HasTranscodingProcess(videoId) {
 		processCount := GetTranscodingProcessCount(videoId)
 		utils.InfoLog(fmt.Sprintf("【重新转码】VideoID=%d 存在%d个转码进程，将停止后重新转码", videoId, processCount), "transcoding")
 		StopTranscodingAndCleanup(videoId)
-	} else {
-		utils.InfoLog(fmt.Sprintf("【重新转码】VideoID=%d 没有正在运行的转码进程", videoId), "transcoding")
 	}
 
-	// 重置GPU状态，尝试恢复GPU转码
 	ResetGPUState()
 
 	// 收集所有需要清理的目录（去重）
 	dirsToClean := make(map[string]bool)
-	dirsToClean[dirName] = true
+	for _, rf := range rfInfos {
+		dirsToClean[rf.vf.DirName] = true
+	}
+	// 也收集旧 VideoIndexFile 中的目录
 	for _, resource := range resources {
 		var indexFile model.VideoIndexFile
-		global.Mysql.Where("resource_id = ?", resource.ID).First(&indexFile)
-		if indexFile.DirName != "" {
+		if err := global.Mysql.Where("resource_id = ?", resource.ID).First(&indexFile).Error; err == nil && indexFile.DirName != "" {
 			dirsToClean[indexFile.DirName] = true
 		}
 	}
 
-	// 删除OSS上的旧转码文件（必须在删除本地文件之前执行）
+	// 清理旧转码文件
 	for d := range dirsToClean {
 		deleteOldTranscodedFilesFromOSS(d)
 		deleteOldTranscodedFilesLocal(d)
@@ -1230,9 +1250,7 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 
 	// 删除旧的 VideoIndexFile 记录
 	for _, resource := range resources {
-		if err := global.Mysql.Where("resource_id = ?", resource.ID).Delete(&model.VideoIndexFile{}).Error; err != nil {
-			utils.ErrorLog("删除旧索引文件失败", "transcoding", err.Error())
-		}
+		global.Mysql.Where("resource_id = ?", resource.ID).Delete(&model.VideoIndexFile{})
 	}
 
 	// 软删除旧的资源记录
@@ -1240,58 +1258,22 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 		global.Mysql.Model(&resource).Update("deleted_at", time.Now())
 	}
 
-	// 为每个分P创建新的资源记录并启动转码
-	// 检查是否有多个分P使用同一个目录，如果需要串行处理
+	// ========== 第3步：创建新资源并串行启动转码 ==========
 	type transcodingTask struct {
-		resource      model.Resource
-		inputFilePath string
-		dirNameStr    string
-		fileID        uint
+		resource model.Resource
+		info     *dto.TranscodingInfo
 	}
-
 	var tasks []transcodingTask
-	for _, resource := range resources {
-		var inputFilePath string
-		var dirNameStr string
-		var fileID uint
-		var fileSuffix string
 
-		// 尝试通过resource的FileID获取对应的VideoFile
-		if resource.FileID != 0 {
-			var vf model.VideoFile
-			global.Mysql.Where("id = ?", resource.FileID).First(&vf)
-			if vf.ID != 0 && vf.DirName != "" {
-				fileSuffix = utils.GetFileSuffix(vf.OriginalName)
-				inputFilePath = "./upload/video/" + vf.DirName + "/upload" + fileSuffix
-				dirNameStr = vf.DirName
-				fileID = vf.ID
-			}
-		}
+	for _, rf := range rfInfos {
+		suffix := utils.GetFileSuffix(rf.vf.OriginalName)
+		inputPath := "./upload/video/" + rf.vf.DirName + "/upload" + suffix
 
-		// 如果FileID为0或未找到VideoFile，尝试通过VideoIndexFile查找DirName
-		if dirNameStr == "" {
-			var indexFile model.VideoIndexFile
-			global.Mysql.Where("resource_id = ?", resource.ID).First(&indexFile)
-			if indexFile.DirName != "" {
-				// 通过 DirName 查找 VideoFile 获取后缀
-				var vf model.VideoFile
-				global.Mysql.Where("dir_name = ?", indexFile.DirName).First(&vf)
-				fileSuffix = utils.GetFileSuffix(vf.OriginalName)
-				inputFilePath = "./upload/video/" + indexFile.DirName + "/upload" + fileSuffix
-				dirNameStr = indexFile.DirName
-				fileID = resource.FileID
-			}
-		}
-
-		// 如果仍然没有找到，使用默认的dirName（来自第一个资源的VideoFile）
-		if dirNameStr == "" {
-			inputFilePath = inputPath
-			dirNameStr = dirName
-			fileID = videoFile.ID
-		}
-
-		if _, err := os.Stat(inputFilePath); os.IsNotExist(err) {
-			utils.ErrorLog("分P原始视频文件不存在，跳过", "transcoding", inputFilePath)
+		// 探测视频信息
+		info, err := ProcessVideoInfo(inputPath)
+		if err != nil {
+			utils.ErrorLog("读取视频信息失败，跳过", "transcoding",
+				fmt.Sprintf("resourceID=%d, file=%s, err=%v", rf.resource.ID, inputPath, err))
 			continue
 		}
 
@@ -1299,75 +1281,63 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 		newResource := model.Resource{
 			Vid:       videoId,
 			Uid:       video.Uid,
-			Title:     resource.Title,
-			CodecName: resource.CodecName,
+			Title:     rf.resource.Title,
+			CodecName: info.CodecName,
 			Status:    global.VIDEO_PROCESSING,
-			Duration:  resource.Duration,
-			FileID:    fileID,
+			Duration:  info.Duration,
+			FileID:    rf.vf.ID,
 		}
 		if err := global.Mysql.Create(&newResource).Error; err != nil {
 			utils.ErrorLog("创建新资源记录失败", "transcoding", err.Error())
 			continue
 		}
 
-		tasks = append(tasks, transcodingTask{
-			resource:      newResource,
-			inputFilePath: inputFilePath,
-			dirNameStr:    dirNameStr,
-			fileID:        fileID,
-		})
-	}
-
-	// 检查是否所有任务使用同一个目录
-	sameDir := true
-	if len(tasks) > 1 {
-		firstDir := tasks[0].dirNameStr
-		for _, task := range tasks[1:] {
-			if task.dirNameStr != firstDir {
-				sameDir = false
-				break
-			}
-		}
-	}
-
-	// 为每个分P启动转码
-	for _, task := range tasks {
 		transcodingInfo := &dto.TranscodingInfo{
-			VideoID:    videoId,
-			ResourceID: task.resource.ID,
-			InputFile:  task.inputFilePath,
-			OutputDir:  "./upload/video/" + task.dirNameStr + "/",
+			VideoID:         videoId,
+			ResourceID:      newResource.ID,
+			InputFile:       inputPath,
+			OutputDir:       "./upload/video/" + rf.vf.DirName + "/",
+			DirName:         rf.vf.DirName,
+			Suffix:          suffix,
+			Width:           info.Width,
+			Height:          info.Height,
+			Duration:        info.Duration,
+			CodecName:       info.CodecName,
+			FPS:             info.FPS,
+			FPS30:           info.FPS30,
+			FPS60:           info.FPS60,
+			AudioBitRate:    info.AudioBitRate,
+			AudioSampleRate: info.AudioSampleRate,
+			AudioChannels:   info.AudioChannels,
 		}
 
-		// 解析视频信息
-		info, err := ProcessVideoInfo(transcodingInfo.InputFile)
-		if err != nil {
-			utils.ErrorLog("读取视频信息失败", "transcoding", err.Error())
-			continue
-		}
-		transcodingInfo.Width = info.Width
-		transcodingInfo.Height = info.Height
-		transcodingInfo.Duration = info.Duration
-		transcodingInfo.DirName = task.dirNameStr
-		transcodingInfo.CodecName = info.CodecName
-		transcodingInfo.FPS = info.FPS
-		transcodingInfo.FPS30 = info.FPS30
-		transcodingInfo.FPS60 = info.FPS60
-
-		// 如果多个分P使用同一目录，需要串行处理（等待上一个完成）
-		if sameDir && len(tasks) > 1 {
-			// 等待一下，让前一个转码任务有机会启动
-			time.Sleep(2 * time.Second)
-		}
-
-		// 启动转码（异步）
-		go VideoTransCoding(transcodingInfo)
+		tasks = append(tasks, transcodingTask{resource: newResource, info: transcodingInfo})
 	}
+
+	if len(tasks) == 0 {
+		return errors.New("没有可转码的分P")
+	}
+
+	// 串行启动转码：每个分P独立目录，用 channel 确保上一个完成后再启动下一个
+	// 避免多个转码任务同时竞争系统资源
+	go func() {
+		for i, task := range tasks {
+			utils.InfoLog(fmt.Sprintf("【重新转码】开始第 %d/%d 个分P: ResourceID=%d, DirName=%s",
+				i+1, len(tasks), task.info.ResourceID, task.info.DirName), "transcoding")
+
+			// 同步执行，等待当前分P转码完成后再启动下一个
+			VideoTransCoding(task.info)
+
+			utils.InfoLog(fmt.Sprintf("【重新转码】第 %d/%d 个分P完成: ResourceID=%d",
+				i+1, len(tasks), task.info.ResourceID), "transcoding")
+		}
+		utils.InfoLog(fmt.Sprintf("【重新转码完成】VideoID=%d, 共%d个分P", videoId, len(tasks)), "transcoding")
+	}()
 
 	// 删除视频信息缓存
 	cache.DelVideoInfo(videoId)
 
-	utils.InfoLog(fmt.Sprintf("【重新转码】VideoID=%d, 资源数=%d", videoId, len(resources)), "transcoding")
+	utils.InfoLog(fmt.Sprintf("【重新转码】VideoID=%d, 提交%d个分P转码任务", videoId, len(tasks)), "transcoding")
 	return nil
 }
 

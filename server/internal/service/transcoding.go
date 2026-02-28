@@ -1031,46 +1031,44 @@ func completeTransCoding(videoId, resourceId uint, status int) error {
 	tx.Model(&model.Resource{}).Where("vid = ? and status = ? and id != ?", videoId, global.VIDEO_PROCESSING, resourceId).Count(&processingCount)
 	utils.InfoLog(fmt.Sprintf("【事务查询】VideoID=%d 除当前资源外,仍在转码中(status=200)的资源数=%d", videoId, processingCount), "transcoding")
 
-	// 如果还有其他资源在转码中,当前资源保持VIDEO_PROCESSING状态,不更新
-	// 只有当所有资源都转码完成时,才统一更新所有资源状态
-	if processingCount > 0 {
-		utils.InfoLog(fmt.Sprintf("【跳过更新】还有%d个其他资源在转码中,当前资源保持VIDEO_PROCESSING(200)状态", processingCount), "transcoding")
-		// 不更新资源状态,直接提交事务
-		if err := tx.Commit().Error; err != nil {
-			utils.ErrorLog("【事务失败】提交事务失败", "transcoding", err.Error())
-			return err
-		}
-		utils.InfoLog("【事务提交】成功（资源状态未更新）", "transcoding")
-		cache.DelVideoInfo(videoId)
-		utils.InfoLog(fmt.Sprintf("【缓存清理】删除VideoID=%d的缓存", videoId), "transcoding")
-		utils.InfoLog("========== completeTransCoding 结束 ==========", "transcoding")
-		return nil
-	}
-
-	// 所有资源都转码完成了,现在统一更新状态
-	utils.InfoLog("【判断】所有资源转码已完成,准备统一更新所有资源状态", "transcoding")
-
 	// 如果视频已经审核通过,资源应该直接设为审核通过状态
 	if currentVideo.Status == global.AUDIT_APPROVED && status == global.WAITING_REVIEW {
 		status = global.AUDIT_APPROVED
 		utils.InfoLog("【状态修正】视频已审核通过,资源status从WAITING_REVIEW(500)改为AUDIT_APPROVED(0)", "transcoding")
 	}
 
-	// 统一更新所有转码中的资源状态(包括当前资源)
-	result := tx.Model(&model.Resource{}).Where("vid = ? and status = ?", videoId, global.VIDEO_PROCESSING).Updates(
+	// 先更新当前资源的状态（无论是否还有其他资源在转码）
+	result := tx.Model(&model.Resource{}).Where("id = ? and status = ?", resourceId, global.VIDEO_PROCESSING).Updates(
 		map[string]any{
 			"status": status,
 		},
 	)
 	if result.Error != nil {
 		tx.Rollback()
-		utils.ErrorLog("【事务失败】批量更新资源状态失败", "transcoding", result.Error.Error())
+		utils.ErrorLog("【事务失败】更新当前资源状态失败", "transcoding", result.Error.Error())
 		return result.Error
 	}
-	utils.InfoLog(fmt.Sprintf("【事务执行】批量更新resource表 VideoID=%d所有资源 status=%d, 影响行数=%d", videoId, status, result.RowsAffected), "transcoding")
+	utils.InfoLog(fmt.Sprintf("【事务执行】更新resource表 ResourceID=%d status=%d, 影响行数=%d", resourceId, status, result.RowsAffected), "transcoding")
 
-	// 所有资源状态已更新完成,现在更新视频状态
-	utils.InfoLog("【判断】所有资源转码已完成，准备更新video状态", "transcoding")
+	// 每个资源转码完成后立即更新对应的 VideoFile 状态为已就绪
+	updateVideoFileStatus(currentResource, resourceId)
+
+	// 如果还有其他资源在转码中,只更新当前资源,不更新视频状态
+	if processingCount > 0 {
+		utils.InfoLog(fmt.Sprintf("【部分完成】还有%d个其他资源在转码中,仅更新当前资源状态,不更新视频状态", processingCount), "transcoding")
+		if err := tx.Commit().Error; err != nil {
+			utils.ErrorLog("【事务失败】提交事务失败", "transcoding", err.Error())
+			return err
+		}
+		utils.InfoLog("【事务提交】成功（仅更新当前资源状态）", "transcoding")
+		cache.DelVideoInfo(videoId)
+		utils.InfoLog(fmt.Sprintf("【缓存清理】删除VideoID=%d的缓存", videoId), "transcoding")
+		utils.InfoLog("========== completeTransCoding 结束 ==========", "transcoding")
+		return nil
+	}
+
+	// 所有资源都转码完成了，准备更新视频状态
+	utils.InfoLog("【判断】所有资源转码已完成,准备更新视频状态", "transcoding")
 
 	// 检查所有资源是否都失败了
 	var totalCount int64
@@ -1115,14 +1113,25 @@ func completeTransCoding(videoId, resourceId uint, status int) error {
 
 	utils.InfoLog("【事务提交】成功", "transcoding")
 
-	// 更新关联的 VideoFile 状态为已就绪（支持全局去重秒传）
+	// 转码完成后删除视频缓存，让下次查询时重新加载最新状态
+	cache.DelVideoInfo(videoId)
+	utils.InfoLog(fmt.Sprintf("【缓存清理】删除VideoID=%d的缓存", videoId), "transcoding")
+
+	utils.InfoLog("========== completeTransCoding 结束 ==========", "transcoding")
+
+	return nil
+}
+
+// updateVideoFileStatus 更新关联的 VideoFile 状态为已就绪（支持全局去重秒传）
+// 每个资源转码完成后都应调用，而不是只在最后一个资源完成时调用
+func updateVideoFileStatus(currentResource model.Resource, resourceId uint) {
 	if currentResource.FileID != 0 {
 		result := global.Mysql.Model(&model.VideoFile{}).Where("id = ? AND status != ?", currentResource.FileID, model.FileStatusReady).
 			Update("status", model.FileStatusReady)
 		if result.Error != nil {
 			utils.ErrorLog(fmt.Sprintf("【警告】更新VideoFile状态失败, FileID=%d", currentResource.FileID), "transcoding", result.Error.Error())
 		} else {
-			utils.InfoLog(fmt.Sprintf("【VideoFile状态更新】FileID=%d 状态设为 FileStatusReady(3), 影响行数=%d", currentResource.FileID, result.RowsAffected), "transcoding")
+			utils.InfoLog(fmt.Sprintf("【VideoFile状态更新】FileID=%d 状态设为 FileStatusReady(4), 影响行数=%d", currentResource.FileID, result.RowsAffected), "transcoding")
 		}
 	} else {
 		// 兼容旧数据：Resource.FileID 为 0 时，尝试通过 VideoIndexFile.DirName 找到对应的 VideoFile 并更新
@@ -1133,7 +1142,7 @@ func completeTransCoding(videoId, resourceId uint, status int) error {
 			if result.Error != nil {
 				utils.ErrorLog(fmt.Sprintf("【警告】通过DirName更新VideoFile状态失败, DirName=%s", videoIndex.DirName), "transcoding", result.Error.Error())
 			} else if result.RowsAffected > 0 {
-				utils.InfoLog(fmt.Sprintf("【VideoFile状态更新】DirName=%s 状态设为 FileStatusReady(3), 影响行数=%d", videoIndex.DirName, result.RowsAffected), "transcoding")
+				utils.InfoLog(fmt.Sprintf("【VideoFile状态更新】DirName=%s 状态设为 FileStatusReady(4), 影响行数=%d", videoIndex.DirName, result.RowsAffected), "transcoding")
 
 				// 同时更新 Resource.FileID（补充旧数据）
 				var vf model.VideoFile
@@ -1144,14 +1153,6 @@ func completeTransCoding(videoId, resourceId uint, status int) error {
 			}
 		}
 	}
-
-	// 转码完成后删除视频缓存，让下次查询时重新加载最新状态
-	cache.DelVideoInfo(videoId)
-	utils.InfoLog(fmt.Sprintf("【缓存清理】删除VideoID=%d的缓存", videoId), "transcoding")
-
-	utils.InfoLog("========== completeTransCoding 结束 ==========", "transcoding")
-
-	return nil
 }
 
 // 注册转码进程
