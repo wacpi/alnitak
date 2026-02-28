@@ -1,5 +1,5 @@
 const title = "弹幕网站标题";
-const https = false;
+const https = window.location.protocol === 'https:';
 const domain = "localhost:9000";
 const icp = "icp备案信息";
 const security = "公网安备信息";

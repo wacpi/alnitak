@@ -49,20 +49,21 @@ export const uploadFileAPI = ({ name, file, action, onProgress, onFinish, onErro
 export const uploadFileChunkAPI = async ({ name, file, action, onProgress, onFinish, onError }: UploadOptionsType) => {
   onProgress(0);
   const hash = await getFileMD5(file)
+  const size = file.size
 
   const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
-  const formDataGenerator = createFormDataGenerator(hash, name, file.name, totalChunks.toString());
+  const formDataGenerator = createFormDataGenerator(hash, name, file.name, totalChunks.toString(), size);
 
-  // 检查是否可以秒传
-  const { chunks: uploadedChunks, instantUpload } = await getUploadedChunksAPI(hash)
+  // 检查是否可以秒传，获取 fileID
+  const { chunks: uploadedChunks, instantUpload, fileID } = await getUploadedChunksAPI(hash, size)
 
   // 【秒传】文件已存在且转码完成，直接完成上传
   if (instantUpload) {
-    console.log('【秒传】文件已存在，跳过上传直接完成')
+    console.log('【秒传】文件已存在，跳过上传直接完成, fileID:', fileID)
     onProgress(100);
     // 秒传时跳过合并，直接调用创建接口
     try {
-      const res = await request.post(action, { hash }, {
+      const res = await request.post(action, { hash, fileID, size }, {
         timeout: MERGE_TIMEOUT,
       });
       if (res.data.code === statusCode.OK) {
@@ -74,7 +75,7 @@ export const uploadFileChunkAPI = async ({ name, file, action, onProgress, onFin
       console.error('秒传完成请求失败', error);
       onError(error);
     }
-    return { controllers: [] };
+    return { controllers: [], fileID };
   }
 
   const tasks: number[] = []
@@ -85,8 +86,8 @@ export const uploadFileChunkAPI = async ({ name, file, action, onProgress, onFin
   }
 
   if (tasks.length === 0) {
-    finishUploadAPI({ hash, action, onFinish, onError })
-    return { controllers: [] };
+    finishUploadAPI({ hash, fileID, size, action, onFinish, onError })
+    return { controllers: [], fileID };
   }
 
   // 如果服务器不存在数据则手动上传第一个分片（带重试）
@@ -104,8 +105,8 @@ export const uploadFileChunkAPI = async ({ name, file, action, onProgress, onFin
           tasks.splice(tasks.indexOf(0), 1);
       // 检查是否完成所有分片上传（针对小文件只有一个分片的情况）
       if (uploadedChunks.length === totalChunks) {
-        finishUploadAPI({ hash, action, onFinish, onError });
-        return { controllers: [controller] };
+        finishUploadAPI({ hash, fileID, size, action, onFinish, onError });
+        return { controllers: [controller], fileID };
       }
           firstChunkSuccess = true;
           break;
@@ -121,7 +122,7 @@ export const uploadFileChunkAPI = async ({ name, file, action, onProgress, onFin
 
     if (!firstChunkSuccess) {
       onError({ msg: '首个分片上传失败，请检查网络后重试' });
-      return { controllers: [controller] };
+      return { controllers: [controller], fileID };
     }
   }
   // 上传进度
@@ -154,7 +155,7 @@ export const uploadFileChunkAPI = async ({ name, file, action, onProgress, onFin
         // 更新进度
         const progress = Math.floor((uploadedChunksCount / totalChunks) * 100);
         if (uploadedChunksCount === totalChunks) {
-          finishUploadAPI({ hash, action, onFinish, onError });
+          finishUploadAPI({ hash, fileID, size, action, onFinish, onError });
         } else {
           onProgress(progress);
         }
@@ -190,14 +191,15 @@ export const uploadFileChunkAPI = async ({ name, file, action, onProgress, onFin
 
   // 开始处理队列
   processQueue();
-  return { controllers };
+  return { controllers, fileID };
 }
 
-const createFormDataGenerator = (hash: string, name: string, fileName: string, totalChunks: string) => {
+const createFormDataGenerator = (hash: string, name: string, fileName: string, totalChunks: string, size: number) => {
   const savedHash = hash;
   const savedName = name;
   const savedFileName = fileName;
   const savedTotalChunks = totalChunks;
+  const savedSize = size;
 
   return (chunk: Blob, i: string) => {
     const formData = new FormData();
@@ -206,25 +208,28 @@ const createFormDataGenerator = (hash: string, name: string, fileName: string, t
     formData.append('name', savedFileName);
     formData.append('chunkIndex', i.toString());
     formData.append('totalChunks', savedTotalChunks);
+    formData.append('size', savedSize.toString());
 
     return formData;
   };
 }
 
-// 检查上传进度，返回 { chunks: number[], instantUpload: boolean }
+// 检查上传进度，返回 { chunks: number[], fileID: number, instantUpload: boolean }
+// fileID: 视频文件ID，用于后续合并
 // instantUpload=true 表示文件已存在可秒传
-const getUploadedChunksAPI = async (hash: string): Promise<{ chunks: number[], instantUpload: boolean }> => {
-  const res = await request.post("v1/upload/checkVideo", { hash }, {})
+const getUploadedChunksAPI = async (hash: string, size: number): Promise<{ chunks: number[], fileID: number, instantUpload: boolean }> => {
+  const res = await request.post("v1/upload/checkVideo", { hash, size }, {})
   if (res.data.code === statusCode.OK) {
     const chunks = res.data.data.chunks || []
+    const fileID = res.data.data.fileID || 0
     // 后端返回 [-1] 表示文件已就绪，可以秒传
     if (chunks.length === 1 && chunks[0] === -1) {
-      return { chunks: [], instantUpload: true }
+      return { chunks: [], fileID, instantUpload: true }
     }
-    return { chunks, instantUpload: false }
+    return { chunks, fileID, instantUpload: false }
   }
 
-  return { chunks: [], instantUpload: false }
+  return { chunks: [], fileID: 0, instantUpload: false }
 }
 
 const uploadChunkAPI = (formData: FormData, controller?: AbortController) => {
@@ -234,9 +239,9 @@ const uploadChunkAPI = (formData: FormData, controller?: AbortController) => {
   })
 }
 
-const mergeUploadedChunksAPI = async (hash: string, retryCount = 0): Promise<boolean> => {
+const mergeUploadedChunksAPI = async (hash: string, fileID: number, size: number, retryCount = 0): Promise<boolean> => {
   try {
-    const res = await request.post("v1/upload/mergeVideo", { hash }, {
+    const res = await request.post("v1/upload/mergeVideo", { hash, fileID, size }, {
       timeout: MERGE_TIMEOUT,
     });
     if (res.data.code === statusCode.OK) {
@@ -246,7 +251,7 @@ const mergeUploadedChunksAPI = async (hash: string, retryCount = 0): Promise<boo
     if (retryCount < MAX_RETRIES) {
       console.warn(`合并分片失败，${retryCount + 1}/${MAX_RETRIES} 次重试中...`);
       await delay(getRetryDelay(retryCount));
-      return mergeUploadedChunksAPI(hash, retryCount + 1);
+      return mergeUploadedChunksAPI(hash, fileID, size, retryCount + 1);
     }
     return false;
   } catch (error) {
@@ -254,17 +259,17 @@ const mergeUploadedChunksAPI = async (hash: string, retryCount = 0): Promise<boo
     if (retryCount < MAX_RETRIES) {
       console.warn(`合并分片网络错误，${retryCount + 1}/${MAX_RETRIES} 次重试中...`, error);
       await delay(getRetryDelay(retryCount));
-      return mergeUploadedChunksAPI(hash, retryCount + 1);
+      return mergeUploadedChunksAPI(hash, fileID, size, retryCount + 1);
     }
     console.error('合并分片失败，已达到最大重试次数');
     return false;
   }
 }
 
-const finishUploadAPI = async ({ hash, action, onFinish, onError }: FinishUploadType) => {
-  if (await mergeUploadedChunksAPI(hash)) {
+const finishUploadAPI = async ({ hash, fileID, size, action, onFinish, onError }: FinishUploadType) => {
+  if (await mergeUploadedChunksAPI(hash, fileID, size)) {
     try {
-      const res = await request.post(action, { hash }, {
+      const res = await request.post(action, { hash, fileID, size }, {
         timeout: MERGE_TIMEOUT,
       });
       if (res.data.code === statusCode.OK) {

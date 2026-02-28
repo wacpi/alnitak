@@ -31,7 +31,17 @@ export const getResourceQualityApi = async (resourceId: number | string) => {
   return request.get(`v1/video/getResourceQuality?resourceId=${resourceId}`)
 }
 
-// 获取视频文件URL
+// 获取视频文件URL（HLS格式）
 export const getVideoFileUrl = (resourceId: number, quality: string) => {
-  return `${baseURL}/api/v1/video/getVideoFile?resourceId=${resourceId}&quality=${quality}`;
+  return `${baseURL}/api/v1/video/getVideoFile?resourceId=${resourceId}&quality=${quality}&format=m3u8`;
+}
+
+// 获取视频文件URL（DASH格式）
+export const getVideoFileUrlDash = (resourceId: number, quality: string) => {
+  return `${baseURL}/api/v1/video/getVideoFile?resourceId=${resourceId}&quality=${quality}&format=dash`;
+}
+
+// 获取统一DASH MPD URL（所有清晰度合并到一个MPD，用于无缝切换）
+export const getVideoFileUrlDashUnified = (resourceId: number) => {
+  return `${baseURL}/api/v1/video/getVideoFile?resourceId=${resourceId}&format=dash-unified`;
 }
