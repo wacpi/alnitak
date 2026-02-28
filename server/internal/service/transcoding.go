@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -19,109 +18,6 @@ import (
 	"interastral-peace.com/alnitak/internal/global"
 	"interastral-peace.com/alnitak/utils"
 )
-
-// 需要转换为H.264中间格式的编码
-var needTranscodeCodecs = map[string]bool{
-	"av1":  false, // 改为 false，不再强制转码为 H.264 中间件
-	"vp9":  false,
-	"vp8":  false,
-	"vp7":  false,
-	"hevc": false,
-}
-
-// convertToH264IfNeeded 源文件转码为H264后，删除源文件，重命名为upload{suffix}
-func convertToH264IfNeeded(inputFile, outputDir, suffix string) (string, error) {
-	intermediateFile := outputDir + "intermediate_h264.mp4"
-	targetFile := outputDir + "upload" + suffix
-
-	// 0. 检查目标文件是否存在（转换已完成）
-	if _, err := os.Stat(targetFile); err == nil {
-		utils.InfoLog("【中间格式转换】目标文件已存在，直接使用", "transcoding")
-		// 删除中间文件（如果存在）
-		os.Remove(intermediateFile)
-		return targetFile, nil
-	}
-
-	// 1. 检查中间文件是否存在且有效
-	if _, err := os.Stat(intermediateFile); err == nil {
-		if checkVideoFileValid(intermediateFile) {
-			utils.InfoLog("【中间格式转换】使用已有的中间文件", "transcoding")
-			// 删除源文件
-			os.Remove(inputFile)
-			// 重命名中间文件为目标文件
-			if err := os.Rename(intermediateFile, targetFile); err != nil {
-				utils.ErrorLog("【中间格式转换】重命名失败", "transcoding", err.Error())
-				return intermediateFile, err
-			}
-			return targetFile, nil
-		}
-		// 中间文件损坏，删除残留文件
-		os.Remove(intermediateFile)
-	}
-
-	// 2. 检查输入文件是否存在
-	if _, err := os.Stat(inputFile); os.IsNotExist(err) {
-		utils.ErrorLog("【中间格式转换】输入文件不存在，跳过转换", "transcoding", inputFile)
-		return inputFile, errors.New("输入文件不存在")
-	}
-
-	// 3. 获取源视频编码信息
-	videoInfo, err := getVideoInfo(inputFile)
-	if err != nil {
-		return inputFile, nil
-	}
-
-	if len(videoInfo.Stream) == 0 {
-		return inputFile, nil
-	}
-
-	codecName := strings.ToLower(videoInfo.Stream[0].CodecName)
-	// 如果配置为 false（如 AV1/VP9），则直接跳过转换
-	if !needTranscodeCodecs[codecName] {
-		return inputFile, nil
-	}
-
-	utils.InfoLog(fmt.Sprintf("【中间格式转换】检测到源编码=%s，需要转换为H.264", codecName), "transcoding")
-
-	// 4. 执行转换（先转换，成功后再删除源文件）
-	utils.InfoLog("【中间格式转换】开始转换...", "transcoding")
-	cmd := exec.Command("ffmpeg", "-i", inputFile, "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-		"-c:a", "aac", "-b:a", "320k", "-y", intermediateFile)
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		utils.ErrorLog("【中间格式转换】失败", "transcoding", string(output))
-		return inputFile, err
-	}
-
-	// 5. 转换成功后删除源文件
-	if err := os.Remove(inputFile); err != nil {
-		utils.ErrorLog("【中间格式转换】删除源文件失败", "transcoding", err.Error())
-	} else {
-		utils.InfoLog("【中间格式转换】已删除源文件: "+inputFile, "transcoding")
-	}
-
-	// 6. 重命名为 upload.mp4
-	if err := os.Rename(intermediateFile, targetFile); err != nil {
-		utils.ErrorLog("【中间格式转换】重命名失败", "transcoding", err.Error())
-		return intermediateFile, err
-	}
-
-	utils.InfoLog("【中间格式转换】完成: "+targetFile, "transcoding")
-	return targetFile, nil
-}
-
-// checkVideoFileValid 检查视频文件是否有效（能否读取视频信息）
-func checkVideoFileValid(filePath string) bool {
-	videoInfo, err := getVideoInfo(filePath)
-	if err != nil {
-		return false
-	}
-	if len(videoInfo.Stream) == 0 {
-		return false
-	}
-	return true
-}
 
 // getMP4InitRange 从 fMP4 文件中提取初始化范围
 // 返回: initRange (0 到 moov 结束), indexRange (sidx 范围，如果没有 sidx 则用整个文件)
@@ -308,21 +204,80 @@ func ProcessVideoInfo(input string) (*dto.TranscodingInfo, error) {
 		return &transcodingInfo, err
 	}
 
+	// 从流中分别找到视频流和音频流
+	var videoStream *global.Streams
+	var audioStream *global.Streams
+	for i := range videoData.Stream {
+		switch videoData.Stream[i].CodecType {
+		case "video":
+			if videoStream == nil {
+				videoStream = &videoData.Stream[i]
+			}
+		case "audio":
+			if audioStream == nil {
+				audioStream = &videoData.Stream[i]
+			}
+		}
+	}
+
+	// 兼容旧逻辑：如果按 codec_type 没找到视频流，回退到 Stream[0]
+	if videoStream == nil && len(videoData.Stream) > 0 {
+		videoStream = &videoData.Stream[0]
+	}
+
+	if videoStream == nil {
+		return &transcodingInfo, fmt.Errorf("未找到视频流: %s", input)
+	}
+
 	// 计算最大分辨率
-	transcodingInfo.Width = videoData.Stream[0].Width
-	transcodingInfo.Height = videoData.Stream[0].Height
-	transcodingInfo.CodecName = videoData.Stream[0].CodecName
+	transcodingInfo.Width = videoStream.Width
+	transcodingInfo.Height = videoStream.Height
+	transcodingInfo.CodecName = videoStream.CodecName
 
 	// 获取视频时长（优先使用 stream.duration，若为空则使用 format.duration）
-	durationStr := videoData.Stream[0].Duration
+	durationStr := videoStream.Duration
 	if durationStr == "" {
 		durationStr = videoData.Format.Duration
 	}
 	transcodingInfo.Duration, _ = strconv.ParseFloat(durationStr, 64)
 
 	// 获取帧率（使用 AvgFrameRate，转码时会统一转换为标准30帧）
-	transcodingInfo.FPS = videoData.Stream[0].AvgFrameRate
+	transcodingInfo.FPS = videoStream.AvgFrameRate
 	transcodingInfo.FPS30, transcodingInfo.FPS60 = getFpsInfo(transcodingInfo.FPS)
+
+	// 提取音频流参数（动态探测，最大可能保持源文件音频特性）
+	if audioStream != nil {
+		// 采样率
+		if sr, err := strconv.Atoi(audioStream.SampleRate); err == nil && sr > 0 {
+			transcodingInfo.AudioSampleRate = sr
+		}
+		// 声道数
+		if audioStream.Channels > 0 {
+			transcodingInfo.AudioChannels = audioStream.Channels
+		}
+		// 码率（ffprobe 返回 bps 字符串，如 "320000"）
+		if br, err := strconv.Atoi(audioStream.BitRate); err == nil && br > 0 {
+			transcodingInfo.AudioBitRate = br
+		}
+		utils.InfoLog(fmt.Sprintf("【音频探测】采样率=%d, 声道数=%d, 码率=%d bps",
+			transcodingInfo.AudioSampleRate, transcodingInfo.AudioChannels, transcodingInfo.AudioBitRate), "transcoding")
+	}
+
+	// 设置默认值（源文件缺失音频信息时的兜底）
+	if transcodingInfo.AudioSampleRate == 0 {
+		transcodingInfo.AudioSampleRate = 48000
+	}
+	if transcodingInfo.AudioChannels == 0 {
+		transcodingInfo.AudioChannels = 2
+	}
+	if transcodingInfo.AudioBitRate == 0 {
+		transcodingInfo.AudioBitRate = 320000
+	}
+
+	// 音频码率上限限制：最高 320kbps，避免不合理的高码率
+	if transcodingInfo.AudioBitRate > 320000 {
+		transcodingInfo.AudioBitRate = 320000
+	}
 
 	return &transcodingInfo, nil
 }
@@ -334,18 +289,6 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 
 	// 初始化并发控制
 	initTranscodingSemaphore()
-
-	// 检查是否需要转换为中间格式
-	inputFile := transcodingInfo.InputFile
-	convertedFile, err := convertToH264IfNeeded(transcodingInfo.InputFile, transcodingInfo.OutputDir, transcodingInfo.Suffix)
-	if err != nil {
-		utils.ErrorLog("【中间格式转换】失败，继续使用原文件", "transcoding", err.Error())
-	} else if convertedFile != transcodingInfo.InputFile {
-		utils.InfoLog(fmt.Sprintf("【使用中间文件】%s -> %s", transcodingInfo.InputFile, convertedFile), "transcoding")
-		inputFile = convertedFile
-		// 更新TranscodingInfo中的输入文件路径
-		transcodingInfo.InputFile = inputFile
-	}
 
 	utils.InfoLog(fmt.Sprintf("【转码开始】VideoID=%d, ResourceID=%d, 目标数量=%d",
 		transcodingInfo.VideoID, transcodingInfo.ResourceID, len(getTranscodingTarget(transcodingInfo))), "transcoding")
@@ -446,8 +389,10 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 			}
 
 			if needEncodeAudio {
-				utils.InfoLog("【编码音频】audio.m4s", "transcoding")
-				if err := encodeAudioOnly(ctx, transcodingInfo.InputFile, audioFile); err != nil {
+				utils.InfoLog(fmt.Sprintf("【编码音频】audio.m4s (码率=%dk, 采样率=%d, 声道=%d)",
+					transcodingInfo.AudioBitRate/1000, transcodingInfo.AudioSampleRate, transcodingInfo.AudioChannels), "transcoding")
+				if err := encodeAudioOnly(ctx, transcodingInfo.InputFile, audioFile,
+					transcodingInfo.AudioBitRate, transcodingInfo.AudioSampleRate, transcodingInfo.AudioChannels); err != nil {
 					utils.ErrorLog("【音频编码失败】", "transcoding", err.Error())
 					wg.Done()
 					return
@@ -515,11 +460,11 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 				VideoInitRange:  videoInitRange,
 				VideoIndexRange: videoIndexRange,
 
-				// 音频流信息
+				// 音频流信息（使用源文件探测的动态参数）
 				AudioFile:       "audio.m4s",
-				AudioBandwidth:  320000,
+				AudioBandwidth:  transcodingInfo.AudioBitRate,
 				AudioCodec:      "mp4a.40.2",
-				AudioSampleRate: 48000,
+				AudioSampleRate: transcodingInfo.AudioSampleRate,
 				AudioInitRange:  audioInitRange,
 				AudioIndexRange: audioIndexRange,
 			}
@@ -691,18 +636,27 @@ func getVideoInfo(input string) (info global.VideoInfo, err error) {
 		return info, err
 	}
 
-	// 提取帧率信息
-	if len(info.Stream) > 0 && info.Stream[0].AvgFrameRate != "" {
-		// 将帧率转换为浮点数（例如 "30000/1001" 转换为 29.97）
-		parts := strings.Split(info.Stream[0].AvgFrameRate, "/")
-		if len(parts) == 2 {
-			numerator, _ := strconv.Atoi(parts[0])
-			denominator, _ := strconv.Atoi(parts[1])
-			if denominator != 0 {
-				// 将浮点数转换为字符串
-				info.Stream[0].RFrameRate = fmt.Sprintf("%.2f", float64(numerator)/float64(denominator))
+	// 提取帧率信息：找到第一个视频流，将 AvgFrameRate 转换为浮点数字符串
+	for i := range info.Stream {
+		s := &info.Stream[i]
+		if s.CodecType != "video" && s.CodecType != "" {
+			continue
+		}
+		// 仅处理视频流（codec_type=="video" 或兼容旧数据 codec_type 为空时 Stream[0]）
+		if s.CodecType == "" && i > 0 {
+			break
+		}
+		if s.AvgFrameRate != "" {
+			parts := strings.Split(s.AvgFrameRate, "/")
+			if len(parts) == 2 {
+				numerator, _ := strconv.Atoi(parts[0])
+				denominator, _ := strconv.Atoi(parts[1])
+				if denominator != 0 {
+					s.RFrameRate = fmt.Sprintf("%.2f", float64(numerator)/float64(denominator))
+				}
 			}
 		}
+		break
 	}
 
 	return info, nil
@@ -729,9 +683,9 @@ func parseFPS(fps string) float64 {
 func encodeVideoOnly(ctx context.Context, videoID, resourceID uint, inputFile, outputFile, quality, rate, fps string, cancelFunc context.CancelFunc) error {
 	// 解析帧率，支持 "24000/1001" 或 "30" 格式
 	fpsFloat := parseFPS(fps)
-	gopSize := int(math.Round(fpsFloat * 2)) // 每2秒一个关键帧（Round确保精确对齐）
+	gopSize := int(math.Round(fpsFloat * 5)) // 每5秒一个关键帧，与B站和fragment对齐
 	if gopSize < 1 {
-		gopSize = 48 // 默认值
+		gopSize = 150 // 默认值（30fps * 5s）
 	}
 	gopSizeStr := strconv.Itoa(gopSize)
 	// bufsize = 2 * maxrate，确保ABR码率波动可控
@@ -756,15 +710,15 @@ func encodeVideoOnly(ctx context.Context, videoID, resourceID uint, inputFile, o
 		"-bf", "0", // 禁用 B 帧：fMP4 SegmentBase + audio-files 双流模式下，
 		// B 帧的非单调 PTS 在 fragment 边界会导致 mpv demuxer AV desync
 		"-b:v", rate,
-		"-maxrate", rate,       // 峰值码率限制，防止复杂场景码率飙升
-		"-bufsize", bufsize,    // VBV缓冲区大小
+		"-maxrate", rate, // 峰值码率限制，防止复杂场景码率飙升
+		"-bufsize", bufsize, // VBV缓冲区大小
 		"-r", fps,
-		"-g", gopSizeStr,           // 每2秒一个关键帧，便于seek
-		"-keyint_min", gopSizeStr,  // 最小关键帧间距=最大，确保关键帧序列完全规律
+		"-g", gopSizeStr, // 每5秒一个关键帧，与B站和fragment对齐
+		"-keyint_min", gopSizeStr, // 最小关键帧间距=最大，确保关键帧序列完全规律
 		"-sc_threshold", "0",
 		"-vsync", "cfr",
 		"-f", "mp4",
-		"-frag_duration", "2000000", // 每2秒一个fragment（微秒），与关键帧对齐
+		"-frag_duration", "5000000", // 每5秒一个fragment（微秒），与关键帧对齐，模仿B站
 		"-movflags", "+frag_keyframe+empty_moov+default_base_moof+dash+global_sidx",
 		"-y", outputFile,
 	}
@@ -795,9 +749,9 @@ func encodeVideoOnly(ctx context.Context, videoID, resourceID uint, inputFile, o
 func encodeVideoOnlyGPU(ctx context.Context, videoID, resourceID uint, inputFile, outputFile, quality, rate, fps string, cancelFunc context.CancelFunc) error {
 	// 解析帧率，支持 "24000/1001" 或 "30" 格式
 	fpsFloat := parseFPS(fps)
-	gopSize := int(math.Round(fpsFloat * 2)) // 每2秒一个关键帧（Round确保精确对齐）
+	gopSize := int(math.Round(fpsFloat * 5)) // 每5秒一个关键帧，与B站和fragment对齐
 	if gopSize < 1 {
-		gopSize = 48 // 默认值
+		gopSize = 150 // 默认值（30fps * 5s）
 	}
 	gopSizeStr := strconv.Itoa(gopSize)
 	// bufsize = 2 * maxrate，确保ABR码率波动可控
@@ -821,15 +775,15 @@ func encodeVideoOnlyGPU(ctx context.Context, videoID, resourceID uint, inputFile
 		"-bf", "0", // 禁用 B 帧：fMP4 SegmentBase + audio-files 双流模式下，
 		// B 帧的非单调 PTS 在 fragment 边界会导致 mpv demuxer AV desync
 		"-b:v", rate,
-		"-maxrate", rate,           // 峰值码率限制
-		"-bufsize", bufsize,        // VBV缓冲区大小
+		"-maxrate", rate, // 峰值码率限制
+		"-bufsize", bufsize, // VBV缓冲区大小
 		"-r", fps,
-		"-g", gopSizeStr,           // 每2秒一个关键帧，便于seek
+		"-g", gopSizeStr, // 每2秒一个关键帧，便于seek
 		"-sc_threshold", "0",
-		"-strict_gop", "1",         // NVENC强制严格GOP结构，防止关键帧漂移
+		"-strict_gop", "1", // NVENC强制严格GOP结构，防止关键帧漂移
 		"-vsync", "cfr",
 		"-f", "mp4",
-		"-frag_duration", "2000000", // 每2秒一个fragment（微秒），与关键帧对齐
+		"-frag_duration", "5000000", // 每5秒一个fragment（微秒），与关键帧对齐，模仿B站
 		"-movflags", "+frag_keyframe+empty_moov+default_base_moof+dash+global_sidx",
 		"-y", outputFile,
 	}
@@ -868,18 +822,23 @@ func encodeVideoOnlyGPU(ctx context.Context, videoID, resourceID uint, inputFile
 // 注意：音频没有关键帧概念，frag_keyframe 对纯音频无效，
 // 必须用 -frag_duration 强制按时间分片，否则整个音频只有一个 fragment，
 // 导致 HLS v7 byte-range 模式下 iOS 播放器无法正常加载
-func encodeAudioOnly(ctx context.Context, inputFile, outputFile string) error {
+func encodeAudioOnly(ctx context.Context, inputFile, outputFile string, audioBitRate, audioSampleRate, audioChannels int) error {
+	// 构建动态音频参数
+	bitRateStr := fmt.Sprintf("%dk", audioBitRate/1000)
+	sampleRateStr := strconv.Itoa(audioSampleRate)
+	channelsStr := strconv.Itoa(audioChannels)
+
 	command := []string{
 		"-i", inputFile,
 		"-filter_complex", "[0:a]asetpts=PTS-STARTPTS,aresample=async=1[aout]",
 		"-map", "[aout]",
 		"-vn",
 		"-c:a", "aac",
-		"-b:a", "320k",
-		"-ar", "48000",
-		"-ac", "2",
+		"-b:a", bitRateStr,
+		"-ar", sampleRateStr,
+		"-ac", channelsStr,
 		"-f", "mp4",
-		"-frag_duration", "2000000",
+		"-frag_duration", "5000000",
 		"-movflags", "+frag_keyframe+empty_moov+default_base_moof+dash+global_sidx",
 		"-y", outputFile,
 	}
