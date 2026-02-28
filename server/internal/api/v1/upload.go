@@ -87,7 +87,7 @@ func UploadVideoMerge(ctx *gin.Context) {
 		return
 	}
 
-	if err := service.UploadVideoMerge(ctx, videoFileReq.FileID); err != nil {
+	if err := service.UploadVideoMerge(ctx, videoFileReq); err != nil {
 		resp.FailWithMessage(ctx, err.Error())
 		return
 	}

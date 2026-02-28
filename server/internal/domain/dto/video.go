@@ -8,6 +8,7 @@ type VideoListReq struct {
 type VideoFileReq struct {
 	Hash   string
 	FileID uint
+	Size   int64
 }
 
 type VideoCheckResp struct {

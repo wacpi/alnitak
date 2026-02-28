@@ -115,9 +115,8 @@ func getMediaFileURL(dirName, fileName, key string) string {
 		}
 		return fmt.Sprintf("%s/api/v1/video/stream/%s?key=%s", domain, fileName, key)
 	}
-	// OSS 存储：获取签名直链
-	objectKey := "video/" + dirName + "/" + fileName
-	return global.Storage.GetObjectUrl(objectKey)
+	// OSS 存储：直接拼接公开URL
+	return global.GetOssUrl("video/" + dirName + "/" + fileName)
 }
 
 // buildMPDSegmentBase 生成 DASH MPD（SegmentBase 模式，类似B站）

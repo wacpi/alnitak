@@ -114,18 +114,28 @@ func calculateFileHash(file *multipart.FileHeader) (string, error) {
 func UploadVideoCreate(ctx *gin.Context, videoFileReq dto.VideoFileReq) (vo.ResourceResp, error) {
 	userId := ctx.GetUint("userId")
 
-	// 【全局去重】按 hash 查询，包含软删除的记录
 	var fileInfo model.VideoFile
-	if err := global.Mysql.Unscoped().Where("hash = ?", videoFileReq.Hash).First(&fileInfo).Error; err != nil {
-		utils.ErrorLog("视频文件信息不存在", "upload", videoFileReq.Hash)
-		return vo.ResourceResp{}, errors.New("视频文件不存在")
+
+	// 支持 FileID 和 Hash 两种方式查询
+	if videoFileReq.FileID > 0 {
+		if err := global.Mysql.Unscoped().First(&fileInfo, videoFileReq.FileID).Error; err != nil {
+			utils.ErrorLog("视频文件信息不存在", "upload", fmt.Sprintf("fileID=%d", videoFileReq.FileID))
+			return vo.ResourceResp{}, errors.New("视频文件不存在")
+		}
+	} else {
+		// 【全局去重】按 hash + size 查询，包含软删除的记录
+		if err := global.Mysql.Unscoped().Where("hash = ? AND size = ?", videoFileReq.Hash, videoFileReq.Size).First(&fileInfo).Error; err != nil {
+			utils.ErrorLog("视频文件信息不存在", "upload", fmt.Sprintf("hash=%s, size=%d", videoFileReq.Hash, videoFileReq.Size))
+			return vo.ResourceResp{}, errors.New("视频文件不存在")
+		}
 	}
 
 	// 先创建视频记录
 	suffix := utils.GetFileSuffix(fileInfo.OriginalName)
 	uploadVideoPath := "./upload/video/" + fileInfo.DirName + "/upload" + suffix
-	vid, _ := initVideo(userId, uploadVideoPath, fileInfo.OriginalName)
-	if vid == 0 {
+	vid, err := initVideo(userId, uploadVideoPath, fileInfo.OriginalName)
+	if err != nil || vid == 0 {
+		utils.ErrorLog("创建视频失败", "upload", fmt.Sprintf("uid=%d, dirName=%s, originalName=%s, err=%v", userId, fileInfo.DirName, fileInfo.OriginalName, err))
 		return vo.ResourceResp{}, errors.New("创建失败")
 	}
 
@@ -147,10 +157,10 @@ func UploadVideoCreate(ctx *gin.Context, videoFileReq dto.VideoFileReq) (vo.Reso
 func UploadVideoAdd(ctx *gin.Context, vid uint, videoFileReq dto.VideoFileReq) (vo.ResourceResp, error) {
 	userId := ctx.GetUint("userId")
 
-	// 【全局去重】按 hash 查询，包含软删除的记录
+	// 【全局去重】按 hash + size 查询，包含软删除的记录
 	var fileInfo model.VideoFile
-	if err := global.Mysql.Unscoped().Where("hash = ?", videoFileReq.Hash).First(&fileInfo).Error; err != nil {
-		utils.ErrorLog("视频文件信息不存在", "upload", videoFileReq.Hash)
+	if err := global.Mysql.Unscoped().Where("hash = ? AND size = ?", videoFileReq.Hash, videoFileReq.Size).First(&fileInfo).Error; err != nil {
+		utils.ErrorLog("视频文件信息不存在", "upload", fmt.Sprintf("hash=%s, size=%d", videoFileReq.Hash, videoFileReq.Size))
 		return vo.ResourceResp{}, errors.New("视频文件不存在")
 	}
 
@@ -184,13 +194,13 @@ func UploadVideoCheck(ctx *gin.Context, videoFileReq dto.VideoFileReq) (dto.Vide
 		FileID: 0,
 	}
 
-	// 【全局去重】按 hash 查询，包含软删除的记录
+	// 【全局去重】按 hash + size 查询，包含软删除的记录
 	var fileInfo model.VideoFile
-	result := global.Mysql.Unscoped().Where("hash = ?", videoFileReq.Hash).First(&fileInfo)
+	result := global.Mysql.Unscoped().Where("hash = ? AND size = ?", videoFileReq.Hash, videoFileReq.Size).First(&fileInfo)
 
 	// 文件不存在，返回空列表（需要从头上传）
 	if result.Error != nil {
-		utils.InfoLog(fmt.Sprintf("【秒传检测】hash=%s, VideoFile不存在，需要上传", videoFileReq.Hash), "upload")
+		utils.InfoLog(fmt.Sprintf("【秒传检测】hash=%s, size=%d, VideoFile不存在，需要上传", videoFileReq.Hash, videoFileReq.Size), "upload")
 		return resp, nil
 	}
 
@@ -205,8 +215,8 @@ func UploadVideoCheck(ctx *gin.Context, videoFileReq dto.VideoFileReq) (dto.Vide
 		}
 	}
 
-	utils.InfoLog(fmt.Sprintf("【秒传检测】hash=%s, fileID=%d, Status=%d, RefCount=%d, DirName=%s",
-		videoFileReq.Hash, fileInfo.ID, fileInfo.Status, fileInfo.RefCount, fileInfo.DirName), "upload")
+	utils.InfoLog(fmt.Sprintf("【秒传检测】hash=%s, size=%d, fileID=%d, Status=%d, RefCount=%d, DirName=%s",
+		videoFileReq.Hash, videoFileReq.Size, fileInfo.ID, fileInfo.Status, fileInfo.RefCount, fileInfo.DirName), "upload")
 
 	// 【秒传判断】文件状态已就绪
 	if fileInfo.Status == model.FileStatusReady {
@@ -215,7 +225,7 @@ func UploadVideoCheck(ctx *gin.Context, videoFileReq dto.VideoFileReq) (dto.Vide
 		uploadVideoPath := "./upload/video/" + fileInfo.DirName + "/upload" + suffix
 		if !utils.IsFileExists(uploadVideoPath) {
 			// 本地文件不存在，需要重新上传
-			utils.InfoLog(fmt.Sprintf("【秒传检测】hash=%s, 文件状态Ready但本地文件不存在，需要重新上传", videoFileReq.Hash), "upload")
+			utils.InfoLog(fmt.Sprintf("【秒传检测】hash=%s, size=%d, 文件状态Ready但本地文件不存在，需要重新上传", videoFileReq.Hash, videoFileReq.Size), "upload")
 			// 更新文件状态为待上传
 			global.Mysql.Model(&fileInfo).Update("status", model.FileStatusMerged)
 		} else {
@@ -227,7 +237,7 @@ func UploadVideoCheck(ctx *gin.Context, videoFileReq dto.VideoFileReq) (dto.Vide
 
 			if resourceCount > 0 {
 				// 有已关联资源，可以秒传
-				utils.InfoLog(fmt.Sprintf("【秒传成功】hash=%s, fileID=%d, 返回[-1]", videoFileReq.Hash, fileInfo.ID), "upload")
+				utils.InfoLog(fmt.Sprintf("【秒传成功】hash=%s, size=%d, fileID=%d, 返回[-1]", videoFileReq.Hash, videoFileReq.Size, fileInfo.ID), "upload")
 				resp.Chunks = []int{-1}
 				return resp, nil
 			}
@@ -240,14 +250,14 @@ func UploadVideoCheck(ctx *gin.Context, videoFileReq dto.VideoFileReq) (dto.Vide
 					// 找到了通过 DirName 关联的资源，可以秒传
 					// 同时修复 Resource.FileID 以便后续直接使用
 					global.Mysql.Model(&model.Resource{}).Where("id = ? AND file_id = 0", videoIndex.ResourceID).Update("file_id", fileInfo.ID)
-					utils.InfoLog(fmt.Sprintf("【秒传成功】hash=%s, fileID=%d (通过DirName关联), 返回[-1]", videoFileReq.Hash, fileInfo.ID), "upload")
+					utils.InfoLog(fmt.Sprintf("【秒传成功】hash=%s, size=%d, fileID=%d (通过DirName关联), 返回[-1]", videoFileReq.Hash, videoFileReq.Size, fileInfo.ID), "upload")
 					resp.Chunks = []int{-1}
 					return resp, nil
 				}
 			}
 
 			// 文件状态是Ready但没有Resource，可能是异常情况，继续检查分片
-			utils.InfoLog(fmt.Sprintf("【秒传异常】hash=%s, fileID=%d, 状态Ready但无可用Resource", videoFileReq.Hash, fileInfo.ID), "upload")
+			utils.InfoLog(fmt.Sprintf("【秒传异常】hash=%s, size=%d, fileID=%d, 状态Ready但无可用Resource", videoFileReq.Hash, videoFileReq.Size, fileInfo.ID), "upload")
 		}
 	} else {
 		utils.InfoLog(fmt.Sprintf("【秒传检测】hash=%s, Status=%d 不是Ready(3)，继续上传流程", videoFileReq.Hash, fileInfo.Status), "upload")
@@ -271,6 +281,7 @@ func UploadVideoChunk(ctx *gin.Context, file *multipart.FileHeader) error {
 
 	fileHash := strings.TrimSpace(ctx.PostForm("hash"))
 	fileName := strings.TrimSpace(ctx.PostForm("name"))
+	fileSize := strings.TrimSpace(ctx.PostForm("size"))
 
 	chunkIndex, err := strconv.Atoi(ctx.PostForm("chunkIndex"))
 	if err != nil {
@@ -282,21 +293,27 @@ func UploadVideoChunk(ctx *gin.Context, file *multipart.FileHeader) error {
 		return errors.New("非法分片总数")
 	}
 
+	size, err := strconv.ParseInt(fileSize, 10, 64)
+	if err != nil || size <= 0 {
+		return errors.New("非法文件大小")
+	}
+
 	// 1️⃣ 校验文件类型
 	suffix := path.Ext(fileName)
 	if !utils.IsVideoType(suffix, global.Config.File.AllowedVideoExts) {
 		return errors.New("不支持的视频格式")
 	}
 
-	// 2️⃣ 查询或创建文件记录（hash 全局唯一）
+	// 2️⃣ 查询或创建文件记录（hash + size 全局唯一）
 	var videoFile model.VideoFile
 	err = global.Mysql.Transaction(func(tx *gorm.DB) error {
 		result := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("hash = ?", fileHash).First(&videoFile)
+			Where("hash = ? AND size = ?", fileHash, size).First(&videoFile)
 
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			videoFile = model.VideoFile{
 				Hash:         fileHash,
+				Size:         size,
 				DirName:      generateVideoFilename(),
 				OriginalName: truncateString(fileName, 255),
 				ChunksCount:  totalChunks,
@@ -352,28 +369,24 @@ func UploadVideoChunk(ctx *gin.Context, file *multipart.FileHeader) error {
 		return errors.New("分片保存失败")
 	}
 
-	// 9️⃣ 检查是否已上传完成
-	files, _ := os.ReadDir(chunkDir)
-	if len(files) == totalChunks {
-		// 异步合并（注意：分片在 chunkDir 中，输出到 fileDir）
-		go func(chunkPath, filePath string, total int, suffix string) {
-			output := filepath.Join(filePath, "upload"+suffix)
-			if err := utils.MergeChunks(chunkPath, total, output); err != nil {
-				utils.ErrorLog("分片合并失败", "upload", err.Error())
-			}
-		}(chunkDir, fileDir, videoFile.ChunksCount, utils.GetFileSuffix(videoFile.OriginalName))
-	}
-
 	return nil
 }
 
 // UploadVideoMerge 合并视频分片（全局去重版本）
-func UploadVideoMerge(ctx *gin.Context, fileID uint) error {
+func UploadVideoMerge(ctx *gin.Context, videoFileReq dto.VideoFileReq) error {
 	var fileInfo model.VideoFile
 
-	// 1️⃣ 查询文件
-	if err := global.Mysql.First(&fileInfo, fileID).Error; err != nil {
-		return errors.New("视频文件不存在")
+	// 1️⃣ 查询文件：优先按 fileID，fallback 到 hash+size
+	if videoFileReq.FileID > 0 {
+		if err := global.Mysql.First(&fileInfo, videoFileReq.FileID).Error; err != nil {
+			return errors.New("视频文件不存在")
+		}
+	} else if videoFileReq.Hash != "" && videoFileReq.Size > 0 {
+		if err := global.Mysql.Where("hash = ? AND size = ?", videoFileReq.Hash, videoFileReq.Size).First(&fileInfo).Error; err != nil {
+			return errors.New("视频文件不存在")
+		}
+	} else {
+		return errors.New("缺少文件标识参数")
 	}
 
 	// 2️⃣ 原子切换状态：Uploading → Merging
@@ -401,7 +414,7 @@ func UploadVideoMerge(ctx *gin.Context, fileID uint) error {
 	}
 
 	// 4️⃣ 执行流式合并
-	if err := utils.MergeChunks(fileDir, fileInfo.ChunksCount, outputFile); err != nil {
+	if err := utils.MergeChunks(chunkDir, fileInfo.ChunksCount, outputFile); err != nil {
 		global.Mysql.Model(&fileInfo).
 			Update("status", model.FileStatusUploading)
 		return errors.New("合并分片失败")
@@ -556,10 +569,12 @@ func CompleteUploadVideo(vid, userId, fileID uint, videoName, title string, skip
 	return vo.ResourceToResourceResp(resource), nil
 }
 
-// 生成文件url
+// 生成文件url（存库用，必须短且不过期）
+// 公开OSS: 直接拼接公开URL
+// 私有OSS/local: 存 /api/ 路径，访问时后端302到签名URL
 func generateFileUrl(objectKey string) string {
-	if global.Config.Storage.OssType != "local" {
-		return global.Storage.GetObjectUrl(objectKey)
+	if global.Config.Storage.OssType != "local" && !global.Config.Storage.Private {
+		return global.GetOssUrl(objectKey)
 	}
 
 	return "/api/" + objectKey
@@ -572,7 +587,9 @@ func initVideo(userId uint, videoPath, title string) (uint, error) {
 	objectKey := "image/" + coverName
 	filePath := "./upload/image/" + coverName
 
-	GenerateCover(videoPath, filePath)
+	if err := GenerateCover(videoPath, filePath); err != nil {
+		utils.ErrorLog("生成封面失败", "upload", fmt.Sprintf("videoPath=%s, err=%v", videoPath, err))
+	}
 	if global.Config.Storage.OssType != "local" {
 		// 上传到OSS
 		global.Storage.PutObjectFromFile(objectKey, filePath)
@@ -581,14 +598,19 @@ func initVideo(userId uint, videoPath, title string) (uint, error) {
 	titleWithoutExt := title[:len(title)-len(path.Ext(title))]
 	titleWithoutExt = truncateString(titleWithoutExt, 255)
 
+	coverUrl := generateFileUrl(objectKey)
+
+	utils.InfoLog(fmt.Sprintf("initVideo: uid=%d, title=%s, cover=%s", userId, titleWithoutExt, coverUrl), "upload")
+
 	videoId, err := CreateVideo(&model.Video{
 		Uid:       userId,
-		Cover:     generateFileUrl(objectKey),
+		Cover:     coverUrl,
 		Title:     titleWithoutExt,
 		Copyright: true,
 		Status:    global.CREATED_VIDEO,
 	})
 	if err != nil {
+		utils.ErrorLog("CreateVideo失败", "upload", fmt.Sprintf("uid=%d, title=%s, err=%v", userId, titleWithoutExt, err))
 		return 0, err
 	}
 

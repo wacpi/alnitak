@@ -1,7 +1,7 @@
 package utils
 
 import (
-	"crypto/sha256"
+	"crypto/md5"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -17,7 +17,7 @@ func IsFileExists(path string) bool {
 	return true
 }
 
-// CalculateFileHash 计算文件的 SHA256 哈希
+// CalculateFileHash 计算文件的 MD5 哈希（与前端一致）
 func CalculateFileHash(filePath string) (string, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -25,7 +25,7 @@ func CalculateFileHash(filePath string) (string, error) {
 	}
 	defer file.Close()
 
-	hash := sha256.New()
+	hash := md5.New()
 	if _, err := io.Copy(hash, file); err != nil {
 		return "", err
 	}

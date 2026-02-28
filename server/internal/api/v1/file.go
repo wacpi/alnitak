@@ -13,6 +13,7 @@ import (
 	"interastral-peace.com/alnitak/utils"
 )
 
+
 // 获取视频文件
 func GetVideoFile(ctx *gin.Context) {
 	quality := ctx.Query("quality")
@@ -79,8 +80,8 @@ func GetVideoSlice(ctx *gin.Context) {
 		return
 	}
 
-	// 使用oss（302临时重定向，避免浏览器缓存导致签名URL过期后请求失败）
-	redirect := global.Storage.GetObjectUrl("video/" + dir + "/" + file)
+	// OSS 存储：重定向到公开URL
+	redirect := global.GetOssUrl("video/" + dir + "/" + file)
 	ctx.Redirect(http.StatusFound, redirect)
 }
 
@@ -126,8 +127,8 @@ func GetVideoStream(ctx *gin.Context) {
 		return
 	}
 
-	// OSS 存储：重定向到 OSS URL
-	redirect := global.Storage.GetObjectUrl("video/" + dir + "/" + file)
+	// OSS 存储：重定向到公开URL
+	redirect := global.GetOssUrl("video/" + dir + "/" + file)
 	ctx.Redirect(http.StatusFound, redirect)
 }
 
@@ -158,8 +159,8 @@ func GetImgFile(ctx *gin.Context) {
 		return
 	}
 
-	// 不使用oss
-	redirect := global.Storage.GetObjectUrl("image/" + file)
+	// OSS 存储：重定向到公开URL
+	redirect := global.GetOssUrl("image/" + file)
 
 	// 开发模式下打印重定向信息
 	if global.Config.Log.Mode == "dev" {

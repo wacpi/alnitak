@@ -11,10 +11,11 @@ const (
 	FileStatusReady       = 4 // 已就绪（转码完成）
 )
 
-// VideoFile 全局视频文件表（按hash唯一，支持多用户共享）
+// VideoFile 全局视频文件表（按hash+size唯一，支持多用户共享）
 type VideoFile struct {
 	gorm.Model
-	Hash         string `gorm:"type:varchar(64);comment:文件hash;uniqueIndex"`
+	Hash         string `gorm:"type:varchar(64);comment:文件hash;index"`
+	Size         int64  `gorm:"comment:文件大小;index"`
 	OriginalName string `gorm:"type:varchar(255);comment:原始文件名;"`
 	DirName      string `gorm:"type:varchar(20);comment:目录名称;uniqueIndex"`
 	ChunksCount  int    `gorm:"comment:分片数量;"`
