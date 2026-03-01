@@ -254,10 +254,10 @@ const loadPart = async (part: number) => {
         const qualityText = player.template?.qualityButton?.querySelector('.wplayer-quality-text');
         if (qualityText) qualityText.textContent = quality.name;
 
-        // 通过 dash.js 无缝切换 Representation
+        // 通过 dash.js 切换 Representation（不强制替换缓冲，等当前缓冲段播完后自然衔接）
         const dashIndex = dashQualityMap.get(quality.name);
         if (dashIndex !== undefined && dash.value) {
-          dash.value.setRepresentationForTypeByIndex('video', dashIndex, true);
+          dash.value.setRepresentationForTypeByIndex('video', dashIndex, false);
           player.notice(`切换至 ${quality.name}`, 1000, undefined, 'switch-quality');
         }
 
