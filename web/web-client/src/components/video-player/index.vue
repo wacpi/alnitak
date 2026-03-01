@@ -144,12 +144,40 @@ const options: PlayerOptionsType = {
           video.dispatchEvent(new Event('durationchange'));
         });
 
-        // playbackEnded 兜底（DASH SegmentBase 可能不触发原生 ended）
-        let endedHandled = false;
-        video.addEventListener('ended', () => { endedHandled = true; });
+        // DASH 播放结束处理：
+        // 1. SegmentBase 模式下原生 ended 可能不触发，需要 playbackEnded 兜底
+        // 2. 循环播放时必须通过 dash.js seek(0) + play() 重置内部状态，
+        //    仅设置 video.currentTime = 0 不会让 dash.js 重新调度 segment 请求
+        // 3. 拦截原生 ended 事件防止 Wplayer 的 pause() 打断 dash.js 的重播
+        // DASH 循环重播辅助方法（防重入：ended + playbackEnded 可能都触发）
+        let dashLoopReplaying = false;
+        const dashLoopReplay = () => {
+          if (dashLoopReplaying) return;
+          dashLoopReplaying = true;
+          dash.value.seek(0);
+          dash.value.play();
+          if (player && player.danmaku) player.danmaku.danIndex = 0;
+          setTimeout(() => { dashLoopReplaying = false; }, 500);
+        };
+
+        // 拦截原生 ended：循环模式下阻止 Wplayer 的 pause()，改用 dash.js API 重播
+        video.addEventListener('ended', (e) => {
+          if (player && player.setting && player.setting.loop) {
+            e.stopImmediatePropagation();
+            dashLoopReplay();
+          }
+        }, true); // capture 阶段先于 Wplayer handler
+
+        // playbackEnded 兜底（SegmentBase 可能不触发原生 ended）
         dash.value.on('playbackEnded', () => {
-          if (endedHandled) { endedHandled = false; return; }
-          video.dispatchEvent(new Event('ended'));
+          if (player && player.setting && player.setting.loop) {
+            dashLoopReplay();
+            return;
+          }
+          // 非循环：兜底派发 ended 事件
+          if (!video.ended) {
+            video.dispatchEvent(new Event('ended'));
+          }
         });
 
         dash.value.on('error', (e: any) => {
