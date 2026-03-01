@@ -130,6 +130,13 @@ func UploadVideoCreate(ctx *gin.Context, videoFileReq dto.VideoFileReq) (vo.Reso
 		}
 	}
 
+	// 如果是软删除状态，恢复它
+	if fileInfo.DeletedAt.Valid {
+		if err := global.Mysql.Unscoped().Model(&fileInfo).Update("deleted_at", nil).Error; err != nil {
+			utils.ErrorLog("恢复软删除记录失败", "upload", err.Error())
+		}
+	}
+
 	// 先创建视频记录
 	suffix := utils.GetFileSuffix(fileInfo.OriginalName)
 	uploadVideoPath := "./upload/video/" + fileInfo.DirName + "/upload" + suffix
@@ -218,16 +225,17 @@ func UploadVideoCheck(ctx *gin.Context, videoFileReq dto.VideoFileReq) (dto.Vide
 	utils.InfoLog(fmt.Sprintf("【秒传检测】hash=%s, size=%d, fileID=%d, Status=%d, RefCount=%d, DirName=%s",
 		videoFileReq.Hash, videoFileReq.Size, fileInfo.ID, fileInfo.Status, fileInfo.RefCount, fileInfo.DirName), "upload")
 
-	// 【秒传判断】文件状态已就绪
-	if fileInfo.Status == model.FileStatusReady {
+	// 【秒传判断】根据文件状态决定处理方式
+	switch fileInfo.Status {
+	case model.FileStatusReady:
 		// 检查本地文件是否存在
 		suffix := utils.GetFileSuffix(fileInfo.OriginalName)
 		uploadVideoPath := "./upload/video/" + fileInfo.DirName + "/upload" + suffix
 		if !utils.IsFileExists(uploadVideoPath) {
 			// 本地文件不存在，需要重新上传
 			utils.InfoLog(fmt.Sprintf("【秒传检测】hash=%s, size=%d, 文件状态Ready但本地文件不存在，需要重新上传", videoFileReq.Hash, videoFileReq.Size), "upload")
-			// 更新文件状态为待上传
-			global.Mysql.Model(&fileInfo).Update("status", model.FileStatusMerged)
+			// 更新文件状态为上传中（文件已丢失，需要从头上传）
+			global.Mysql.Model(&fileInfo).Update("status", model.FileStatusUploading)
 		} else {
 			// 检查是否存在关联的 Resource 记录（确保有转码信息可复用）
 			// 优先查 file_id 关联，如果没有则通过 VideoIndexFile 的 DirName 关联查询
@@ -256,11 +264,30 @@ func UploadVideoCheck(ctx *gin.Context, videoFileReq dto.VideoFileReq) (dto.Vide
 				}
 			}
 
-			// 文件状态是Ready但没有Resource，可能是异常情况，继续检查分片
-			utils.InfoLog(fmt.Sprintf("【秒传异常】hash=%s, size=%d, fileID=%d, 状态Ready但无可用Resource", videoFileReq.Hash, videoFileReq.Size, fileInfo.ID), "upload")
+			// 文件状态是Ready但没有Resource，本地文件存在，直接返回[-1]让前端创建
+			// CompleteUploadVideo 会因查不到已有Resource而走正常转码流程
+			utils.InfoLog(fmt.Sprintf("【秒传检测】hash=%s, size=%d, fileID=%d, 状态Ready但无可用Resource，返回[-1]走转码", videoFileReq.Hash, videoFileReq.Size, fileInfo.ID), "upload")
+			resp.Chunks = []int{-1}
+			return resp, nil
 		}
-	} else {
-		utils.InfoLog(fmt.Sprintf("【秒传检测】hash=%s, Status=%d 不是Ready(3)，继续上传流程", videoFileReq.Hash, fileInfo.Status), "upload")
+
+	case model.FileStatusMerged, model.FileStatusTranscoding:
+		// 文件已合并完成（但可能提交失败没创建Resource，或转码中断）
+		// 检查合并后的文件是否存在
+		suffix := utils.GetFileSuffix(fileInfo.OriginalName)
+		uploadVideoPath := "./upload/video/" + fileInfo.DirName + "/upload" + suffix
+		if utils.IsFileExists(uploadVideoPath) {
+			// 合并文件存在，前端可以直接调创建接口，不需要重新上传分片
+			utils.InfoLog(fmt.Sprintf("【秒传检测】hash=%s, Status=%d, 合并文件已存在，返回[-1]", videoFileReq.Hash, fileInfo.Status), "upload")
+			resp.Chunks = []int{-1}
+			return resp, nil
+		}
+		// 合并文件不存在，需要重新上传
+		utils.InfoLog(fmt.Sprintf("【秒传检测】hash=%s, Status=%d, 合并文件不存在，重置为Uploading", videoFileReq.Hash, fileInfo.Status), "upload")
+		global.Mysql.Model(&fileInfo).Update("status", model.FileStatusUploading)
+
+	default:
+		utils.InfoLog(fmt.Sprintf("【秒传检测】hash=%s, Status=%d，继续上传流程", videoFileReq.Hash, fileInfo.Status), "upload")
 	}
 
 	// 文件正在上传中，返回已上传的分片
@@ -399,7 +426,11 @@ func UploadVideoMerge(ctx *gin.Context, videoFileReq dto.VideoFileReq) error {
 		Where("status = ?", model.FileStatusUploading).
 		Update("status", model.FileStatusMerging)
 	if result.RowsAffected == 0 {
-		_ = os.RemoveAll(chunkDir)
+		// 状态不是Uploading，可能已经合并过或正在合并
+		// 只在已完成合并（Merged/Ready）时清理分片，避免干扰正在进行的合并
+		if fileInfo.Status == model.FileStatusMerged || fileInfo.Status == model.FileStatusReady || fileInfo.Status == model.FileStatusTranscoding {
+			_ = os.RemoveAll(chunkDir)
+		}
 		return nil
 	}
 	suffix := utils.GetFileSuffix(fileInfo.OriginalName)
@@ -408,6 +439,7 @@ func UploadVideoMerge(ctx *gin.Context, videoFileReq dto.VideoFileReq) error {
 	// 3️⃣ 校验分片数量
 	files, err := os.ReadDir(chunkDir)
 	if err != nil {
+		global.Mysql.Model(&fileInfo).Update("status", model.FileStatusUploading)
 		return errors.New("分片目录不存在")
 	}
 	if len(files) != fileInfo.ChunksCount {

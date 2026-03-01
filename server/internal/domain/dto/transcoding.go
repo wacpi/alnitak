@@ -19,4 +19,7 @@ type TranscodingInfo struct {
 	AudioBitRate    int // 音频码率 (bps)，如 320000、192000
 	AudioSampleRate int // 音频采样率 (Hz)，如 48000、44100
 	AudioChannels   int // 音频声道数，如 2（立体声）、6（5.1）
+
+	// 重新转码时记录原始视频状态，转码完成后恢复（-1表示普通上传转码，无需特殊处理）
+	OriginalVideoStatus int
 }
