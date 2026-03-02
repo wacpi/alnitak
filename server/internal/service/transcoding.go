@@ -577,7 +577,7 @@ func getFpsInfo(avgFrameRate string) (string, string) {
 		numerator := utils.StringToInt(parts[0])
 		denominator := utils.StringToInt(parts[1])
 		if denominator == 0 {
-			return "30000/1001", ""
+			return "30000/1000", "" // 统一使用30fps，时间基15360，与YouTube对齐
 		}
 
 		// 计算帧率
@@ -590,13 +590,13 @@ func getFpsInfo(avgFrameRate string) (string, string) {
 		if fps >= 59 {
 			// 59.94fps (60000/1001) 及以上，开启60帧率模式则用60，否则用30
 			if global.Config.Transcoding.Generate1080p60 {
-				return "30000/1001", "60000/1001"
+				return "60000/1000", "60000/1000"
 			}
 		}
 	}
 
-	// 30-60fps之间，统一使用30帧
-	return "30000/1001", ""
+	// 30-60fps之间，统一使用30帧，时间基15360，与YouTube对齐
+	return "30000/1000", ""
 }
 
 // 获取转码目标
@@ -688,19 +688,20 @@ func encodeVideoOnly(ctx context.Context, videoID, resourceID uint, inputFile, o
 		"-tune", "film",
 		"-profile:v", "high",
 		"-pix_fmt", "yuv420p",
-		"-bf", "0", // 禁用 B 帧：fMP4 SegmentBase + audio-files 双流模式下，
-		// B 帧的非单调 PTS 在 fragment 边界会导致 mpv demuxer AV desync
+		"-bf", "0", // 去B帧，与YouTube对齐，避免关键帧位置计算差异
+		"-flags", "+cgop", // 封闭GOP，确保P帧不跨GOP引用
 		"-b:v", rate,
-		"-maxrate", rate, // 峰值码率限制，防止复杂场景码率飙升
-		"-bufsize", bufsize, // VBV缓冲区大小
+		"-maxrate", rate,
+		"-bufsize", bufsize,
 		"-r", fps,
-		"-g", gopSizeStr, // 每5秒一个关键帧，与B站和fragment对齐
-		"-keyint_min", gopSizeStr, // 最小关键帧间距=最大，确保关键帧序列完全规律
+		"-g", gopSizeStr,
+		"-keyint_min", gopSizeStr,
 		"-sc_threshold", "0",
 		"-vsync", "cfr",
 		"-f", "mp4",
 		"-frag_duration", "5000000", // 每5秒一个fragment（微秒），与关键帧对齐，模仿B站
 		"-movflags", "+frag_keyframe+empty_moov+default_base_moof+dash+global_sidx",
+		"-avoid_negative_ts", "make_zero", // 时间戳从0开始，与YouTube对齐
 		"-y", outputFile,
 	}
 
@@ -752,20 +753,23 @@ func encodeVideoOnlyGPU(ctx context.Context, videoID, resourceID uint, inputFile
 		"-cq", "22",
 		"-preset", "p6",
 		"-rc", "vbr_hq",
+		"-profile:v", "high",
 		"-pix_fmt", "yuv420p",
-		"-bf", "0", // 禁用 B 帧：fMP4 SegmentBase + audio-files 双流模式下，
-		// B 帧的非单调 PTS 在 fragment 边界会导致 mpv demuxer AV desync
+		"-bf", "0", // 去B帧，与YouTube对齐，避免关键帧位置计算差异
+		"-rc-lookahead", "32", // 前瞻分析，改善码率分配
+		"-temporal-aq", "1", // 时域自适应量化，提升运动场景质量
 		"-b:v", rate,
-		"-maxrate", rate, // 峰值码率限制
-		"-bufsize", bufsize, // VBV缓冲区大小
+		"-maxrate", rate,
+		"-bufsize", bufsize,
 		"-r", fps,
 		"-g", gopSizeStr, // 每5秒一个关键帧，与B站和fragment对齐
 		"-sc_threshold", "0",
-		"-strict_gop", "1", // NVENC强制严格GOP结构，防止关键帧漂移
+		"-strict_gop", "1",
 		"-vsync", "cfr",
 		"-f", "mp4",
 		"-frag_duration", "5000000", // 每5秒一个fragment（微秒），与关键帧对齐，模仿B站
 		"-movflags", "+frag_keyframe+empty_moov+default_base_moof+dash+global_sidx",
+		"-avoid_negative_ts", "make_zero", // 时间戳从0开始，与YouTube对齐
 		"-y", outputFile,
 	}
 
