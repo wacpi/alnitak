@@ -129,7 +129,7 @@ func (t *TencentCOS) GetObjectUrl(objectKey string) string {
 		objectKey,            // 文件对象的 key
 		t.config.KeyID,       // SecretID
 		t.config.KeySecret,   // SecretKey
-		time.Hour*24,         // 签名有效期 24 小时
+		time.Hour*5,          // 签名有效期 5 小时
 		nil,                  // 可选的额外参数，可以为 nil
 	)
 	if err != nil {

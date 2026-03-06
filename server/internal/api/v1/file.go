@@ -13,7 +13,6 @@ import (
 	"interastral-peace.com/alnitak/utils"
 )
 
-
 // 获取视频文件
 func GetVideoFile(ctx *gin.Context) {
 	quality := ctx.Query("quality")
@@ -25,6 +24,11 @@ func GetVideoFile(ctx *gin.Context) {
 		resp.ForbiddenWithMessage(ctx, err.Error())
 		return
 	}
+
+	// 关键：设置 Cache-Control 为 5 小时（与 OSS 签名过期时间一致）
+	// 防止浏览器缓存 m3u8/mpd 播放列表，导致使用旧的签名 URL
+	ctx.Header("Cache-Control", "public, max-age=18000, must-revalidate")
+	ctx.Header("Pragma", "no-cache")
 
 	switch format {
 	case "mpd", "dash", "dash-unified":
@@ -167,7 +171,7 @@ func GetImgFile(ctx *gin.Context) {
 		fmt.Println("redirect", redirect, "image/"+file)
 	}
 
-	// 设置缓存头，告知浏览器缓存一天
-	ctx.Header("Cache-Control", "public, max-age=86400, must-revalidate")
-	ctx.Redirect(http.StatusMovedPermanently, redirect)
+	// 设置缓存头，告知浏览器缓存5小时（与OSS签名过期时间一致）
+	ctx.Header("Cache-Control", "public, max-age=18000, must-revalidate")
+	ctx.Redirect(http.StatusFound, redirect)
 }

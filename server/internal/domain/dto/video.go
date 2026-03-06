@@ -6,9 +6,9 @@ type VideoListReq struct {
 }
 
 type VideoFileReq struct {
-	Hash   string
-	FileID uint
-	Size   int64
+	Hash   string `json:"hash"`
+	FileID uint   `json:"fileID"`
+	Size   int64  `json:"size"`
 }
 
 type VideoCheckResp struct {

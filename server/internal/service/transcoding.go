@@ -590,8 +590,9 @@ func getFpsInfo(avgFrameRate string) (string, string) {
 		if fps >= 59 {
 			// 59.94fps (60000/1001) 及以上，开启60帧率模式则用60，否则用30
 			if global.Config.Transcoding.Generate1080p60 {
-				return "60000/1000", "60000/1000"
+				return "30000/1000", "60000/1000" // FPS30始终为30fps，FPS60为60fps
 			}
+			return "30000/1000", "" // 没开60fps时，30fps用30
 		}
 	}
 
@@ -664,9 +665,11 @@ func parseFPS(fps string) float64 {
 func encodeVideoOnly(ctx context.Context, videoID, resourceID uint, inputFile, outputFile, quality, rate, fps string, cancelFunc context.CancelFunc) error {
 	// 解析帧率，支持 "24000/1001" 或 "30" 格式
 	fpsFloat := parseFPS(fps)
-	gopSize := int(math.Round(fpsFloat * 5)) // 每5秒一个关键帧，与B站和fragment对齐
+
+	// YouTube/B站基本都是2秒GOP
+	gopSize := int(math.Round(fpsFloat * 2))
 	if gopSize < 1 {
-		gopSize = 150 // 默认值（30fps * 5s）
+		gopSize = 60
 	}
 	gopSizeStr := strconv.Itoa(gopSize)
 	// bufsize = 2 * maxrate，确保ABR码率波动可控
@@ -676,6 +679,8 @@ func encodeVideoOnly(ctx context.Context, videoID, resourceID uint, inputFile, o
 	} else {
 		bufsize = "4000k"
 	}
+
+	// 分辨率缩放
 	scaleFilter := fmt.Sprintf("scale=%s:flags=lanczos", quality)
 
 	command := []string{
@@ -683,8 +688,8 @@ func encodeVideoOnly(ctx context.Context, videoID, resourceID uint, inputFile, o
 		"-filter_complex", fmt.Sprintf("[0:v]setpts=PTS-STARTPTS,%s", scaleFilter),
 		"-an",
 		"-c:v", "libx264",
+		"-preset", "medium",
 		"-crf", "20",
-		"-preset", "slow",
 		"-tune", "film",
 		"-profile:v", "high",
 		"-pix_fmt", "yuv420p",
@@ -699,7 +704,7 @@ func encodeVideoOnly(ctx context.Context, videoID, resourceID uint, inputFile, o
 		"-sc_threshold", "0",
 		"-vsync", "cfr",
 		"-f", "mp4",
-		"-frag_duration", "5000000", // 每5秒一个fragment（微秒），与关键帧对齐，模仿B站
+		"-frag_duration", "2000000", // 每2秒一个fragment（微秒），与GOP对齐
 		"-movflags", "+frag_keyframe+empty_moov+default_base_moof+dash+global_sidx",
 		"-avoid_negative_ts", "make_zero", // 时间戳从0开始，与YouTube对齐
 		"-y", outputFile,
@@ -731,9 +736,9 @@ func encodeVideoOnly(ctx context.Context, videoID, resourceID uint, inputFile, o
 func encodeVideoOnlyGPU(ctx context.Context, videoID, resourceID uint, inputFile, outputFile, quality, rate, fps string, cancelFunc context.CancelFunc) error {
 	// 解析帧率，支持 "24000/1001" 或 "30" 格式
 	fpsFloat := parseFPS(fps)
-	gopSize := int(math.Round(fpsFloat * 5)) // 每5秒一个关键帧，与B站和fragment对齐
+	gopSize := int(math.Round(fpsFloat * 2)) // 每2秒一个关键帧，与CPU编码和fragment对齐
 	if gopSize < 1 {
-		gopSize = 150 // 默认值（30fps * 5s）
+		gopSize = 60 // 默认值（30fps * 2s）
 	}
 	gopSizeStr := strconv.Itoa(gopSize)
 	// bufsize = 2 * maxrate，确保ABR码率波动可控
@@ -758,16 +763,18 @@ func encodeVideoOnlyGPU(ctx context.Context, videoID, resourceID uint, inputFile
 		"-bf", "0", // 去B帧，与YouTube对齐，避免关键帧位置计算差异
 		"-rc-lookahead", "32", // 前瞻分析，改善码率分配
 		"-temporal-aq", "1", // 时域自适应量化，提升运动场景质量
+		"-no-scenecut", "1", // 禁用场景检测插入额外关键帧（nvenc专用，-sc_threshold对nvenc无效）
+		"-forced-idr", "1", // 强制所有关键帧为IDR帧
 		"-b:v", rate,
 		"-maxrate", rate,
 		"-bufsize", bufsize,
 		"-r", fps,
-		"-g", gopSizeStr, // 每5秒一个关键帧，与B站和fragment对齐
-		"-sc_threshold", "0",
+		"-g", gopSizeStr, // 每2秒一个关键帧，与CPU编码和frag_duration对齐
+		"-keyint_min", gopSizeStr, // 最小关键帧间距=GOP，防止nvenc插入额外关键帧
 		"-strict_gop", "1",
 		"-vsync", "cfr",
 		"-f", "mp4",
-		"-frag_duration", "5000000", // 每5秒一个fragment（微秒），与关键帧对齐，模仿B站
+		"-frag_duration", "2000000", // 每2秒一个fragment（微秒），与GOP对齐
 		"-movflags", "+frag_keyframe+empty_moov+default_base_moof+dash+global_sidx",
 		"-avoid_negative_ts", "make_zero", // 时间戳从0开始，与YouTube对齐
 		"-y", outputFile,
@@ -823,7 +830,7 @@ func encodeAudioOnly(ctx context.Context, inputFile, outputFile string, audioBit
 		"-ar", sampleRateStr,
 		"-ac", channelsStr,
 		"-f", "mp4",
-		"-frag_duration", "5000000",
+		"-frag_duration", "2000000",
 		"-movflags", "+frag_keyframe+empty_moov+default_base_moof+dash+global_sidx",
 		"-y", outputFile,
 	}
