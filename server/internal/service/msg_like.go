@@ -34,6 +34,6 @@ func InsertLikeMessage(senderId, cid, targetId uint, contentType int) error {
 }
 
 func RemoveLikeMessage(videoId, senderId uint, contentType int) error {
-	return global.Mysql.Where("vid = ? and sid = ? and `type` = ?", videoId, senderId, contentType).
+	return global.Mysql.Where("cid = ? and sid = ? and `type` = ?", videoId, senderId, contentType).
 		Delete(&model.LikeMessage{}).Error
 }

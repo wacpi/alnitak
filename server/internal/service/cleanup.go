@@ -208,6 +208,10 @@ func cleanVideoDirDbRecords(dirName string, r *CleanupResult) {
 	var videoFile model.VideoFile
 	global.Mysql.Unscoped().Where("dir_name = ?", dirName).First(&videoFile)
 
+	// 先收集 ResourceID（必须在删除 VideoIndexFile 之前）
+	var indexFiles []model.VideoIndexFile
+	global.Mysql.Unscoped().Where("dir_name = ?", dirName).Find(&indexFiles)
+
 	// 删除 VideoIndexFile 记录
 	result := global.Mysql.Unscoped().Where("dir_name = ?", dirName).Delete(&model.VideoIndexFile{})
 	r.CleanedIndexFiles += int(result.RowsAffected)
@@ -221,9 +225,7 @@ func cleanVideoDirDbRecords(dirName string, r *CleanupResult) {
 	result = global.Mysql.Unscoped().Where("dir_name = ?", dirName).Delete(&model.VideoFile{})
 	r.CleanedVideoFiles += int(result.RowsAffected)
 
-	// 查找并删除相关的 Resource 记录
-	var indexFiles []model.VideoIndexFile
-	global.Mysql.Unscoped().Where("dir_name = ?", dirName).Find(&indexFiles)
+	// 删除相关的 Resource 记录（使用之前收集的 ResourceID）
 	for _, indexFile := range indexFiles {
 		if indexFile.ResourceID > 0 {
 			result = global.Mysql.Unscoped().Where("id = ?", indexFile.ResourceID).Delete(&model.Resource{})
@@ -342,6 +344,15 @@ func isImageReferenced(imageUrl string) bool {
 		Where("avatar = ? OR space_cover = ?", imageUrl, imageUrl).
 		Count(&userCount)
 	if userCount > 0 {
+		return true
+	}
+
+	// 检查Playlist.cover（包括30天内软删除的）
+	var playlistCount int64
+	global.Mysql.Unscoped().Model(&model.Playlist{}).
+		Where("cover = ? AND (deleted_at IS NULL OR deleted_at > ?)", imageUrl, expireTime).
+		Count(&playlistCount)
+	if playlistCount > 0 {
 		return true
 	}
 

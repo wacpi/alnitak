@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 	"interastral-peace.com/alnitak/internal/domain/dto"
 	"interastral-peace.com/alnitak/internal/domain/model"
 	"interastral-peace.com/alnitak/internal/domain/vo"
@@ -90,8 +91,8 @@ func DeletePlaylist(ctx *gin.Context, id uint) error {
 		return errors.New("无权操作")
 	}
 
-	// 删除关联视频
-	global.Mysql.Where("playlist_id = ?", id).Delete(&model.PlaylistVideo{})
+	// 硬删除关联视频（关联表无需保留历史）
+	global.Mysql.Unscoped().Where("playlist_id = ?", id).Delete(&model.PlaylistVideo{})
 	// 删除合集
 	if err := global.Mysql.Where("id = ?", id).Delete(&model.Playlist{}).Error; err != nil {
 		utils.ErrorLog("删除合集失败", "playlist", err.Error())
@@ -129,9 +130,9 @@ func GetPlaylistInfo(ctx *gin.Context, id uint) (result vo.PlaylistResp, err err
 
 	result.Author = GetUserBaseInfo(result.Uid)
 
-	// 增加浏览量
+	// 增加浏览量（原子操作）
 	global.Mysql.Model(&model.Playlist{}).Where("id = ?", id).
-		UpdateColumn("views", result.Views+1)
+		UpdateColumn("views", gorm.Expr("views + 1"))
 
 	return
 }
@@ -224,9 +225,9 @@ func AddPlaylistVideo(ctx *gin.Context, req dto.PlaylistVideoAddReq) error {
 	}
 
 	if addCount > 0 {
-		// 更新视频数量
+		// 更新视频数量（原子操作）
 		global.Mysql.Model(&model.Playlist{}).Where("id = ?", req.PlaylistID).
-			UpdateColumn("video_count", playlist.VideoCount+addCount)
+			UpdateColumn("video_count", gorm.Expr("video_count + ?", addCount))
 	}
 
 	return nil
@@ -304,8 +305,8 @@ func DeletePlaylistManage(id uint) error {
 		return errors.New("合集不存在")
 	}
 
-	// 删除关联视频
-	global.Mysql.Where("playlist_id = ?", id).Delete(&model.PlaylistVideo{})
+	// 硬删除关联视频（关联表无需保留历史）
+	global.Mysql.Unscoped().Where("playlist_id = ?", id).Delete(&model.PlaylistVideo{})
 	// 删除合集
 	if err := global.Mysql.Where("id = ?", id).Delete(&model.Playlist{}).Error; err != nil {
 		utils.ErrorLog("删除合集失败", "playlist", err.Error())

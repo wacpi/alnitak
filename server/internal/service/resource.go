@@ -251,23 +251,26 @@ func ReplaceResource(ctx *gin.Context, replaceReq dto.ReplaceResourceReq) (vo.Re
 			utils.InfoLog(fmt.Sprintf("【替换资源】hash相同，跳过转码，设为待审核 resourceID=%d", replaceReq.ResourceID), "resource")
 			return vo.ResourceToResourceResp(newResource), nil
 		}
+	}
 
-		// 检查旧视频文件是否被其他资源使用
-		var usageCount int64
-		global.Mysql.Model(&model.VideoIndexFile{}).Where("dir_name = ? and resource_id != ?", oldIndexFile.DirName, replaceReq.ResourceID).Count(&usageCount)
-		if usageCount == 0 {
-			// 没有其他资源使用这个视频文件，可以安全删除
-			// 标记旧视频文件记录为删除
-			if err := global.Mysql.Where("dir_name = ?", oldIndexFile.DirName).Delete(&model.VideoFile{}).Error; err != nil {
-				utils.ErrorLog("删除旧视频文件记录失败", "resource", err.Error())
-			}
+	// 处理旧文件的引用计数（使用统一的引用计数机制）
+	if oldResource.FileID != 0 {
+		decreaseVideoFileRefCount(oldResource.FileID, userId, replaceReq.ResourceID, oldIndexFile.DirName)
+	} else if oldIndexFile.DirName != "" {
+		// 兼容旧数据：通过 DirName 查找 VideoFile
+		var oldVf model.VideoFile
+		if global.Mysql.Where("dir_name = ?", oldIndexFile.DirName).First(&oldVf).Error == nil {
+			decreaseVideoFileRefCount(oldVf.ID, userId, replaceReq.ResourceID, oldIndexFile.DirName)
 		}
 	}
 
 	// 删除旧的索引文件记录
 	if err := global.Mysql.Where("resource_id = ?", replaceReq.ResourceID).Delete(&model.VideoIndexFile{}).Error; err != nil {
-		utils.ErrorLog("删除旧m3u8索引文件失败", "resource", err.Error())
+		utils.ErrorLog("删除旧索引文件失败", "resource", err.Error())
 	}
+
+	// 创建新文件的引用
+	createFileRef(userId, newFileInfo.ID, replaceReq.ResourceID)
 
 	// 读取新视频信息
 	suffix := utils.GetFileSuffix(newFileInfo.OriginalName)
@@ -277,12 +280,13 @@ func ReplaceResource(ctx *gin.Context, replaceReq dto.ReplaceResourceReq) (vo.Re
 		return vo.ResourceResp{}, errors.New("读取视频信息失败")
 	}
 
-	// 更新资源记录
+	// 更新资源记录（包含 file_id）
 	if err := global.Mysql.Model(&model.Resource{}).Where("id = ?", replaceReq.ResourceID).Updates(
 		map[string]interface{}{
 			"codec_name": transcodingInfo.CodecName,
 			"status":     global.VIDEO_PROCESSING,
 			"duration":   transcodingInfo.Duration,
+			"file_id":    newFileInfo.ID,
 		},
 	).Error; err != nil {
 		utils.ErrorLog("更新资源记录失败", "resource", err.Error())

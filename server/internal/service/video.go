@@ -36,6 +36,10 @@ func UploadVideoInfo(ctx *gin.Context, uploadVideoReq dto.UploadVideoReq) error 
 		}
 	}
 
+	if v.Uid != userId {
+		return errors.New("无权修改该视频")
+	}
+
 	if v.PartitionId != 0 {
 		return errors.New("视频信息已存在")
 	}
@@ -44,7 +48,7 @@ func UploadVideoInfo(ctx *gin.Context, uploadVideoReq dto.UploadVideoReq) error 
 		return errors.New("分区不存在")
 	}
 
-	err = global.Mysql.Model(&model.Video{}).Where("id = ?", uploadVideoReq.Vid).Updates(
+	err = global.Mysql.Model(&model.Video{}).Where("id = ? and uid = ?", uploadVideoReq.Vid, userId).Updates(
 		map[string]interface{}{
 			"title":        uploadVideoReq.Title,
 			"cover":        uploadVideoReq.Cover,
@@ -808,7 +812,13 @@ func GetUploadVideoList(ctx *gin.Context, page, pageSize int) (total int64, vide
 
 func EditVideoInfo(ctx *gin.Context, editVideoReq dto.EditVideoReq) error {
 	userId := ctx.GetUint("userId")
-	oldVideo, _ := FindVideoById(editVideoReq.Vid)
+	oldVideo, err := FindVideoById(editVideoReq.Vid)
+	if err != nil {
+		return errors.New("视频不存在")
+	}
+	if oldVideo.Uid != userId {
+		return errors.New("无权修改该视频")
+	}
 	if cache.GetUploadImage(editVideoReq.Cover) != userId {
 		// 查询是否与旧封面图一致
 		if oldVideo.Cover != editVideoReq.Cover {
@@ -836,7 +846,7 @@ func EditVideoInfo(ctx *gin.Context, editVideoReq dto.EditVideoReq) error {
 
 	updateData["status"] = newStatus
 
-	if err := global.Mysql.Model(&model.Video{}).Where("id = ?", editVideoReq.Vid).Updates(updateData).Error; err != nil {
+	if err := global.Mysql.Model(&model.Video{}).Where("id = ? and uid = ?", editVideoReq.Vid, userId).Updates(updateData).Error; err != nil {
 		utils.ErrorLog("修改视频失败", "video", err.Error())
 		return errors.New("修改失败")
 	}
@@ -1011,6 +1021,9 @@ func GetVideoListManage(videoListReq dto.VideoListReq) (total int64, videos []vo
 func DeleteVideoManage(ctx *gin.Context, id uint) error {
 	var video model.Video
 	global.Mysql.Model(&model.Video{}).Where("id = ?", id).First(&video)
+	if video.ID == 0 {
+		return errors.New("视频不存在")
+	}
 
 	return deleteVideoAndRelatedData(id, video.Uid, &video)
 }
@@ -1034,18 +1047,16 @@ func GetHotVideo(ctx *gin.Context, page, pageSize int) []vo.VideoResp {
 	ids := cache.GetHotVideoId()
 	videoIds := utils.SlicePagingStr(ids, page, pageSize)
 
-	len := len(videoIds)
-	videos := make([]vo.VideoResp, len)
-	for i := 0; i < len; i++ {
-		id := utils.StringToUint(videoIds[i])
+	videos := make([]vo.VideoResp, 0, len(videoIds))
+	for _, idStr := range videoIds {
+		id := utils.StringToUint(idStr)
 		if id == 0 {
 			continue
 		}
-		videos[i] = GetVideoInfo(id)
-		// 同步播放量
-		videos[i].Clicks += GetVideoClicks(id)
-		// 同步弹幕数量
-		videos[i].DanmakuCount = GetDanmakuCount(id)
+		v := GetVideoInfo(id)
+		v.Clicks += GetVideoClicks(id)
+		v.DanmakuCount = GetDanmakuCount(id)
+		videos = append(videos, v)
 	}
 
 	return videos
@@ -1055,18 +1066,16 @@ func GetHotVideo(ctx *gin.Context, page, pageSize int) []vo.VideoResp {
 func GetVideoListByPartition(ctx *gin.Context, size int, partitionId uint) []vo.VideoResp {
 	videoIds := cache.GetVideoIdByPartition(partitionId, int64(size))
 
-	len := len(videoIds)
-	videos := make([]vo.VideoResp, len)
-	for i := 0; i < len; i++ {
-		id := utils.StringToUint(videoIds[i])
+	videos := make([]vo.VideoResp, 0, len(videoIds))
+	for _, idStr := range videoIds {
+		id := utils.StringToUint(idStr)
 		if id == 0 {
 			continue
 		}
-		videos[i] = GetVideoInfo(id)
-		// 同步播放量
-		videos[i].Clicks += GetVideoClicks(id)
-		// 同步弹幕数量
-		videos[i].DanmakuCount = GetDanmakuCount(id)
+		v := GetVideoInfo(id)
+		v.Clicks += GetVideoClicks(id)
+		v.DanmakuCount = GetDanmakuCount(id)
+		videos = append(videos, v)
 	}
 
 	return videos
@@ -1098,14 +1107,12 @@ func GetRelatedVideoList(ctx *gin.Context, videoId uint) []vo.VideoResp {
 		}
 	}
 
-	len := len(videoIds)
-	videos := make([]vo.VideoResp, len)
-	for i := 0; i < len; i++ {
-		videos[i] = GetVideoInfo(videoIds[i])
-		// 同步播放量
-		videos[i].Clicks += GetVideoClicks(videoIds[i])
-		// 同步弹幕数量
-		videos[i].DanmakuCount = GetDanmakuCount(videoIds[i])
+	videos := make([]vo.VideoResp, 0, len(videoIds))
+	for _, id := range videoIds {
+		v := GetVideoInfo(id)
+		v.Clicks += GetVideoClicks(id)
+		v.DanmakuCount = GetDanmakuCount(id)
+		videos = append(videos, v)
 	}
 
 	return videos
@@ -1124,14 +1131,12 @@ func SearchVideo(ctx *gin.Context, searchVideoReq dto.SearchVideoReq) []vo.Video
 			Limit(searchVideoReq.PageSize).Offset((searchVideoReq.Page-1)*searchVideoReq.PageSize).Pluck("id", &videoIds)
 	}
 
-	len := len(videoIds)
-	videos := make([]vo.VideoResp, len)
-	for i := 0; i < len; i++ {
-		videos[i] = GetVideoInfo(videoIds[i])
-		// 同步播放量
-		videos[i].Clicks += GetVideoClicks(videoIds[i])
-		// 同步弹幕数量
-		videos[i].DanmakuCount = GetDanmakuCount(videoIds[i])
+	videos := make([]vo.VideoResp, 0, len(videoIds))
+	for _, id := range videoIds {
+		v := GetVideoInfo(id)
+		v.Clicks += GetVideoClicks(id)
+		v.DanmakuCount = GetDanmakuCount(id)
+		videos = append(videos, v)
 	}
 
 	return videos
