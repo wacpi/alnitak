@@ -474,18 +474,23 @@ func UploadVideoMerge(ctx *gin.Context, videoFileReq dto.VideoFileReq) error {
 	return nil
 }
 
-// createFileRef 创建用户-文件引用关系
+// createFileRef 创建用户-文件引用关系（事务性操作）
 func createFileRef(uid, fileID, resourceID uint) {
-	ref := model.VideoFileRef{
-		Uid:        uid,
-		FileID:     fileID,
-		ResourceID: resourceID,
+	if err := global.Mysql.Transaction(func(tx *gorm.DB) error {
+		ref := model.VideoFileRef{
+			Uid:        uid,
+			FileID:     fileID,
+			ResourceID: resourceID,
+		}
+		if err := tx.Create(&ref).Error; err != nil {
+			return err
+		}
+		// 增加引用计数
+		return tx.Model(&model.VideoFile{}).Where("id = ?", fileID).
+			UpdateColumn("ref_count", gorm.Expr("ref_count + 1")).Error
+	}); err != nil {
+		utils.ErrorLog(fmt.Sprintf("创建文件引用失败, fileID=%d, uid=%d", fileID, uid), "upload", err.Error())
 	}
-	global.Mysql.Create(&ref)
-
-	// 增加引用计数
-	global.Mysql.Model(&model.VideoFile{}).Where("id = ?", fileID).
-		UpdateColumn("ref_count", gorm.Expr("ref_count + 1"))
 }
 
 // updateFileRefResourceID 更新引用关系中的 ResourceID
@@ -496,41 +501,42 @@ func updateFileRefResourceID(uid, fileID, resourceID uint) {
 }
 
 // decreaseVideoFileRefCount 减少视频文件引用计数，如果计数为0则删除文件记录
-// 用于删除稿件时正确处理全局去重的文件引用
+// 用于删除稿件时正确处理全局去重的文件引用（事务性操作）
 func decreaseVideoFileRefCount(fileID, uid, resourceID uint, dirName string) {
 	if fileID == 0 {
 		return
 	}
 
-	// 删除用户的引用记录
-	if err := global.Mysql.Where("file_id = ? AND uid = ? AND resource_id = ?", fileID, uid, resourceID).
-		Delete(&model.VideoFileRef{}).Error; err != nil {
-		utils.ErrorLog(fmt.Sprintf("删除VideoFileRef失败, fileID=%d, uid=%d, resourceID=%d", fileID, uid, resourceID), "upload", err.Error())
-	}
-
-	// 减少引用计数
-	result := global.Mysql.Model(&model.VideoFile{}).Where("id = ? AND ref_count > 0", fileID).
-		UpdateColumn("ref_count", gorm.Expr("ref_count - 1"))
-	if result.Error != nil {
-		utils.ErrorLog(fmt.Sprintf("减少VideoFile引用计数失败, fileID=%d", fileID), "upload", result.Error.Error())
-		return
-	}
-
-	// 检查引用计数是否为0，如果是则删除VideoFile记录
-	var vf model.VideoFile
-	if err := global.Mysql.Where("id = ?", fileID).First(&vf).Error; err != nil {
-		return
-	}
-
-	if vf.RefCount <= 0 {
-		// 没有任何引用了，删除VideoFile记录
-		if err := global.Mysql.Where("id = ?", fileID).Delete(&model.VideoFile{}).Error; err != nil {
-			utils.ErrorLog(fmt.Sprintf("删除VideoFile失败, fileID=%d", fileID), "upload", err.Error())
-		} else {
-			utils.InfoLog(fmt.Sprintf("【删除VideoFile】fileID=%d, dirName=%s, 引用计数为0", fileID, dirName), "upload")
+	if err := global.Mysql.Transaction(func(tx *gorm.DB) error {
+		// 删除用户的引用记录
+		if err := tx.Where("file_id = ? AND uid = ? AND resource_id = ?", fileID, uid, resourceID).
+			Delete(&model.VideoFileRef{}).Error; err != nil {
+			return fmt.Errorf("删除VideoFileRef失败: %w", err)
 		}
-	} else {
-		utils.InfoLog(fmt.Sprintf("【减少引用计数】fileID=%d, 剩余引用=%d", fileID, vf.RefCount), "upload")
+
+		// 减少引用计数
+		if err := tx.Model(&model.VideoFile{}).Where("id = ? AND ref_count > 0", fileID).
+			UpdateColumn("ref_count", gorm.Expr("ref_count - 1")).Error; err != nil {
+			return fmt.Errorf("减少引用计数失败: %w", err)
+		}
+
+		// 在事务内检查引用计数，使用行锁防止并发问题
+		var vf model.VideoFile
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", fileID).First(&vf).Error; err != nil {
+			return nil // 记录不存在，无需处理
+		}
+
+		if vf.RefCount <= 0 {
+			if err := tx.Where("id = ?", fileID).Delete(&model.VideoFile{}).Error; err != nil {
+				return fmt.Errorf("删除VideoFile失败: %w", err)
+			}
+			utils.InfoLog(fmt.Sprintf("【删除VideoFile】fileID=%d, dirName=%s, 引用计数为0", fileID, dirName), "upload")
+		} else {
+			utils.InfoLog(fmt.Sprintf("【减少引用计数】fileID=%d, 剩余引用=%d", fileID, vf.RefCount), "upload")
+		}
+		return nil
+	}); err != nil {
+		utils.ErrorLog(fmt.Sprintf("减少文件引用计数事务失败, fileID=%d", fileID), "upload", err.Error())
 	}
 }
 
