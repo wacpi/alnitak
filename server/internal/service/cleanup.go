@@ -147,6 +147,18 @@ func checkVideoDirValidity(dirName string) string {
 			return ""
 		}
 
+		// 检查是否有正在转码的资源引用了这个文件（重新转码场景）
+		var processingCount int64
+		global.Mysql.Model(&model.Resource{}).
+			Where("status = ?", global.VIDEO_PROCESSING).
+			Where("id IN (?)",
+				global.Mysql.Model(&model.VideoFileRef{}).Select("resource_id").
+					Where("file_id = ?", videoFile.ID),
+			).Count(&processingCount)
+		if processingCount > 0 {
+			return ""
+		}
+
 		// VideoFile 存在但无引用且已完成，可以清理
 		return "VideoFile无有效引用"
 	}
@@ -161,6 +173,22 @@ func checkVideoDirValidity(dirName string) string {
 			return ""
 		}
 		lastReason = reason
+	}
+
+	// 3. 检查是否有正在转码的资源使用了该目录（防止重新转码时被误删）
+	// 重新转码会先删旧 VideoIndexFile、软删旧 Resource，再创建新 Resource 开始转码
+	// 此时新资源尚未生成 VideoIndexFile，但目录不能删
+	var processingCount int64
+	global.Mysql.Model(&model.Resource{}).
+		Where("status = ?", global.VIDEO_PROCESSING).
+		Where("id IN (?)",
+			global.Mysql.Model(&model.VideoFileRef{}).Select("resource_id").
+				Where("file_id IN (?)",
+					global.Mysql.Model(&model.VideoFile{}).Select("id").Where("dir_name = ?", dirName),
+				),
+		).Count(&processingCount)
+	if processingCount > 0 {
+		return ""
 	}
 
 	// 所有记录都无效，返回最后一个无效原因

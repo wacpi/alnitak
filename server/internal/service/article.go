@@ -5,6 +5,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 	"interastral-peace.com/alnitak/internal/cache"
 	"interastral-peace.com/alnitak/internal/domain/dto"
 	"interastral-peace.com/alnitak/internal/domain/model"
@@ -71,12 +72,14 @@ func EditArticleInfo(ctx *gin.Context, editArticleReq dto.EditArticleReq) error 
 }
 
 // 获取自己上传的文章
-func GetUploadArticleList(ctx *gin.Context, page, pageSize int) (total int64, articles []vo.UploadArticleResp) {
+// category: all | published(0) | pending(500) | rejected(2000)
+func GetUploadArticleList(ctx *gin.Context, page, pageSize int, category string) (total int64, articles []vo.UploadArticleResp) {
 	userId := ctx.GetUint("userId")
 
-	global.Mysql.Model(&model.Article{}).Where("uid = ?", userId).Count(&total)
-	global.Mysql.Model(&model.Article{}).Select(vo.UPLOAD_ARTICLE_FIELD).
-		Where("uid = ?", userId).Limit(pageSize).Offset((page - 1) * pageSize).Scan(&articles)
+	db := global.Mysql.Model(&model.Article{}).Where("uid = ?", userId)
+	db = applyArticleCategoryFilter(db, category)
+	db.Count(&total)
+	db.Select(vo.UPLOAD_ARTICLE_FIELD).Limit(pageSize).Offset((page - 1) * pageSize).Scan(&articles)
 
 	// 更新点击量数据
 	for i := 0; i < len(articles); i++ {
@@ -84,6 +87,19 @@ func GetUploadArticleList(ctx *gin.Context, page, pageSize int) (total int64, ar
 	}
 
 	return
+}
+
+func applyArticleCategoryFilter(db *gorm.DB, category string) *gorm.DB {
+	switch category {
+	case "published":
+		return db.Where("status = ?", global.AUDIT_APPROVED)
+	case "pending":
+		return db.Where("status = ?", global.WAITING_REVIEW)
+	case "rejected":
+		return db.Where("status = ?", global.REVIEW_FAILED)
+	default:
+		return db
+	}
 }
 
 func GetArticleStatus(ctx *gin.Context, aid uint) (article vo.ArticleStatusResp, err error) {

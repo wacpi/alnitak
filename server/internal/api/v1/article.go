@@ -55,16 +55,18 @@ func EditArticleInfo(ctx *gin.Context) {
 }
 
 // 获取自己的文章
+// 支持按分类筛选：category=all|published|pending|rejected（文章无转码状态）
 func GetUploadArticleList(ctx *gin.Context) {
 	page := utils.StringToInt(ctx.Query("page"))
 	pageSize := utils.StringToInt(ctx.Query("pageSize"))
+	category := ctx.DefaultQuery("category", "all")
 
 	if pageSize > 30 {
 		resp.FailWithMessage(ctx, "请求数量过多")
 		return
 	}
 
-	total, articles := service.GetUploadArticleList(ctx, page, pageSize)
+	total, articles := service.GetUploadArticleList(ctx, page, pageSize, category)
 
 	// 返回给前端
 	resp.OkWithData(ctx, gin.H{"total": total, "articles": articles})

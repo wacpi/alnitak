@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 	"interastral-peace.com/alnitak/internal/cache"
 	"interastral-peace.com/alnitak/internal/domain/dto"
 	"interastral-peace.com/alnitak/internal/domain/model"
@@ -795,12 +796,14 @@ func GetVideoSliceDir(key string) string {
 }
 
 // 获取自己上传的视频
-func GetUploadVideoList(ctx *gin.Context, page, pageSize int) (total int64, videos []vo.UploadVideoResp) {
+// category: all | published(0) | transcoding(100,200,300) | transcode_failed(3000) | pending(500) | rejected(2000)
+func GetUploadVideoList(ctx *gin.Context, page, pageSize int, category string) (total int64, videos []vo.UploadVideoResp) {
 	userId := ctx.GetUint("userId")
 
-	global.Mysql.Model(&model.Video{}).Where("uid = ?", userId).Count(&total)
-	global.Mysql.Model(&model.Video{}).Select(vo.UPLOAD_VIDEO_FIELD).
-		Where("uid = ?", userId).Limit(pageSize).Offset((page - 1) * pageSize).Scan(&videos)
+	db := global.Mysql.Model(&model.Video{}).Where("uid = ?", userId)
+	db = applyVideoCategoryFilter(db, category)
+	db.Count(&total)
+	db.Select(vo.UPLOAD_VIDEO_FIELD).Limit(pageSize).Offset((page - 1) * pageSize).Scan(&videos)
 
 	// 更新播放量数据
 	for i := 0; i < len(videos); i++ {
@@ -808,6 +811,23 @@ func GetUploadVideoList(ctx *gin.Context, page, pageSize int) (total int64, vide
 	}
 
 	return
+}
+
+func applyVideoCategoryFilter(db *gorm.DB, category string) *gorm.DB {
+	switch category {
+	case "published":
+		return db.Where("status = ?", global.AUDIT_APPROVED)
+	case "transcoding":
+		return db.Where("status IN ?", []int{global.CREATED_VIDEO, global.VIDEO_PROCESSING, global.SUBMIT_REVIEW})
+	case "transcode_failed":
+		return db.Where("status = ?", global.PROCESSING_FAIL)
+	case "pending":
+		return db.Where("status = ?", global.WAITING_REVIEW)
+	case "rejected":
+		return db.Where("status = ?", global.REVIEW_FAILED)
+	default:
+		return db
+	}
 }
 
 func EditVideoInfo(ctx *gin.Context, editVideoReq dto.EditVideoReq) error {

@@ -46,16 +46,18 @@ func GetVideoStatus(ctx *gin.Context) {
 }
 
 // 获取自己的视频
+// 支持按分类筛选：category=all|published|transcoding|transcode_failed|pending|rejected
 func GetUploadVideoList(ctx *gin.Context) {
 	page := utils.StringToInt(ctx.Query("page"))
 	pageSize := utils.StringToInt(ctx.Query("pageSize"))
+	category := ctx.DefaultQuery("category", "all")
 
 	if pageSize > 30 {
 		resp.FailWithMessage(ctx, "请求数量过多")
 		return
 	}
 
-	total, videos := service.GetUploadVideoList(ctx, page, pageSize)
+	total, videos := service.GetUploadVideoList(ctx, page, pageSize, category)
 
 	// 返回给前端
 	resp.OkWithData(ctx, gin.H{"total": total, "videos": videos})
