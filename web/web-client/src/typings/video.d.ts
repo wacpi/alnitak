@@ -1,5 +1,7 @@
 interface BaseVideoType {
   vid: number;
+  // 短 ID（后端返回 shortId，可选）
+  shortId?: string;
   title: string;
   cover: string;
   desc: string;
@@ -54,6 +56,7 @@ interface VideoType extends BaseVideoType {
 // 全部视频列表
 interface AllVideoType {
   vid: number;
+  shortId?: string;
   title: string;
 }
 

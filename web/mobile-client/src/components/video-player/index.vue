@@ -200,16 +200,18 @@ const getQualityDisplayName = (qualityStr: string): string => {
     const fps = parseInt(fpsStr, 10);
 
     if (resolution.includes('x')) {
-      const [, height] = resolution.split('x').map(Number);
+      const [width, height] = resolution.split('x').map(Number);
+      // YouTube风格：取短边作为分辨率标签
+      const shortSide = Math.min(width, height);
       const fpsSuffix = fps > 30 ? fps.toString() : '';
 
-      if (height <= 360) return fpsSuffix ? `360p${fpsSuffix}` : '360p';
-      if (height <= 480) return fpsSuffix ? `480p${fpsSuffix}` : '480p';
-      if (height <= 720) return fpsSuffix ? `720p${fpsSuffix}` : '720p';
-      if (height <= 1080) return fpsSuffix ? `1080p${fpsSuffix}` : '1080p';
-      if (height <= 1440) return fpsSuffix ? `1440p${fpsSuffix}` : '1440p';
-      if (height <= 2160) return fpsSuffix ? `4K${fpsSuffix}` : '4K';
-      return fpsSuffix ? `${height}p${fpsSuffix}` : `${height}p`;
+      if (shortSide <= 360) return fpsSuffix ? `360p${fpsSuffix}` : '360p';
+      if (shortSide <= 480) return fpsSuffix ? `480p${fpsSuffix}` : '480p';
+      if (shortSide <= 720) return fpsSuffix ? `720p${fpsSuffix}` : '720p';
+      if (shortSide <= 1080) return fpsSuffix ? `1080p${fpsSuffix}` : '1080p';
+      if (shortSide <= 1440) return fpsSuffix ? `1440p${fpsSuffix}` : '1440p';
+      if (shortSide <= 2160) return fpsSuffix ? `4K${fpsSuffix}` : '4K';
+      return fpsSuffix ? `${shortSide}p${fpsSuffix}` : `${shortSide}p`;
     }
   } catch (error) {
     console.warn('Failed to parse quality string:', qualityStr);
