@@ -136,21 +136,6 @@ func GetVideoStream(ctx *gin.Context) {
 	ctx.Redirect(http.StatusFound, redirect)
 }
 
-// ClientLog 接收前端日志（调试用）
-func ClientLog(ctx *gin.Context) {
-	var body struct {
-		Logs []string `json:"logs"`
-	}
-	if err := ctx.ShouldBindJSON(&body); err != nil {
-		ctx.Status(http.StatusBadRequest)
-		return
-	}
-	for _, line := range body.Logs {
-		fmt.Printf("[CLIENT-LOG] %s\n", line)
-	}
-	ctx.Status(http.StatusOK)
-}
-
 // 获取图片文件
 func GetImgFile(ctx *gin.Context) {
 	file := ctx.Param("file")

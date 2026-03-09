@@ -68,6 +68,10 @@ func CollectRoutes(r *gin.Engine) *gin.Engine {
 
 	v1 := r.Group("/api/v1")
 	{
+		// 客户端日志上报（需登录，避免被滥用）
+		clientGroup := v1.Group("client")
+		clientGroup.Use(middleware.Auth())
+		clientGroup.POST("log", api.ClientLog)
 		// 登录注册相关路由路由
 		CollectAuthRoutes(v1)
 		// 用户相关路由
@@ -118,8 +122,10 @@ func CollectRoutes(r *gin.Engine) *gin.Engine {
 		CollectPGCRoutes(v1)
 	}
 
-	//获取静态文件
+	// 获取静态文件
 	r.GET("/api/image/:file", api.GetImgFile)
+	// 后台静态页（如 PGC 管理）
+	r.Static("/admin", "./static/admin")
 
 	return r
 }

@@ -59,6 +59,7 @@ func initApiData() {
 		{Method: "GET", Path: "/api/v1/article/getUploadArticle", Category: "文章", Desc: "获取上传的文章"},
 		{Method: "POST", Path: "/api/v1/article/uploadArticleInfo", Category: "文章", Desc: "上传文章信息"},
 		{Method: "POST", Path: "/api/v1/auth/logout", Category: "Auth", Desc: "退出登录"},
+		{Method: "POST", Path: "/api/v1/client/log", Category: "客户端", Desc: "客户端日志上报"},
 		{Method: "POST", Path: "/api/v1/carousel/addCarousel", Category: "轮播图", Desc: "新增轮播图（后台管理）"},
 		{Method: "DELETE", Path: "/api/v1/carousel/deleteCarousel/:id", Category: "轮播图", Desc: "删除轮播图（后台管理）"},
 		{Method: "PUT", Path: "/api/v1/carousel/editCarousel", Category: "轮播图", Desc: "编辑轮播图（后台管理）"},
@@ -94,6 +95,8 @@ func initApiData() {
 		{Method: "GET", Path: "/api/v1/message/getWhisperDetails", Category: "消息", Desc: "获取私信详情"},
 		{Method: "GET", Path: "/api/v1/message/getWhisperList", Category: "消息", Desc: "获取私信列表"},
 		{Method: "POST", Path: "/api/v1/message/readWhisper", Category: "消息", Desc: "已读私信"},
+		{Method: "GET", Path: "/api/v1/message/readStatus", Category: "消息", Desc: "获取公告/点赞/回复/@已读进度"},
+		{Method: "POST", Path: "/api/v1/message/readStatus", Category: "消息", Desc: "上报公告/点赞/回复/@已读进度"},
 		{Method: "POST", Path: "/api/v1/message/sendWhisper", Category: "消息", Desc: "发送私信"},
 		{Method: "POST", Path: "/api/v1/partition/addPartition", Category: "分区", Desc: "添加分区（后台管理）"},
 		{Method: "DELETE", Path: "/api/v1/partition/deletePartition/:id", Category: "分区", Desc: "删除分区（后台管理）"},
@@ -209,6 +212,8 @@ func initCasbinRuleData() {
 		{Ptype: "p", V0: "001", V1: "/api/v1/message/getWhisperDetails", V2: "GET"},
 		{Ptype: "p", V0: "001", V1: "/api/v1/message/getWhisperList", V2: "GET"},
 		{Ptype: "p", V0: "001", V1: "/api/v1/message/readWhisper", V2: "POST"},
+		{Ptype: "p", V0: "001", V1: "/api/v1/message/readStatus", V2: "GET"},
+		{Ptype: "p", V0: "001", V1: "/api/v1/message/readStatus", V2: "POST"},
 		{Ptype: "p", V0: "001", V1: "/api/v1/message/sendWhisper", V2: "POST"},
 		{Ptype: "p", V0: "001", V1: "/api/v1/relation/follow", V2: "POST"},
 		{Ptype: "p", V0: "001", V1: "/api/v1/relation/getUserRelation", V2: "GET"},
@@ -305,6 +310,8 @@ func initCasbinRuleData() {
 		{Ptype: "p", V0: "002", V1: "/api/v1/message/getWhisperDetails", V2: "GET"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/message/getWhisperList", V2: "GET"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/message/readWhisper", V2: "POST"},
+		{Ptype: "p", V0: "002", V1: "/api/v1/message/readStatus", V2: "GET"},
+		{Ptype: "p", V0: "002", V1: "/api/v1/message/readStatus", V2: "POST"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/message/sendWhisper", V2: "POST"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/partition/addPartition", V2: "POST"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/partition/deletePartition/:id", V2: "DELETE"},
@@ -595,6 +602,8 @@ var authApiDesc = map[string]string{
 	"POST|/api/v1/article/uploadArticleInfo":         "上传文章信息",
 	// Auth
 	"POST|/api/v1/auth/logout": "退出登录",
+	// 客户端
+	"POST|/api/v1/client/log": "客户端日志上报",
 	// 轮播图
 	"POST|/api/v1/carousel/addCarousel":          "新增轮播图（后台管理）",
 	"DELETE|/api/v1/carousel/deleteCarousel/:id": "删除轮播图（后台管理）",
@@ -637,6 +646,8 @@ var authApiDesc = map[string]string{
 	"GET|/api/v1/message/getWhisperDetails":     "获取私信详情",
 	"GET|/api/v1/message/getWhisperList":        "获取私信列表",
 	"POST|/api/v1/message/readWhisper":          "已读私信",
+	"GET|/api/v1/message/readStatus":            "获取公告/点赞/回复/@已读进度",
+	"POST|/api/v1/message/readStatus":           "上报公告/点赞/回复/@已读进度",
 	"POST|/api/v1/message/sendWhisper":          "发送私信",
 	// 分区
 	"POST|/api/v1/partition/addPartition":          "添加分区（后台管理）",
@@ -757,7 +768,7 @@ func SyncApiData() {
 		})
 	}
 
-	// 3. 批量写入
+	// 3. 批量写入 API 表
 	if len(newApis) > 0 {
 		if err := global.Mysql.Create(&newApis).Error; err != nil {
 			zap.L().Error("自动同步API数据失败", zap.String("err", err.Error()), zap.String("module", "initialize"))
@@ -771,6 +782,20 @@ func SyncApiData() {
 					zap.String("path", api.Path),
 					zap.String("category", api.Category),
 					zap.String("desc", api.Desc))
+			}
+			// 4. 为角色 001、002 写入新 API 的 Casbin 权限，并重载策略
+			var newRules []model.CasbinRule
+			for _, api := range newApis {
+				newRules = append(newRules,
+					model.CasbinRule{Ptype: "p", V0: "001", V1: api.Path, V2: api.Method},
+					model.CasbinRule{Ptype: "p", V0: "002", V1: api.Path, V2: api.Method},
+				)
+			}
+			if err := global.Mysql.Create(&newRules).Error; err != nil {
+				zap.L().Error("自动同步Casbin权限失败", zap.String("err", err.Error()), zap.String("module", "initialize"))
+			} else if global.Casbin != nil {
+				_ = global.Casbin.ReloadPolicy()
+				zap.L().Info("已为角色001/002分配新API权限并重载Casbin", zap.String("module", "initialize"))
 			}
 		}
 	} else {

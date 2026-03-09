@@ -196,21 +196,41 @@ func CheckReplaceResource(ctx *gin.Context, replaceReq dto.ReplaceResourceReq) e
 		return errors.New("资源不存在")
 	}
 
-	// 获取旧资源的索引文件信息
-	var oldIndexFile model.VideoIndexFile
-	global.Mysql.Where("resource_id = ?", replaceReq.ResourceID).First(&oldIndexFile)
-
-	// 检查哈希值是否相同
-	if oldIndexFile.DirName != "" {
-		var oldFileInfo model.VideoFile
-		global.Mysql.Where("dir_name = ?", oldIndexFile.DirName).First(&oldFileInfo)
-		if oldFileInfo.Hash == replaceReq.Hash {
-			// 哈希值相同，无需替换
-			return errors.New("视频文件相同，无需替换")
+	// 通过 Resource.FileID 或 VideoIndexFile 查找旧视频文件
+	var oldFileInfo model.VideoFile
+	if oldResource.FileID != 0 {
+		global.Mysql.Where("id = ?", oldResource.FileID).First(&oldFileInfo)
+	}
+	if oldFileInfo.ID == 0 {
+		// 兼容旧数据：通过 VideoIndexFile 查找
+		var oldIndexFile model.VideoIndexFile
+		global.Mysql.Where("resource_id = ?", replaceReq.ResourceID).First(&oldIndexFile)
+		if oldIndexFile.DirName != "" {
+			global.Mysql.Where("dir_name = ?", oldIndexFile.DirName).First(&oldFileInfo)
 		}
 	}
 
-	// hash不同，可以替换
+	// 检查哈希值是否相同
+	if oldFileInfo.ID != 0 && oldFileInfo.Hash == replaceReq.Hash {
+		// 哈希值相同，检查源文件和转码产物是否都存在
+		suffix := utils.GetFileSuffix(oldFileInfo.OriginalName)
+		localPath := "./upload/video/" + oldFileInfo.DirName + "/upload" + suffix
+		if !utils.IsFileExists(localPath) {
+			// 源文件已丢失，允许重新替换上传
+			return nil
+		}
+		// 源文件存在，还需检查转码产物是否完整
+		var indexCount int64
+		global.Mysql.Model(&model.VideoIndexFile{}).
+			Where("resource_id = ?", replaceReq.ResourceID).Count(&indexCount)
+		if indexCount == 0 {
+			// 转码记录不存在（转码产物丢失），允许重新替换上传
+			return nil
+		}
+		return errors.New("视频文件相同，无需替换")
+	}
+
+	// 可以替换
 	return nil
 }
 
@@ -229,6 +249,20 @@ func ReplaceResource(ctx *gin.Context, replaceReq dto.ReplaceResourceReq) (vo.Re
 	var oldIndexFile model.VideoIndexFile
 	global.Mysql.Where("resource_id = ?", replaceReq.ResourceID).First(&oldIndexFile)
 
+	// 通过 Resource.FileID 或 VideoIndexFile 查找旧视频文件
+	var oldFileInfo model.VideoFile
+	if oldResource.FileID != 0 {
+		global.Mysql.Where("id = ?", oldResource.FileID).First(&oldFileInfo)
+	}
+	if oldFileInfo.ID == 0 && oldIndexFile.DirName != "" {
+		global.Mysql.Where("dir_name = ?", oldIndexFile.DirName).First(&oldFileInfo)
+	}
+	// 获取旧文件的 DirName（用于后续清理）
+	oldDirName := oldIndexFile.DirName
+	if oldDirName == "" && oldFileInfo.ID != 0 {
+		oldDirName = oldFileInfo.DirName
+	}
+
 	// 获取新视频文件信息
 	var newFileInfo model.VideoFile
 	if err := global.Mysql.Where("hash = ? and uid = ?", replaceReq.Hash, userId).First(&newFileInfo).Error; err != nil || newFileInfo.ID == 0 {
@@ -236,31 +270,37 @@ func ReplaceResource(ctx *gin.Context, replaceReq dto.ReplaceResourceReq) (vo.Re
 		return vo.ResourceResp{}, errors.New("视频文件不存在")
 	}
 
-	// 检查哈希值是否相同
-	if oldIndexFile.DirName != "" {
-		var oldFileInfo model.VideoFile
-		global.Mysql.Where("dir_name = ?", oldIndexFile.DirName).First(&oldFileInfo)
-		if oldFileInfo.Hash == replaceReq.Hash {
-			// 哈希值相同，无需转码，直接更新为待审核状态
+	// 检查哈希值是否相同且旧文件和转码产物都完整
+	if oldFileInfo.ID != 0 && oldFileInfo.Hash == replaceReq.Hash {
+		suffix := utils.GetFileSuffix(oldFileInfo.OriginalName)
+		localPath := "./upload/video/" + oldFileInfo.DirName + "/upload" + suffix
+		var indexCount int64
+		global.Mysql.Model(&model.VideoIndexFile{}).
+			Where("resource_id = ?", replaceReq.ResourceID).Count(&indexCount)
+		if utils.IsFileExists(localPath) && indexCount > 0 {
+			// 源文件和转码产物都存在，无需转码，直接更新为待审核状态
 			if err := global.Mysql.Model(&model.Resource{}).Where("id = ?", replaceReq.ResourceID).Update("status", global.WAITING_REVIEW).Error; err != nil {
 				utils.ErrorLog("更新资源状态失败", "resource", err.Error())
 				return vo.ResourceResp{}, errors.New("更新资源状态失败")
 			}
 			var newResource model.Resource
 			global.Mysql.Where("id = ?", replaceReq.ResourceID).First(&newResource)
-			utils.InfoLog(fmt.Sprintf("【替换资源】hash相同，跳过转码，设为待审核 resourceID=%d", replaceReq.ResourceID), "resource")
+			utils.InfoLog(fmt.Sprintf("【替换资源】hash相同且文件完整，跳过转码，设为待审核 resourceID=%d", replaceReq.ResourceID), "resource")
 			return vo.ResourceToResourceResp(newResource), nil
 		}
+		// 源文件或转码产物丢失，需要重新转码
+		utils.InfoLog(fmt.Sprintf("【替换资源】hash相同但文件不完整(源文件=%v,转码记录=%d)，重新转码 resourceID=%d",
+			utils.IsFileExists(localPath), indexCount, replaceReq.ResourceID), "resource")
 	}
 
 	// 处理旧文件的引用计数（使用统一的引用计数机制）
 	if oldResource.FileID != 0 {
-		decreaseVideoFileRefCount(oldResource.FileID, userId, replaceReq.ResourceID, oldIndexFile.DirName)
-	} else if oldIndexFile.DirName != "" {
+		decreaseVideoFileRefCount(oldResource.FileID, userId, replaceReq.ResourceID, oldDirName)
+	} else if oldDirName != "" {
 		// 兼容旧数据：通过 DirName 查找 VideoFile
 		var oldVf model.VideoFile
-		if global.Mysql.Where("dir_name = ?", oldIndexFile.DirName).First(&oldVf).Error == nil {
-			decreaseVideoFileRefCount(oldVf.ID, userId, replaceReq.ResourceID, oldIndexFile.DirName)
+		if global.Mysql.Where("dir_name = ?", oldDirName).First(&oldVf).Error == nil {
+			decreaseVideoFileRefCount(oldVf.ID, userId, replaceReq.ResourceID, oldDirName)
 		}
 	}
 

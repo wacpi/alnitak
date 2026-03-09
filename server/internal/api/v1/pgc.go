@@ -41,7 +41,7 @@ func UpdatePGC(ctx *gin.Context) {
 }
 
 func DeletePGC(ctx *gin.Context) {
-	pgcID := ctx.Param("id")
+	pgcID := ctx.Param("pgc_id")
 
 	pgcIDUint, err := convertToUint(pgcID)
 	if err != nil {
@@ -97,11 +97,18 @@ func GetPGCDetail(ctx *gin.Context) {
 }
 
 func GetPGCEpisodes(ctx *gin.Context) {
+	pgcIDStr := ctx.Param("pgc_id")
+	pgcIDUint, err := convertToUint(pgcIDStr)
+	if err != nil {
+		resp.FailWithMessage(ctx, "无效的PGC ID")
+		return
+	}
 	var req dto.EpisodeListReq
 	if err := ctx.ShouldBind(&req); err != nil {
 		resp.FailWithMessage(ctx, "参数错误: "+err.Error())
 		return
 	}
+	req.PGCID = pgcIDUint
 
 	episodes, err := service.GetPGCEpisodeList(req.PGCID, req)
 	if err != nil {

@@ -13,7 +13,7 @@ import (
 
 func GetAnnounce(ctx *gin.Context, page, pageSize int) (total int64, announces []vo.AnnounceResp) {
 	global.Mysql.Model(&model.Announce{}).Count(&total)
-	global.Mysql.Model(&model.Announce{}).Limit(pageSize).Offset((page - 1) * pageSize).Scan(&announces)
+	global.Mysql.Model(&model.Announce{}).Order("id DESC").Limit(pageSize).Offset((page - 1) * pageSize).Scan(&announces)
 	return
 }
 
