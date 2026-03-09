@@ -207,9 +207,17 @@ const getQualityDisplayName = (qualityStr: string): string => {
     const resolution = parts[0];
     const fps = parseInt(parts[parts.length - 1], 10);
     if (resolution.includes('x')) {
-      const height = resolution.split('x')[1];
+      const [width, height] = resolution.split('x').map(Number);
+      const shortSide = Math.min(width, height);
       const fpsSuffix = fps > 30 ? fps.toString() : '';
-      return `${height}p${fpsSuffix}`;
+
+      if (shortSide <= 360) return `360p${fpsSuffix}`;
+      if (shortSide <= 480) return `480p${fpsSuffix}`;
+      if (shortSide <= 720) return `720p${fpsSuffix}`;
+      if (shortSide <= 1080) return `1080p${fpsSuffix}`;
+      if (shortSide <= 1440) return `1440p${fpsSuffix}`;
+      if (shortSide <= 2160) return `4K${fpsSuffix}`;
+      return `${shortSide}p${fpsSuffix}`;
     }
   } catch (e) {}
   return qualityStr.split('_')[0] || qualityStr;

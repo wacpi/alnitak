@@ -76,33 +76,29 @@ const getQualityDisplayName = (qualityStr: string): string => {
 
     if (resolution.includes('x')) {
       const [width, height] = resolution.split('x').map(Number);
-      
-      // 根据高度判断清晰度，并根据实际帧率动态生成后缀
-      // 标准帧率(30fps)不显示后缀，高帧率(>30)显示帧率后缀
+      const shortSide = Math.min(width, height);
       const fpsSuffix = fps > 30 ? fps.toString() : '';
-      
-      if (height <= 360) {
+
+      if (shortSide <= 360) {
         return fpsSuffix ? `360p${fpsSuffix}` : '360p';
-      } else if (height <= 480) {
+      } else if (shortSide <= 480) {
         return fpsSuffix ? `480p${fpsSuffix}` : '480p';
-      } else if (height <= 720) {
+      } else if (shortSide <= 720) {
         return fpsSuffix ? `720p${fpsSuffix}` : '720p';
-      } else if (height <= 1080) {
+      } else if (shortSide <= 1080) {
         return fpsSuffix ? `1080p${fpsSuffix}` : '1080p';
-      } else if (height <= 1440) {
+      } else if (shortSide <= 1440) {
         return fpsSuffix ? `1440p${fpsSuffix}` : '1440p';
-      } else if (height <= 2160) {
+      } else if (shortSide <= 2160) {
         return fpsSuffix ? `4K${fpsSuffix}` : '4K';
       } else {
-        // 其他分辨率，显示实际分辨率或高度
-        return fpsSuffix ? `${height}p${fpsSuffix}` : `${height}p`;
+        return fpsSuffix ? `${shortSide}p${fpsSuffix}` : `${shortSide}p`;
       }
     }
   } catch (error) {
     console.warn('Failed to parse quality string:', qualityStr, error);
   }
 
-  // 解析失败，返回原始字符串（去掉部分后缀使其更简洁）
   return qualityStr.split('_')[0] || qualityStr;
 };
 
