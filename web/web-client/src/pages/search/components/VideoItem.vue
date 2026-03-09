@@ -1,13 +1,13 @@
 <template>
   <div class="video-item">
-    <nuxt-link class="img" :to="`/video/${info.vid}`" target="_blank">
+    <nuxt-link class="img" :to="videoLink" target="_blank">
       <img :src="getResourceUrl(info.cover)" alt="封面" />
       <span class="duration">{{ toDuration(info.duration) }}</span>
     </nuxt-link>
     <div class="video-info">
-      <nuxt-link v-if="!props.keywords" class="title" :to="`/video/${info.vid}`" target="_blank"
+      <nuxt-link v-if="!props.keywords" class="title" :to="videoLink" target="_blank"
         v-html="keyHighlight(info.title)"></nuxt-link>
-      <nuxt-link v-else class="title" :to="`/video/${info.vid}`">{{ info.title }}</nuxt-link>
+      <nuxt-link v-else class="title" :to="videoLink">{{ info.title }}</nuxt-link>
       <div class="author">
         <div class="avatar">
           <common-avatar :url="info.author.avatar" :size="26" :iconsize="16"></common-avatar>
@@ -28,6 +28,12 @@ const props = defineProps<{
   info: VideoType,
   keywords?: string,
 }>()
+
+// 详情页链接：优先使用 shortId，没有则回退到数字 vid
+const videoLink = computed(() => {
+  const id = props.info.shortId || String(props.info.vid);
+  return `/video/${id}`;
+});
 
 //关键词高亮
 const keyHighlight = (title: string) => {
