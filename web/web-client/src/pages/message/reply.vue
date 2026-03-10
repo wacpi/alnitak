@@ -19,7 +19,7 @@
               <span class="msg-time"> {{ formatTime(item.createdAt) }}</span>
             </div>
             <div class="item-right">
-              <nuxt-link v-if="item.type === 0" :to="`/video/${item.video.vid}`">
+              <nuxt-link v-if="item.type === 0" :to="`/watch?v=${item.video.shortId || String(item.video.vid)}`">
                 <div class="root-content" v-if="item.rootContent">{{ item.rootContent }}</div>
                 <el-image v-else class="img" :src="getResourceUrl(item.video.cover)" lazy alt="封面"></el-image>
               </nuxt-link>

@@ -13,12 +13,12 @@
     
     <div class="video-card" v-for="item in videoList">
       <div class="card-box">
-        <nuxt-link class="cover-box" :to="`/video/${item.vid}`">
+        <nuxt-link class="cover-box" :to="`/watch?v=${item.shortId || String(item.vid)}`">
           <img :src="getResourceUrl(item.cover)" alt="封面" />
           <span class="duration">{{ toDuration(item.duration) }}</span>
         </nuxt-link>
         <div class="info">
-          <nuxt-link class="title" :to="`/video/${item.vid}`">{{ item.title }}</nuxt-link>
+          <nuxt-link class="title" :to="`/watch?v=${item.shortId || String(item.vid)}`">{{ item.title }}</nuxt-link>
           <div class="up-name">
             <el-icon class="icon" :size="16">
               <up-icon></up-icon>

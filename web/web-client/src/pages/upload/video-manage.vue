@@ -15,7 +15,7 @@
                 <span class="item-title unlinked">{{ item.title }}</span>
               </template>
               <template v-else>
-                <nuxt-link class="item-title" :to="`/video/${item.vid}`">{{ item.title }}</nuxt-link>
+                <nuxt-link class="item-title" :to="`/watch?v=${item.shortId || String(item.vid)}`">{{ item.title }}</nuxt-link>
               </template>
               <span class="desc">简介：{{ item.desc }}</span>
               <div class="desc">

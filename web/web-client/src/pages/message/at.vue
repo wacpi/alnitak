@@ -54,7 +54,7 @@ const getAtMsgList = async () => {
 
 const getContentUrl = (msg: AtMessageType) => {
   if (msg.type === 0) {
-    return `/video/${msg.video.vid}`;
+    return `/watch?v=${msg.video.shortId || String(msg.video.vid)}`;
   }
 
   return `/article/${msg.article.aid}`;
