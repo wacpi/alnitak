@@ -57,6 +57,7 @@ import CollectionList from './CollectionList.vue';
 
 const props = defineProps<{
   vid: number;
+  shortId?: string;
 }>();
 
 // 点赞收藏数据
@@ -87,7 +88,8 @@ const route = useRoute();
 const embedCode = computed(() => {
   if (process.client) {
     const part = Number(route.query.p) || 1;
-    const url = window.location.origin + `/embed/video/${props.vid}` + (part > 1 ? `?p=${part}` : '');
+    const v = props.shortId || String(props.vid);
+    const url = window.location.origin + `/embed/watch?v=${v}` + (part > 1 ? `&p=${part}` : '');
     return `<iframe src='${url}' width='800' height='450' frameborder='0' allowfullscreen></iframe>`;
   }
   return '';

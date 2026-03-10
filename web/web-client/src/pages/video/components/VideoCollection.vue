@@ -203,10 +203,11 @@ const goVideo = (item: VideoItem) => {
     }
   } else if (item.vid !== props.vid) {
     // 切换到其他视频
+    const v = (item as any).shortId || String(item.vid);
     if (item.resourceId) {
-      navigateTo(`/video/${item.vid}?resourceId=${item.resourceId}`)
+      navigateTo(`/watch?v=${v}&resourceId=${item.resourceId}`)
     } else {
-      navigateTo(`/video/${item.vid}`)
+      navigateTo(`/watch?v=${v}`)
     }
   }
 }

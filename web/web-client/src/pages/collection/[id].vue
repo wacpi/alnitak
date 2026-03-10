@@ -13,7 +13,7 @@
                   </div>
                 </div>
                 <div class="item-center">
-                  <nuxt-link class="title" :to="`/video/${item.vid}`">{{ item.title }}</nuxt-link>
+                  <nuxt-link class="title" :to="`/watch?v=${item.shortId || String(item.vid)}`">{{ item.title }}</nuxt-link>
                   <span class="desc">简介：{{ item.desc }}</span>
                   <nuxt-link class="desc" :to="`/user/${item.author.uid}`">UP主：{{ item.author.name }}</nuxt-link>
                 </div>

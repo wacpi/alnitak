@@ -32,7 +32,7 @@ const props = defineProps<{
 // 详情页链接：优先使用 shortId，没有则回退到数字 vid
 const videoLink = computed(() => {
   const id = props.info.shortId || String(props.info.vid);
-  return `/video/${id}`;
+  return `/watch?v=${id}`;
 });
 
 //关键词高亮
