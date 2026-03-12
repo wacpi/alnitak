@@ -131,11 +131,17 @@ const options: PlayerOptionsType = {
           video.muted = prevMuted;
           video.dispatchEvent(new Event('loadedmetadata'));
 
-          // 设置用户偏好的初始清晰度
+          // 设置用户偏好的初始清晰度（forceReplace=true：此时尚未播放，立即切到目标清晰度）
           if (dashUnifiedMode) {
             const dashIndex = dashQualityMap.get(defaultQuality.value);
+            console.log('[DASH] 初始清晰度设置:', {
+              defaultQuality: defaultQuality.value,
+              dashIndex,
+              dashQualityMap: Object.fromEntries(dashQualityMap),
+              representations: dash.value.getRepresentationsByType?.('video'),
+            });
             if (dashIndex !== undefined) {
-              dash.value.setRepresentationForTypeByIndex('video', dashIndex);
+              dash.value.setRepresentationForTypeByIndex('video', dashIndex, true);
             }
           }
         });
@@ -446,6 +452,14 @@ const loadResource = async (part: number) => {
     const serverSupportsDash = res.data.data.supportsDash === true
     const useDash = supportsDashJs() && serverSupportsDash
     const qualityOrderFromServer = (res.data.data.qualityOrder as string[]) || []
+
+    // 当前视频不包含上次保存的清晰度名时，回退到本视频的最高档，并同步更新 localStorage
+    const qualityNames = qualities.map((q) => getQualityDisplayName(q))
+    if (!qualityNames.includes(defaultQuality.value)) {
+      const highestName = qualityNames[0] || '720p'
+      defaultQuality.value = highestName
+      localStorage.setItem('default-video-quality', highestName)
+    }
 
     if (useDash && qualityOrderFromServer.length > 0) {
       // ===== 统一 DASH MPD 模式：所有清晰度在一个 MPD 内 =====
