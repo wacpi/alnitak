@@ -134,6 +134,10 @@ export default defineNuxtConfig({
       ]
     },
     server: {
+      headers: {
+        // 避免切回标签页触发强刷时，SFC 子模块（如 ?vue&type=style）被错误缓存复用
+        'Cache-Control': 'no-store',
+      },
       hmr: {
         overlay: false
       },

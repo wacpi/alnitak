@@ -45,7 +45,15 @@ export const getVideoFileAPI = (src:string) => {
   return request.get(src, { responseType: 'text', transformResponse: [(data: any) => data] });
 }
 
+// 获取处理失败的视频列表
+export const getFailedVideoListAPI = (data: VideoListParam) => {
+  return request.post("v1/video/getFailedVideoList", data);
+}
+
 // 重新转码视频
-export const reTranscodeVideoAPI = (vid: number) => {
-  return request.post(`v1/video/reTranscodeVideo?vid=${vid}`);
+export const reTranscodeVideoAPI = (vid: number, resourceId?: number) => {
+  const query = new URLSearchParams();
+  query.set('vid', String(vid));
+  if (typeof resourceId === 'number') query.set('resourceId', String(resourceId));
+  return request.post(`v1/video/reTranscodeVideo?${query.toString()}`);
 }
