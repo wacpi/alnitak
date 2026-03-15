@@ -44,7 +44,16 @@ func GetHistoryList(ctx *gin.Context) {
 }
 
 func GetHistoryProgress(ctx *gin.Context) {
-	videoId := utils.StringToUint(ctx.Query("vid"))
+	raw := ctx.Query("vid")
+	videoId, err := service.ParseVideoID(raw)
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+	if videoId == 0 {
+		resp.FailWithMessage(ctx, "参数有误")
+		return
+	}
 	part := utils.StringToUint(ctx.Query("part"))
 
 	progress, realPart, err := service.GetHistoryProgress(ctx, videoId, part)

@@ -10,7 +10,16 @@ import (
 
 // 获取弹幕
 func GetDanmaku(ctx *gin.Context) {
-	vid := utils.StringToUint(ctx.Query("vid"))
+	raw := ctx.Query("vid")
+	vid, err := service.ParseVideoID(raw)
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+	if vid == 0 {
+		resp.FailWithMessage(ctx, "参数有误")
+		return
+	}
 	part := utils.StringToUint(ctx.Query("part"))
 
 	danmaku, err := service.GetDanmaku(ctx, vid, part)

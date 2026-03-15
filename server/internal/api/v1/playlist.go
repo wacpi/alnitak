@@ -178,8 +178,9 @@ func GetPlaylistVideoList(ctx *gin.Context) {
 
 // 获取合集视频列表（包含多分P展开和当前视频分P）
 func GetPlaylistVideoListWithParts(ctx *gin.Context) {
-	videoID := utils.StringToUint(ctx.Query("vid"))
-	if videoID == 0 {
+	raw := ctx.Query("vid")
+	videoID, err := service.ParseVideoID(raw)
+	if err != nil || videoID == 0 {
 		resp.FailWithMessage(ctx, "参数有误")
 		return
 	}
@@ -279,7 +280,12 @@ func GetMyPlaylistVideoIds(ctx *gin.Context) {
 
 // GetVideoPlaylists 获取视频所属的合集列表
 func GetVideoPlaylists(ctx *gin.Context) {
-	videoId := utils.StringToUint(ctx.Query("vid"))
+	raw := ctx.Query("vid")
+	videoId, err := service.ParseVideoID(raw)
+	if err != nil || videoId == 0 {
+		resp.FailWithMessage(ctx, "参数有误")
+		return
+	}
 
 	total, lists := service.GetVideoPlaylists(videoId)
 
@@ -288,7 +294,12 @@ func GetVideoPlaylists(ctx *gin.Context) {
 
 // GetVideoPrimaryPlaylist 获取视频的主要合集
 func GetVideoPrimaryPlaylist(ctx *gin.Context) {
-	videoId := utils.StringToUint(ctx.Query("vid"))
+	raw := ctx.Query("vid")
+	videoId, err := service.ParseVideoID(raw)
+	if err != nil || videoId == 0 {
+		resp.FailWithMessage(ctx, "参数有误")
+		return
+	}
 	userId := ctx.GetUint("userId") // 可能为0，表示未登录
 
 	playlist, err := service.GetVideoPrimaryPlaylist(videoId, userId)

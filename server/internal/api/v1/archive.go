@@ -5,12 +5,20 @@ import (
 	"interastral-peace.com/alnitak/internal/domain/dto"
 	"interastral-peace.com/alnitak/internal/resp"
 	"interastral-peace.com/alnitak/internal/service"
-	"interastral-peace.com/alnitak/utils"
 )
 
 // 通过视频ID获取点赞收藏数据
 func GetVideoArchiveStat(ctx *gin.Context) {
-	vid := utils.StringToUint(ctx.Query("vid"))
+	raw := ctx.Query("vid")
+	vid, err := service.ParseVideoID(raw)
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+	if vid == 0 {
+		resp.FailWithMessage(ctx, "参数有误")
+		return
+	}
 
 	stat, err := service.GetVideoArchiveStat(ctx, vid)
 	if err != nil {
@@ -24,7 +32,16 @@ func GetVideoArchiveStat(ctx *gin.Context) {
 
 // 通过文章ID获取点赞收藏数据
 func GetArticleArchiveStat(ctx *gin.Context) {
-	aid := utils.StringToUint(ctx.Query("aid"))
+	raw := ctx.Query("aid")
+	aid, err := service.ParseArticleID(raw)
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+	if aid == 0 {
+		resp.FailWithMessage(ctx, "参数有误")
+		return
+	}
 
 	stat, err := service.GetArticleArchiveStat(ctx, aid)
 	if err != nil {

@@ -36,6 +36,10 @@ func CollectVideoRoutes(r *gin.RouterGroup) {
 		videoAuth.GET("getResourceQualityManage", api.GetResourceQualityManage)
 		// 获取视频文件（后台管理）
 		videoAuth.GET("getVideoFileManage", api.GetVideoFileManage)
+		// 获取处理失败的视频列表（后台管理）
+		videoAuth.POST("getFailedVideoList", api.GetFailedVideoList)
+		// 获取处理中视频列表（后台管理）
+		videoAuth.POST("getProcessingVideoList", api.GetProcessingVideoList)
 		// 重新转码视频（后台管理专用）
 		videoAuth.POST("reTranscodeVideo", api.ReTranscodeVideo)
 	}

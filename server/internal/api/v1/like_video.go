@@ -5,7 +5,6 @@ import (
 	"interastral-peace.com/alnitak/internal/domain/dto"
 	"interastral-peace.com/alnitak/internal/resp"
 	"interastral-peace.com/alnitak/internal/service"
-	"interastral-peace.com/alnitak/utils"
 )
 
 func LikeVideo(ctx *gin.Context) {
@@ -42,7 +41,16 @@ func CancelLikeVideo(ctx *gin.Context) {
 }
 
 func HasLikeVideo(ctx *gin.Context) {
-	videoId := utils.StringToUint(ctx.Query("vid"))
+	raw := ctx.Query("vid")
+	videoId, err := service.ParseVideoID(raw)
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+	if videoId == 0 {
+		resp.FailWithMessage(ctx, "参数有误")
+		return
+	}
 	like, err := service.HasLikeVideo(ctx, videoId)
 	if err != nil {
 		resp.FailWithMessage(ctx, err.Error())

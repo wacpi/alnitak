@@ -34,7 +34,16 @@ func AddArticleComment(ctx *gin.Context) {
 
 // 获取评论
 func GetArticleComment(ctx *gin.Context) {
-	cid := utils.StringToUint(ctx.Query("aid"))
+	raw := ctx.Query("aid")
+	cid, err := service.ParseArticleID(raw)
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+	if cid == 0 {
+		resp.FailWithMessage(ctx, "参数有误")
+		return
+	}
 	page := utils.StringToInt(ctx.Query("page"))
 	pageSize := utils.StringToInt(ctx.Query("pageSize"))
 
@@ -90,7 +99,16 @@ func DeleteArticleComment(ctx *gin.Context) {
 
 // 获取文章评论列表
 func GetArticleCommentList(ctx *gin.Context) {
-	aid := utils.StringToUint(ctx.Query("aid"))
+	raw := ctx.Query("aid")
+	aid, err := service.ParseArticleID(raw)
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+	if aid == 0 {
+		resp.FailWithMessage(ctx, "参数有误")
+		return
+	}
 	page := utils.StringToInt(ctx.Query("page"))
 	pageSize := utils.StringToInt(ctx.Query("pageSize"))
 

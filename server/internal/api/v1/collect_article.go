@@ -5,7 +5,6 @@ import (
 	"interastral-peace.com/alnitak/internal/domain/dto"
 	"interastral-peace.com/alnitak/internal/resp"
 	"interastral-peace.com/alnitak/internal/service"
-	"interastral-peace.com/alnitak/utils"
 )
 
 func CollectArticle(ctx *gin.Context) {
@@ -42,7 +41,16 @@ func CancelCollectArticle(ctx *gin.Context) {
 }
 
 func HasCollectArticle(ctx *gin.Context) {
-	articleId := utils.StringToUint(ctx.Query("aid"))
+	raw := ctx.Query("aid")
+	articleId, err := service.ParseArticleID(raw)
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+	if articleId == 0 {
+		resp.FailWithMessage(ctx, "参数有误")
+		return
+	}
 	collect, err := service.HasCollectArticle(ctx, articleId)
 	if err != nil {
 		resp.FailWithMessage(ctx, err.Error())

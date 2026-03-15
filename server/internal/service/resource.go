@@ -85,7 +85,10 @@ func DeleteResource(ctx *gin.Context, id uint) error {
 
 // 获取视频资源
 func GetVideoResourceByStatus(videoId uint, status int) (resources []vo.ResourceResp) {
-	global.Mysql.Model(&model.Resource{}).Where("vid = ? and status = ?", videoId, status).Scan(&resources)
+	global.Mysql.Model(&model.Resource{}).
+		Where("vid = ? and status = ?", videoId, status).
+		Order("title ASC, id ASC").
+		Scan(&resources)
 
 	return
 }
@@ -94,7 +97,9 @@ func GetVideoResourceByStatus(videoId uint, status int) (resources []vo.Resource
 func GetReviewResourceList(videoId uint) (resources []vo.ResourceResp) {
 	global.Mysql.Model(&model.Resource{}).
 		Select("id, created_at, vid, title, duration, status, file_id, uid").
-		Where("vid = ?", videoId).Scan(&resources)
+		Where("vid = ?", videoId).
+		Order("title ASC, id ASC").
+		Scan(&resources)
 
 	return
 }
@@ -166,7 +171,7 @@ func buildResourceQualityInfo(id uint) (*ResourceQualityInfo, error) {
 			}
 		}
 		sort.Slice(sbFiles, func(i, j int) bool {
-			return sbFiles[i].VideoBandwidth < sbFiles[j].VideoBandwidth
+			return dashRepresentationLess(sbFiles[i], sbFiles[j])
 		})
 		result.QualityOrder = make([]string, 0, len(sbFiles))
 		for _, f := range sbFiles {
@@ -265,7 +270,8 @@ func ReplaceResource(ctx *gin.Context, replaceReq dto.ReplaceResourceReq) (vo.Re
 
 	// 获取新视频文件信息
 	var newFileInfo model.VideoFile
-	if err := global.Mysql.Where("hash = ? and uid = ?", replaceReq.Hash, userId).First(&newFileInfo).Error; err != nil || newFileInfo.ID == 0 {
+	// 全局去重：替换资源时按文件哈希查找，不限制上传者
+	if err := global.Mysql.Where("hash = ?", replaceReq.Hash).Order("id DESC").First(&newFileInfo).Error; err != nil || newFileInfo.ID == 0 {
 		utils.ErrorLog("新视频文件信息不存在", "resource", replaceReq.Hash)
 		return vo.ResourceResp{}, errors.New("视频文件不存在")
 	}
@@ -310,7 +316,9 @@ func ReplaceResource(ctx *gin.Context, replaceReq dto.ReplaceResourceReq) (vo.Re
 	}
 
 	// 创建新文件的引用
-	createFileRef(userId, newFileInfo.ID, replaceReq.ResourceID)
+	if err := createFileRef(userId, newFileInfo.ID, replaceReq.ResourceID); err != nil {
+		return vo.ResourceResp{}, errors.New("创建文件引用失败")
+	}
 
 	// 读取新视频信息
 	suffix := utils.GetFileSuffix(newFileInfo.OriginalName)

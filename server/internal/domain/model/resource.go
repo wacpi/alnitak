@@ -10,6 +10,7 @@ type Resource struct {
 	CodecName string  `gorm:"type:varchar(10);comment:视频编码名称"`
 	Duration  float64 `gorm:"comment:视频时长;default:0"`
 	Status    int     `gorm:"comment:审核状态;not null;index"`
+	ShortID   string  `gorm:"type:varchar(16);comment:短ID;uniqueIndex" json:"shortId"`
 
 	// 全局去重相关字段
 	FileID uint `gorm:"comment:关联的视频文件ID;index"`

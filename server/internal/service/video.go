@@ -8,7 +8,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -70,6 +69,35 @@ func UploadVideoInfo(ctx *gin.Context, uploadVideoReq dto.UploadVideoReq) error 
 	cache.DelVideoInfo(uploadVideoReq.Vid)
 
 	return nil
+}
+
+// ParseVideoID 兼容短ID和数字ID，将前端传入的 vid/rawID 解析为内部自增ID
+// 约定：
+// - 优先按 short_id 精确匹配（11 位且字符合法）
+// - 找不到再回退到数字 ID 解析
+func ParseVideoID(raw string) (uint, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, errors.New("视频ID不能为空")
+	}
+
+	// 1. 短 ID：长度 11 且字符集合法，按 short_id 查一次
+	if len(raw) == 11 {
+		if _, err := utils.DecodeShortIDToUint64(raw); err == nil {
+			var video model.Video
+			if err := global.Mysql.Where("short_id = ?", raw).First(&video).Error; err == nil && video.ID != 0 {
+				return video.ID, nil
+			}
+			// 找不到则继续按数字 ID 尝试
+		}
+	}
+
+	// 2. 回退到数字 ID
+	id := utils.StringToUint(raw)
+	if id == 0 {
+		return 0, errors.New("视频不存在")
+	}
+	return id, nil
 }
 
 func GetVideoStatus(ctx *gin.Context, vid uint) (video vo.VideoStatusResp, err error) {
@@ -175,7 +203,7 @@ func buildMPDSegmentBase(file *model.VideoIndexFile, key string) string {
 func buildMPDSegmentBaseUnified(files []model.VideoIndexFile, key string) string {
 	// 按码率升序排列（dash.js Representation index 0 = 最低画质）
 	sort.Slice(files, func(i, j int) bool {
-		return files[i].VideoBandwidth < files[j].VideoBandwidth
+		return dashRepresentationLess(files[i], files[j])
 	})
 
 	durationStr := formatDuration(files[0].TotalDuration)
@@ -235,6 +263,23 @@ func buildMPDSegmentBaseUnified(files []model.VideoIndexFile, key string) string
 	sb.WriteString("</MPD>")
 
 	return sb.String()
+}
+
+// dashRepresentationLess 统一 DASH Representation 排序规则（稳定且可预期）
+// 规则：码率升序 -> 像素面积升序 -> 帧率升序 -> quality 字符串升序
+func dashRepresentationLess(a, b model.VideoIndexFile) bool {
+	if a.VideoBandwidth != b.VideoBandwidth {
+		return a.VideoBandwidth < b.VideoBandwidth
+	}
+	aPixels := a.Width * a.Height
+	bPixels := b.Width * b.Height
+	if aPixels != bPixels {
+		return aPixels < bPixels
+	}
+	if a.FrameRate != b.FrameRate {
+		return a.FrameRate < b.FrameRate
+	}
+	return a.Quality < b.Quality
 }
 
 // buildPlayURLJSON 生成类似B站的 playurl JSON 格式
@@ -698,13 +743,12 @@ func buildFromLegacyContent(file *model.VideoIndexFile, key, format string) (str
 	return res.String(), nil
 }
 
-// formatDuration 格式化时长为 ISO 8601 格式
+// formatDuration 格式化时长为 ISO 8601 格式（四舍五入到整秒，避免截断导致 MPD 总时长短于实际、播放缺尾）
 func formatDuration(seconds float64) string {
-	totalSeconds := int(seconds)
-	hours := totalSeconds / 3600
-	minutes := (totalSeconds % 3600) / 60
-	secs := totalSeconds % 60
-	return fmt.Sprintf("PT%dH%dM%dS", hours, minutes, secs)
+	hours := int(seconds) / 3600
+	minutes := (int(seconds) % 3600) / 60
+	secs := seconds - float64(hours*3600+minutes*60)
+	return fmt.Sprintf("PT%dH%dM%.3fS", hours, minutes, secs)
 }
 
 // 获取视频文件（后台管理，不校验审核状态）
@@ -803,11 +847,30 @@ func GetUploadVideoList(ctx *gin.Context, page, pageSize int, category string) (
 	db := global.Mysql.Model(&model.Video{}).Where("uid = ?", userId)
 	db = applyVideoCategoryFilter(db, category)
 	db.Count(&total)
-	db.Select(vo.UPLOAD_VIDEO_FIELD).Limit(pageSize).Offset((page - 1) * pageSize).Scan(&videos)
+	db.Select(vo.UPLOAD_VIDEO_FIELD).
+		Order("created_at DESC").
+		Limit(pageSize).
+		Offset((page - 1) * pageSize).
+		Scan(&videos)
 
-	// 更新播放量数据
+	// 更新播放量数据并收集需要返回转码进度的视频
+	transcodingVideoIDs := make([]uint, 0)
 	for i := 0; i < len(videos); i++ {
 		videos[i].Clicks += GetVideoClicks(videos[i].ID)
+		if isTranscodingStatus(videos[i].Status) {
+			transcodingVideoIDs = append(transcodingVideoIDs, videos[i].ID)
+		}
+	}
+
+	progressMap := collectVideoProgressSnapshots(transcodingVideoIDs)
+	for i := 0; i < len(videos); i++ {
+		if !isTranscodingStatus(videos[i].Status) {
+			continue
+		}
+		if snapshot, ok := progressMap[videos[i].ID]; ok {
+			videos[i].TranscodingProgress = snapshot.Overall
+			videos[i].TranscodingDetails = snapshot.Details
+		}
 	}
 
 	return
@@ -828,6 +891,64 @@ func applyVideoCategoryFilter(db *gorm.DB, category string) *gorm.DB {
 	default:
 		return db
 	}
+}
+
+type videoProgressSnapshot struct {
+	Overall float64
+	Details []vo.TranscodingProgressItem
+}
+
+func isTranscodingStatus(status int) bool {
+	return status == global.CREATED_VIDEO || status == global.VIDEO_PROCESSING || status == global.SUBMIT_REVIEW
+}
+
+func collectVideoProgressSnapshots(videoIDs []uint) map[uint]videoProgressSnapshot {
+	progressMap := make(map[uint]videoProgressSnapshot, len(videoIDs))
+	if len(videoIDs) == 0 {
+		return progressMap
+	}
+
+	resourceIDSet := make(map[uint]struct{})
+	for _, videoID := range videoIDs {
+		overall, details := GetVideoTranscodingProgress(videoID)
+		if len(details) == 0 {
+			progressMap[videoID] = videoProgressSnapshot{Overall: overall, Details: details}
+			continue
+		}
+		for _, item := range details {
+			resourceIDSet[item.ResourceID] = struct{}{}
+		}
+		progressMap[videoID] = videoProgressSnapshot{Overall: overall, Details: details}
+	}
+
+	if len(resourceIDSet) == 0 {
+		return progressMap
+	}
+
+	resourceIDs := make([]uint, 0, len(resourceIDSet))
+	for resourceID := range resourceIDSet {
+		resourceIDs = append(resourceIDs, resourceID)
+	}
+
+	var resources []model.Resource
+	global.Mysql.Model(&model.Resource{}).Select("id,title").Where("id IN ?", resourceIDs).Find(&resources)
+
+	titleMap := make(map[uint]string, len(resources))
+	for _, resource := range resources {
+		titleMap[resource.ID] = resource.Title
+	}
+
+	for videoID, snapshot := range progressMap {
+		if len(snapshot.Details) == 0 {
+			continue
+		}
+		for idx := range snapshot.Details {
+			snapshot.Details[idx].ResourceTitle = titleMap[snapshot.Details[idx].ResourceID]
+		}
+		progressMap[videoID] = snapshot
+	}
+
+	return progressMap
 }
 
 func EditVideoInfo(ctx *gin.Context, editVideoReq dto.EditVideoReq) error {
@@ -1012,6 +1133,7 @@ func GetVideoByUser(ctx *gin.Context, userId uint, page, pageSize int) (total in
 		Where("uid = ? and status = ?", userId, global.AUDIT_APPROVED).Count(&total)
 	global.Mysql.Model(&model.Video{}).Select(vo.UPLOAD_VIDEO_FIELD).
 		Where("uid = ? and status = ?", userId, global.AUDIT_APPROVED).
+		Order("created_at DESC").
 		Limit(pageSize).Offset((page - 1) * pageSize).Scan(&videos)
 
 	// 更新播放量数据
@@ -1026,12 +1148,54 @@ func GetVideoByUser(ctx *gin.Context, userId uint, page, pageSize int) (total in
 func GetVideoListManage(videoListReq dto.VideoListReq) (total int64, videos []vo.VideoInfoManageResp) {
 	global.Mysql.Model(&model.Video{}).Where("status = ?", global.AUDIT_APPROVED).Count(&total)
 	global.Mysql.Model(&model.Video{}).Where("status = ?", global.AUDIT_APPROVED).
+		Order("created_at DESC").
 		Limit(videoListReq.PageSize).Offset((videoListReq.Page - 1) * videoListReq.PageSize).Scan(&videos)
 
 	// 更新播放量和作者数据
 	for i := 0; i < len(videos); i++ {
 		videos[i].Clicks += GetVideoClicks(videos[i].ID)
 		videos[i].Author = GetUserBaseInfo(videos[i].Uid)
+	}
+
+	return
+}
+
+// 获取处理失败的视频列表（后台管理）
+func GetFailedVideoList(videoListReq dto.VideoListReq) (total int64, videos []vo.VideoInfoManageResp) {
+	global.Mysql.Model(&model.Video{}).Where("status = ?", global.PROCESSING_FAIL).Count(&total)
+	global.Mysql.Model(&model.Video{}).Where("status = ?", global.PROCESSING_FAIL).
+		Order("created_at DESC").
+		Limit(videoListReq.PageSize).Offset((videoListReq.Page - 1) * videoListReq.PageSize).Scan(&videos)
+
+	for i := 0; i < len(videos); i++ {
+		videos[i].Clicks += GetVideoClicks(videos[i].ID)
+		videos[i].Author = GetUserBaseInfo(videos[i].Uid)
+	}
+
+	return
+}
+
+// 获取处理中视频列表（后台管理）
+func GetProcessingVideoList(videoListReq dto.VideoListReq) (total int64, videos []vo.VideoInfoManageResp) {
+	processingStatuses := []int{global.CREATED_VIDEO, global.VIDEO_PROCESSING, global.SUBMIT_REVIEW}
+	global.Mysql.Model(&model.Video{}).Where("status IN ?", processingStatuses).Count(&total)
+	global.Mysql.Model(&model.Video{}).Where("status IN ?", processingStatuses).
+		Order("created_at DESC").
+		Limit(videoListReq.PageSize).Offset((videoListReq.Page - 1) * videoListReq.PageSize).Scan(&videos)
+
+	transcodingVideoIDs := make([]uint, 0, len(videos))
+	for i := 0; i < len(videos); i++ {
+		videos[i].Clicks += GetVideoClicks(videos[i].ID)
+		videos[i].Author = GetUserBaseInfo(videos[i].Uid)
+		transcodingVideoIDs = append(transcodingVideoIDs, videos[i].ID)
+	}
+
+	progressMap := collectVideoProgressSnapshots(transcodingVideoIDs)
+	for i := 0; i < len(videos); i++ {
+		if snapshot, ok := progressMap[videos[i].ID]; ok {
+			videos[i].TranscodingProgress = snapshot.Overall
+			videos[i].TranscodingDetails = snapshot.Details
+		}
 	}
 
 	return
@@ -1052,6 +1216,7 @@ func DeleteVideoManage(ctx *gin.Context, id uint) error {
 func GetReviewList(reviewListReq dto.ReviewListReq) (total int64, videos []vo.ReviewListResp) {
 	global.Mysql.Model(&model.Video{}).Where("status = ?", global.WAITING_REVIEW).Count(&total)
 	global.Mysql.Model(&model.Video{}).Where("status = ?", global.WAITING_REVIEW).
+		Order("created_at DESC").
 		Limit(reviewListReq.PageSize).Offset((reviewListReq.Page - 1) * reviewListReq.PageSize).Scan(&videos)
 
 	// 更新播放量和作者数据
@@ -1163,6 +1328,11 @@ func SearchVideo(ctx *gin.Context, searchVideoReq dto.SearchVideoReq) []vo.Video
 }
 
 func CreateVideo(video *model.Video) (uint, error) {
+	// 若尚未设置短ID，这里生成一个
+	if video.ShortID == "" {
+		video.ShortID = utils.EncodeUint64ToShortID(uint64(global.SnowflakeNode.Generate()))
+	}
+
 	if err := global.Mysql.Create(video).Error; err != nil {
 		utils.ErrorLog("创建视频失败", "video", err.Error())
 		return 0, errors.New("创建视频失败")
@@ -1179,14 +1349,35 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 		return errors.New("视频不存在")
 	}
 
-	// 获取视频的所有资源
+	// 记录重转码前的“原始审核状态”。
+	// 兜底：若视频状态已被中间流程改成非通过，但仍存在已通过的有效分P，
+	// 则按“原本已审核通过”处理，避免重转码结束后错误回落到待审核。
+	originalVideoStatus := video.Status
+	if originalVideoStatus != global.AUDIT_APPROVED {
+		var approvedResourceCount int64
+		global.Mysql.Model(&model.Resource{}).
+			Where("vid = ? AND deleted_at IS NULL AND status = ?", videoId, global.AUDIT_APPROVED).
+			Count(&approvedResourceCount)
+		if approvedResourceCount > 0 {
+			originalVideoStatus = global.AUDIT_APPROVED
+			utils.InfoLog(
+				fmt.Sprintf("【重转码状态兜底】VideoID=%d 当前status=%d，但存在%d个已通过分P，按AUDIT_APPROVED恢复",
+					videoId, video.Status, approvedResourceCount),
+				"video",
+			)
+		}
+	}
+
+	// 获取视频的所有资源（包含软删除的，因为之前失败的转码可能已经软删除了资源）
 	var resources []model.Resource
-	global.Mysql.Where("vid = ?", videoId).Find(&resources)
+	global.Mysql.Unscoped().Where("vid = ?", videoId).Find(&resources)
 	if len(resources) == 0 {
 		return errors.New("该视频没有可转码的资源")
 	}
 
 	// ========== 第1步：为每个分P查找原始文件 ==========
+	// 注意：同一个 FileID 可能对应多个分P（秒传/复用场景）。
+	// 重新转码必须按“资源(分P)”维度处理，否则会只转出一个分P。
 	type resourceFileInfo struct {
 		resource model.Resource
 		vf       model.VideoFile
@@ -1194,6 +1385,11 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 	var rfInfos []resourceFileInfo
 
 	for _, resource := range resources {
+		// 只对未软删除的资源重新转码，避免“一个分P”被算成多个（历史软删除资源会被 Unscoped 查出）
+		if resource.DeletedAt.Valid {
+			continue
+		}
+
 		var vf model.VideoFile
 		found := false
 
@@ -1207,7 +1403,7 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 		// 方式2：通过 VideoIndexFile.DirName 查找
 		if !found {
 			var indexFile model.VideoIndexFile
-			if err := global.Mysql.Where("resource_id = ?", resource.ID).First(&indexFile).Error; err == nil && indexFile.DirName != "" {
+			if err := global.Mysql.Unscoped().Where("resource_id = ?", resource.ID).First(&indexFile).Error; err == nil && indexFile.DirName != "" {
 				if err := global.Mysql.Where("dir_name = ?", indexFile.DirName).First(&vf).Error; err == nil && vf.DirName != "" {
 					found = true
 				}
@@ -1215,9 +1411,7 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 		}
 
 		if !found {
-			utils.ErrorLog("分P找不到原始文件记录，跳过", "transcoding",
-				fmt.Sprintf("resourceID=%d, title=%s", resource.ID, resource.Title))
-			continue
+			continue // 静默跳过，避免大量重复的错误日志
 		}
 
 		// 检查源文件是否存在
@@ -1249,14 +1443,19 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 	for _, rf := range rfInfos {
 		dirsToClean[rf.vf.DirName] = true
 	}
-	// 收集旧目录、删除旧 VideoIndexFile 和软删除旧资源
+	// 收集旧目录、删除旧 VideoIndexFile 和软删除旧资源（Unscoped 确保能找到已软删除的记录）
 	for _, resource := range resources {
 		var indexFile model.VideoIndexFile
-		if err := global.Mysql.Where("resource_id = ?", resource.ID).First(&indexFile).Error; err == nil && indexFile.DirName != "" {
+		if err := global.Mysql.Unscoped().Where("resource_id = ?", resource.ID).First(&indexFile).Error; err == nil && indexFile.DirName != "" {
 			dirsToClean[indexFile.DirName] = true
 		}
-		global.Mysql.Where("resource_id = ?", resource.ID).Delete(&model.VideoIndexFile{})
-		global.Mysql.Model(&resource).Update("deleted_at", time.Now())
+		global.Mysql.Unscoped().Where("resource_id = ?", resource.ID).Delete(&model.VideoIndexFile{})
+		if resource.DeletedAt.Valid {
+			// 已经软删除过的，硬删除避免持续累积垃圾记录
+			global.Mysql.Unscoped().Delete(&resource)
+		} else {
+			global.Mysql.Delete(&resource)
+		}
 	}
 
 	// 清理旧转码文件
@@ -1273,8 +1472,7 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 	// ffprobe 大文件耗时较长，放入 goroutine 避免 API 超时
 	go func() {
 		type transcodingTask struct {
-			resource model.Resource
-			info     *dto.TranscodingInfo
+			info *dto.TranscodingInfo
 		}
 		var tasks []transcodingTask
 
@@ -1299,18 +1497,22 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 				Status:    global.VIDEO_PROCESSING,
 				Duration:  info.Duration,
 				FileID:    rf.vf.ID,
+				ShortID:   utils.EncodeUint64ToShortID(uint64(global.SnowflakeNode.Generate())),
 			}
 			if err := global.Mysql.Create(&newResource).Error; err != nil {
 				utils.ErrorLog("创建新资源记录失败", "transcoding", err.Error())
 				continue
 			}
 
+			// 重新转码直接输出到源目录，不创建新目录
+			sourceDir := rf.vf.DirName
+
 			transcodingInfo := &dto.TranscodingInfo{
 				VideoID:             videoId,
 				ResourceID:          newResource.ID,
 				InputFile:           inputPath,
-				OutputDir:           "./upload/video/" + rf.vf.DirName + "/",
-				DirName:             rf.vf.DirName,
+				OutputDir:           "./upload/video/" + sourceDir + "/",
+				DirName:             sourceDir,
 				Suffix:              suffix,
 				Width:               info.Width,
 				Height:              info.Height,
@@ -1319,13 +1521,14 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 				FPS:                 info.FPS,
 				FPS30:               info.FPS30,
 				FPS60:               info.FPS60,
+				VideoBitRate:        info.VideoBitRate,
 				AudioBitRate:        info.AudioBitRate,
 				AudioSampleRate:     info.AudioSampleRate,
 				AudioChannels:       info.AudioChannels,
-				OriginalVideoStatus: video.Status,
+				OriginalVideoStatus: originalVideoStatus,
 			}
 
-			tasks = append(tasks, transcodingTask{resource: newResource, info: transcodingInfo})
+			tasks = append(tasks, transcodingTask{info: transcodingInfo})
 		}
 
 		if len(tasks) == 0 {
@@ -1338,7 +1541,7 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 
 		utils.InfoLog(fmt.Sprintf("【重新转码】VideoID=%d, 提交%d个分P转码任务", videoId, len(tasks)), "transcoding")
 
-		// 串行转码：每个分P独立目录，等上一个完成后再启动下一个
+		// 串行转码：等上一个分P完成后再启动下一个
 		for i, task := range tasks {
 			utils.InfoLog(fmt.Sprintf("【重新转码】开始第 %d/%d 个分P: ResourceID=%d, DirName=%s",
 				i+1, len(tasks), task.info.ResourceID, task.info.DirName), "transcoding")

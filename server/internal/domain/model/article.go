@@ -12,9 +12,11 @@ type Article struct {
 	Copyright   bool   `gorm:"comment:是否为原创;not null"`
 	Clicks      int64  `gorm:"comment:点击量;default:0"`
 	Status      int    `gorm:"comment:审核状态;not null"`
-	PartitionId uint   `gorm:"comment:分区ID;deult:0"`
+	PartitionId uint   `gorm:"comment:分区ID;default:0"`
 	Tags        string `gorm:"type:varchar(100);comment:标签;"`
 	Shares      int64  `gorm:"comment:分享数;default:0"`
+
+	ShortID string `gorm:"type:varchar(16);comment:短ID;uniqueIndex" json:"shortId"`
 
 	Author User `gorm:"-"`
 }

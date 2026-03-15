@@ -147,10 +147,14 @@ func UploadVideoCreate(ctx *gin.Context, videoFileReq dto.VideoFileReq) (vo.Reso
 	}
 
 	// 创建用户引用关系
-	createFileRef(userId, fileInfo.ID, 0)
+	if err := createFileRef(userId, fileInfo.ID, 0); err != nil {
+		return vo.ResourceResp{}, errors.New("创建文件引用失败")
+	}
 
 	resource, err := CompleteUploadVideo(vid, userId, fileInfo.ID, fileInfo.DirName, fileInfo.OriginalName, fileInfo.Status == model.FileStatusReady)
 	if err != nil {
+		// 补偿：创建资源失败时回滚临时引用关系，避免 resource_id=0 悬挂记录
+		decreaseVideoFileRefCount(fileInfo.ID, userId, 0, fileInfo.DirName)
 		return vo.ResourceResp{}, err
 	}
 
@@ -179,10 +183,14 @@ func UploadVideoAdd(ctx *gin.Context, vid uint, videoFileReq dto.VideoFileReq) (
 	}
 
 	// 创建用户引用关系
-	createFileRef(userId, fileInfo.ID, 0)
+	if err := createFileRef(userId, fileInfo.ID, 0); err != nil {
+		return vo.ResourceResp{}, errors.New("创建文件引用失败")
+	}
 
 	resource, err := CompleteUploadVideo(vid, userId, fileInfo.ID, fileInfo.DirName, fileInfo.OriginalName, fileInfo.Status == model.FileStatusReady)
 	if err != nil {
+		// 补偿：创建资源失败时回滚临时引用关系，避免 resource_id=0 悬挂记录
+		decreaseVideoFileRefCount(fileInfo.ID, userId, 0, fileInfo.DirName)
 		return vo.ResourceResp{}, err
 	}
 
@@ -475,7 +483,7 @@ func UploadVideoMerge(ctx *gin.Context, videoFileReq dto.VideoFileReq) error {
 }
 
 // createFileRef 创建用户-文件引用关系（事务性操作）
-func createFileRef(uid, fileID, resourceID uint) {
+func createFileRef(uid, fileID, resourceID uint) error {
 	if err := global.Mysql.Transaction(func(tx *gorm.DB) error {
 		ref := model.VideoFileRef{
 			Uid:        uid,
@@ -490,7 +498,9 @@ func createFileRef(uid, fileID, resourceID uint) {
 			UpdateColumn("ref_count", gorm.Expr("ref_count + 1")).Error
 	}); err != nil {
 		utils.ErrorLog(fmt.Sprintf("创建文件引用失败, fileID=%d, uid=%d", fileID, uid), "upload", err.Error())
+		return err
 	}
+	return nil
 }
 
 // updateFileRefResourceID 更新引用关系中的 ResourceID
@@ -515,9 +525,15 @@ func decreaseVideoFileRefCount(fileID, uid, resourceID uint, dirName string) {
 		}
 
 		// 减少引用计数
-		if err := tx.Model(&model.VideoFile{}).Where("id = ? AND ref_count > 0", fileID).
-			UpdateColumn("ref_count", gorm.Expr("ref_count - 1")).Error; err != nil {
-			return fmt.Errorf("减少引用计数失败: %w", err)
+		updateResult := tx.Model(&model.VideoFile{}).Where("id = ? AND ref_count > 0", fileID).
+			UpdateColumn("ref_count", gorm.Expr("ref_count - 1"))
+		if updateResult.Error != nil {
+			return fmt.Errorf("减少引用计数失败: %w", updateResult.Error)
+		}
+		// 没有实际扣减时，直接退出，避免基于脏 ref_count 误删 VideoFile
+		if updateResult.RowsAffected == 0 {
+			utils.ErrorLog(fmt.Sprintf("【引用计数未扣减】fileID=%d, uid=%d, resourceID=%d", fileID, uid, resourceID), "upload", "")
+			return nil
 		}
 
 		// 在事务内检查引用计数，使用行锁防止并发问题
@@ -559,13 +575,15 @@ func CompleteUploadVideo(vid, userId, fileID uint, videoName, title string, skip
 			// 【重要】秒传的资源也需要审核，状态设为 WAITING_REVIEW
 			// 审核员决定是否通过，不能因为别人上传过就自动通过
 			resource := model.Resource{
-				Vid:       vid,
-				Uid:       userId,
-				Title:     titleWithoutExt,
+				Vid:      vid,
+				Uid:      userId,
+				Title:    titleWithoutExt,
+				Status:   global.WAITING_REVIEW, // 等待审核，不直接通过
+				Duration: existingResource.Duration,
+				FileID:   fileID,
+				// 资源短ID，用于对外 resourceId
+				ShortID:   utils.EncodeUint64ToShortID(uint64(global.SnowflakeNode.Generate())),
 				CodecName: existingResource.CodecName,
-				Status:    global.WAITING_REVIEW, // 等待审核，不直接通过
-				Duration:  existingResource.Duration,
-				FileID:    fileID,
 			}
 			if err := global.Mysql.Create(&resource).Error; err != nil {
 				return vo.ResourceResp{}, errors.New("保存视频失败")
@@ -593,6 +611,8 @@ func CompleteUploadVideo(vid, userId, fileID uint, videoName, title string, skip
 		Status:    global.VIDEO_PROCESSING,
 		Duration:  transcodingInfo.Duration,
 		FileID:    fileID,
+		// 资源短ID，用于对外 resourceId
+		ShortID: utils.EncodeUint64ToShortID(uint64(global.SnowflakeNode.Generate())),
 	}
 	if err := global.Mysql.Create(&resource).Error; err != nil {
 		return vo.ResourceResp{}, errors.New("保存视频失败")

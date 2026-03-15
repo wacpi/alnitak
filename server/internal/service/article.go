@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
@@ -110,6 +111,32 @@ func GetArticleStatus(ctx *gin.Context, aid uint) (article vo.ArticleStatusResp,
 	}
 
 	return article, nil
+}
+
+// ParseArticleID 兼容短ID和数字ID，将前端传入的 aid/rawID 解析为内部自增ID
+func ParseArticleID(raw string) (uint, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, errors.New("文章ID不能为空")
+	}
+
+	// 1. 短 ID：长度 11 且字符集合法，按 short_id 查一次
+	if len(raw) == 11 {
+		if _, err := utils.DecodeShortIDToUint64(raw); err == nil {
+			var article model.Article
+			if err := global.Mysql.Where("short_id = ?", raw).First(&article).Error; err == nil && article.ID != 0 {
+				return article.ID, nil
+			}
+			// 找不到则继续按数字 ID 尝试
+		}
+	}
+
+	// 2. 回退到数字 ID
+	id := utils.StringToUint(raw)
+	if id == 0 {
+		return 0, errors.New("文章不存在")
+	}
+	return id, nil
 }
 
 // 获文章信息

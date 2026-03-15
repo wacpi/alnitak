@@ -74,7 +74,16 @@ func GetUploadArticleList(ctx *gin.Context) {
 
 // 获取文章状态
 func GetArticleStatus(ctx *gin.Context) {
-	articleId := utils.StringToUint(ctx.Query("aid"))
+	raw := ctx.Query("aid")
+	articleId, err := service.ParseArticleID(raw)
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+	if articleId == 0 {
+		resp.FailWithMessage(ctx, "参数有误")
+		return
+	}
 
 	article, err := service.GetArticleStatus(ctx, articleId)
 	if err != nil {
@@ -88,7 +97,16 @@ func GetArticleStatus(ctx *gin.Context) {
 
 // 获取文章信息
 func GetArticleById(ctx *gin.Context) {
-	aid := utils.StringToUint(ctx.DefaultQuery("aid", "0"))
+	raw := ctx.DefaultQuery("aid", "")
+	aid, err := service.ParseArticleID(raw)
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+	if aid == 0 {
+		resp.FailWithMessage(ctx, "参数有误")
+		return
+	}
 
 	article, err := service.GetArticleById(ctx, aid)
 	if err != nil {

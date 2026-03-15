@@ -1,8 +1,11 @@
 package initialize
 
 import (
+	"fmt"
+
 	"interastral-peace.com/alnitak/internal/domain/model"
 	"interastral-peace.com/alnitak/internal/global"
+	"interastral-peace.com/alnitak/utils"
 )
 
 func InitTables() {
@@ -42,4 +45,30 @@ func InitTables() {
 	global.Mysql.AutoMigrate(&model.PlaylistVideo{})  // 合集视频关联表
 	global.Mysql.AutoMigrate(&model.PGCContent{})     // PGC内容表
 	global.Mysql.AutoMigrate(&model.PGCEpisode{})     // PGC剧集表
+
+	// 补填已有记录的空 ShortID
+	backfillShortIDs()
+}
+
+// backfillShortIDs 为已有的空 short_id 记录补填短ID
+func backfillShortIDs() {
+	backfillTable := func(tableName string) {
+		var records []struct {
+			ID uint
+		}
+		global.Mysql.Table(tableName).Where("short_id = '' OR short_id IS NULL").Select("id").Find(&records)
+		if len(records) == 0 {
+			return
+		}
+		utils.InfoLog(fmt.Sprintf("【补填ShortID】%s 共%d条空记录", tableName, len(records)), "init")
+		for _, r := range records {
+			shortID := utils.EncodeUint64ToShortID(uint64(global.SnowflakeNode.Generate()))
+			global.Mysql.Table(tableName).Where("id = ?", r.ID).Update("short_id", shortID)
+		}
+		utils.InfoLog(fmt.Sprintf("【补填ShortID】%s 完成", tableName), "init")
+	}
+
+	backfillTable("video")
+	backfillTable("resource")
+	backfillTable("article")
 }

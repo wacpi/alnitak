@@ -8,13 +8,14 @@ import (
 
 type ResourceResp struct {
 	ID        uint      `json:"id"`
+	ShortID   string    `json:"shortId"`
 	CreatedAt time.Time `json:"createdAt"`
 	Vid       uint      `json:"vid"`
 	Title     string    `json:"title"`
 	Duration  float64   `json:"duration"`
 	Status    int       `json:"status"`
-	FileID    uint      `json:"fileId"`    // 关联的视频文件ID（全局去重用）
-	Uid       uint      `json:"uid"`       // 上传者ID
+	FileID    uint      `json:"fileId"` // 关联的视频文件ID（全局去重用）
+	Uid       uint      `json:"uid"`    // 上传者ID
 }
 
 // RelatedResourceResp 相同文件的关联稿件信息
@@ -31,6 +32,7 @@ type RelatedResourceResp struct {
 func ResourceToResourceResp(resource model.Resource) ResourceResp {
 	return ResourceResp{
 		ID:        resource.ID,
+		ShortID:   resource.ShortID,
 		CreatedAt: resource.CreatedAt,
 		Vid:       resource.Vid,
 		Title:     resource.Title,

@@ -518,7 +518,7 @@ func GetPlaylistVideoListWithParts(ctx *gin.Context, videoId uint) gin.H {
 func GetVideoResources(videoId uint) []model.Resource {
 	var resources []model.Resource
 	global.Mysql.Where("vid = ? AND status = ?", videoId, global.AUDIT_APPROVED).
-		Order("id ASC").
+		Order("title ASC, id ASC").
 		Find(&resources)
 	return resources
 }
