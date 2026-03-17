@@ -62,10 +62,10 @@ import { getFileMD5 } from '@/utils/md5';
 const emit = defineEmits(["review"]);
 const props = defineProps<{
   vid: number,
-  resources: Array<ResourceType>
+  resources: Array<ResourceType> | null
 }>();
 
-const resourceList = ref<Array<ResourceType | UploadResourceType>>(props.resources);
+const resourceList = ref<Array<ResourceType | UploadResourceType>>(props.resources ?? []);
 
 // 获取标签文本
 const getTagText = (state: number) => {
@@ -151,6 +151,9 @@ const beforeUploadVideo = async (options: any) => {
 //上传变化的回调
 const handleChange = (uploadFile: any) => {
   if (!uploadFile.raw) return;
+  if (!Array.isArray(resourceList.value)) {
+    resourceList.value = [];
+  }
 
   const uploadData: UploadResourceType = {
     id: 0,
@@ -236,9 +239,7 @@ const handleReplace = async (uploadFile: any, resource: ResourceType | UploadRes
 }
 
 watch(() => props.resources, (newVal) => {
-  if (newVal) {
-    resourceList.value = newVal;
-  }
+  resourceList.value = newVal ?? [];
 })
 </script>
 

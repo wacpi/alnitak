@@ -50,6 +50,11 @@ export const getFailedVideoListAPI = (data: VideoListParam) => {
   return request.post("v1/video/getFailedVideoList", data);
 }
 
+// 获取处理中视频列表
+export const getProcessingVideoListAPI = (data: VideoListParam) => {
+  return request.post("v1/video/getProcessingVideoList", data);
+}
+
 // 重新转码视频
 export const reTranscodeVideoAPI = (vid: number, resourceId?: number) => {
   const query = new URLSearchParams();

@@ -33,8 +33,8 @@ export const deleteVideoAPI = (id: number) => {
 }
 
 // 获取稿件列表
-export const getUploadVideoAPI = (page: number, pageSize: number) => {
-  return request.get(`v1/video/getUploadVideo?page=${page}&pageSize=${pageSize}`);
+export const getUploadVideoAPI = (page: number, pageSize: number, category: string = 'all') => {
+  return request.get(`v1/video/getUploadVideo?page=${page}&pageSize=${pageSize}&category=${category}`);
 }
 
 //获取我的视频
@@ -57,18 +57,21 @@ export const getResourceQualityApi = async (resourceId: number | string) => {
 }
 
 // 获取视频文件URL（HLS格式）
-export const getVideoFileUrl = (resourceId: number, quality: string) => {
-  return `${baseURL}/api/v1/video/getVideoFile?resourceId=${resourceId}&quality=${quality}&format=m3u8`;
+export const getVideoFileUrl = (resourceId: number, quality: string, ts?: number) => {
+  const cacheBust = ts ? `&ts=${ts}` : '';
+  return `${baseURL}/api/v1/video/getVideoFile?resourceId=${resourceId}&quality=${quality}&format=m3u8${cacheBust}`;
 }
 
 // 获取视频文件URL（DASH格式 - 返回MPD XML）
-export const getVideoFileUrlDash = (resourceId: number, quality: string) => {
-  return `${baseURL}/api/v1/video/getVideoFile?resourceId=${resourceId}&quality=${quality}&format=dash`;
+export const getVideoFileUrlDash = (resourceId: number, quality: string, ts?: number) => {
+  const cacheBust = ts ? `&ts=${ts}` : '';
+  return `${baseURL}/api/v1/video/getVideoFile?resourceId=${resourceId}&quality=${quality}&format=dash${cacheBust}`;
 }
 
 // 获取统一DASH MPD URL（所有清晰度合并到一个MPD，用于无缝切换）
-export const getVideoFileUrlDashUnified = (resourceId: number) => {
-  return `${baseURL}/api/v1/video/getVideoFile?resourceId=${resourceId}&format=dash-unified`;
+export const getVideoFileUrlDashUnified = (resourceId: number, ts?: number) => {
+  const cacheBust = ts ? `&ts=${ts}` : '';
+  return `${baseURL}/api/v1/video/getVideoFile?resourceId=${resourceId}&format=dash-unified${cacheBust}`;
 }
 
 // 获取视频播放信息（JSON格式，类似B站）

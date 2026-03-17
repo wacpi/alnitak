@@ -40,6 +40,16 @@ interface VideoStatusType extends BaseVideoType {
 interface ManuscriptVideoType extends BaseVideoType {
   status: number;
   clicks: number;
+  transcodingProgress?: number;
+  transcodingDetails?: TranscodingProgressDetail[];
+}
+
+interface TranscodingProgressDetail {
+  resourceId: number;
+  resourceTitle: string;
+  quality: string;
+  progress: number;
+  status: 'processing' | 'success' | 'fail' | string;
 }
 
 // 视频信息

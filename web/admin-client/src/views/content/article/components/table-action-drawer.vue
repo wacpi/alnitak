@@ -6,11 +6,11 @@
           <n-form-item-grid-item :span="12" label="作者ID">{{ data.author.uid }}</n-form-item-grid-item>
           <n-form-item-grid-item :span="12" label="用户名">{{ data.author.name }}</n-form-item-grid-item>
           <n-form-item-grid-item :span="24" label="内容标签">
-            <n-tag class="tag" v-for="item in  data.tags.split(',')">{{ item }}</n-tag>
+            <n-tag class="tag" v-for="(item, index) in data.tags.split(',')" :key="`${item}-${index}`">{{ item }}</n-tag>
           </n-form-item-grid-item>
         </n-grid>
       </n-form>
-      <div class="video-box">
+      <div class="video-box" v-if="data">
         <span>内容预览</span>
         <text-editor :content="data.content"></text-editor>
       </div>

@@ -1,7 +1,7 @@
 <template>
   <n-modal v-model:show="modalVisible" style="width: 700px;" preset="card" title="审核不通过">
     <n-form ref="formRef" :style="{ maxWidth: '640px' }">
-      <n-grid :cols="24" :x-gap="18" v-for="(item, index) in dynamicForm">
+      <n-grid :cols="24" :x-gap="18" v-for="(item, index) in dynamicForm" :key="`review-playlist-${index}`">
         <n-form-item-gi :span="12" label="位置">
           <n-select v-model:value="item.position" :options="positionOptions" />
         </n-form-item-gi>

@@ -18,7 +18,7 @@
       <div class="video-box">
         <span>合集视频列表</span>
         <n-scrollbar style="max-height: 300px;">
-          <div class="video-item" v-for="(item, index) in videoList">
+          <div class="video-item" v-for="(item, index) in videoList" :key="item.vid || `${item.title}-${index}`">
             <div class="item-left">
               <span>P{{ index + 1 }} {{ item.title }}</span>
             </div>
@@ -31,7 +31,7 @@
         <n-button class="btn" type="primary" @click="reviewApproved">通过</n-button>
       </template>
     </n-drawer-content>
-    <review-modal v-model:visible="visibleModal" :playlist-id="props.data?.id"
+    <review-modal v-if="props.data" v-model:visible="visibleModal" :playlist-id="props.data.id"
       @finish="reviewFinish"></review-modal>
   </n-drawer>
 </template>
@@ -79,6 +79,7 @@ const getVideoList = async (id: number) => {
 }
 
 const reviewApproved = async () => {
+  if (!props.data) return;
   const res = await reviewPlaylistApprovedAPI({ id: props.data.id });
   if (res.data.code === statusCode.OK) {
     reviewFinish();

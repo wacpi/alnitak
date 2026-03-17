@@ -7,14 +7,14 @@
           <n-form-item-grid-item :span="12" label="用户名">{{ data.author.name }}</n-form-item-grid-item>
           <n-form-item-grid-item :span="12" label="上传时间">{{ formatTime(data.createdAt) }}</n-form-item-grid-item>
           <n-form-item-grid-item :span="24" label="视频标签">
-            <n-tag class="tag" v-for="item in  data.tags.split(',')">{{ item }}</n-tag>
+            <n-tag class="tag" v-for="(item, index) in data.tags.split(',')" :key="`${item}-${index}`">{{ item }}</n-tag>
           </n-form-item-grid-item>
         </n-grid>
       </n-form>
       <div class="video-box">
         <span>视频列表</span>
         <n-scrollbar style="max-height: 300px;">
-          <div class="video-item" v-for="(item, index) in resourceList">
+          <div class="video-item" v-for="(item, index) in resourceList" :key="item.id">
             <div class="item-left">
               <span>P{{ index + 1 }} {{ item.title }}</span>
             </div>
