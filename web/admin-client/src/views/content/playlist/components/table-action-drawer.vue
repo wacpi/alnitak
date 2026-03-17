@@ -20,7 +20,7 @@
       <div class="video-box">
         <span>合集视频列表</span>
         <n-scrollbar style="max-height: 300px;">
-          <div class="video-item" v-for="(item, index) in videoList">
+          <div class="video-item" v-for="(item, index) in videoList" :key="item.vid || `${item.title}-${index}`">
             <div class="item-left">
               <span>P{{ index + 1 }} {{ item.title }}</span>
             </div>

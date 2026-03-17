@@ -47,9 +47,12 @@ const options: any = {
             const blobUrl = URL.createObjectURL(blob);
             hls.value.loadSource(blobUrl);
             hls.value.attachMedia(video);
-          })
+          }).catch((err) => {
+            console.error('[HLS] 获取索引文件失败:', err);
+            message.error('视频资源加载失败，请稍后重试');
+          });
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-          video.src = video.src;
+          video.load();
         }
       },
 
@@ -61,7 +64,9 @@ const options: any = {
         if (dash.value) {
           try {
             if (dash.value.getSource() === video.src) return;
-          } catch (e) {}
+          } catch (e) {
+            console.warn('[DASH] 读取当前播放源失败，重建播放器实例:', e);
+          }
           dash.value.reset();
           dash.value = null;
         }
@@ -143,7 +148,8 @@ const loadVideo = async (resourceId: number) => {
     if (dash.value) { dash.value.reset(); dash.value = null; }
     if (hls.value) { hls.value.destroy(); hls.value = null; }
 
-    await loadResource(resourceId);
+    const resourceReady = await loadResource(resourceId);
+    if (!resourceReady) return;
 
     options.container = el;
     player = new Wplayer(options);
@@ -202,24 +208,26 @@ const resourceNameMap: Record<string, string> = {
 
 const getQualityDisplayName = (qualityStr: string): string => {
   if (resourceNameMap[qualityStr]) return resourceNameMap[qualityStr];
-  try {
-    const parts = qualityStr.split('_');
-    const resolution = parts[0];
-    const fps = parseInt(parts[parts.length - 1], 10);
-    if (resolution.includes('x')) {
-      const [width, height] = resolution.split('x').map(Number);
-      const shortSide = Math.min(width, height);
-      const fpsSuffix = fps > 30 ? fps.toString() : '';
-
-      if (shortSide <= 360) return `360p${fpsSuffix}`;
-      if (shortSide <= 480) return `480p${fpsSuffix}`;
-      if (shortSide <= 720) return `720p${fpsSuffix}`;
-      if (shortSide <= 1080) return `1080p${fpsSuffix}`;
-      if (shortSide <= 1440) return `1440p${fpsSuffix}`;
-      if (shortSide <= 2160) return `4K${fpsSuffix}`;
-      return `${shortSide}p${fpsSuffix}`;
+  const parts = qualityStr.split('_');
+  const resolution = parts[0];
+  const fps = parseInt(parts[parts.length - 1], 10);
+  if (resolution.includes('x')) {
+    const [width, height] = resolution.split('x').map(Number);
+    if (!Number.isFinite(width) || !Number.isFinite(height)) {
+      return qualityStr.split('_')[0] || qualityStr;
     }
-  } catch (e) {}
+
+    const shortSide = Math.min(width, height);
+    const fpsSuffix = fps > 30 ? fps.toString() : '';
+
+    if (shortSide <= 360) return `360p${fpsSuffix}`;
+    if (shortSide <= 480) return `480p${fpsSuffix}`;
+    if (shortSide <= 720) return `720p${fpsSuffix}`;
+    if (shortSide <= 1080) return `1080p${fpsSuffix}`;
+    if (shortSide <= 1440) return `1440p${fpsSuffix}`;
+    if (shortSide <= 2160) return `4K${fpsSuffix}`;
+    return `${shortSide}p${fpsSuffix}`;
+  }
   return qualityStr.split('_')[0] || qualityStr;
 }
 
@@ -235,10 +243,20 @@ const supportsDashJs = (): boolean => {
   return !!((window as any).MediaSource || (window as any).ManagedMediaSource);
 }
 
-const loadResource = async (resourceId: number) => {
-  const res = await getResourceQualityApi(resourceId);
-  console.log('[清晰度] API 返回:', res.data.data);
-  if (res.data.code === statusCode.OK && res.data.data.quality?.length > 0) {
+const loadResource = async (resourceId: number): Promise<boolean> => {
+  options.video.quality = [];
+  options.video.defaultQuality = 0;
+  dashUnifiedMode = false;
+  dashQualityMap = new Map();
+
+  try {
+    const res = await getResourceQualityApi(resourceId);
+    console.log('[清晰度] API 返回:', res.data.data);
+    if (!(res.data.code === statusCode.OK && res.data.data.quality?.length > 0)) {
+      message.error(res.data.msg || '未获取到可播放的视频清晰度');
+      return false;
+    }
+
     const serverSupportsDash = res.data.data.supportsDash === true;
     const useDash = supportsDashJs() && serverSupportsDash;
     const qualityOrderFromServer = (res.data.data.qualityOrder as string[]) || [];
@@ -283,6 +301,11 @@ const loadResource = async (resourceId: number) => {
       console.log('[清晰度] 最终 quality 数组:', options.video.quality);
       options.video.type = useDash ? 'customDash' : 'customHls';
     }
+    return options.video.quality.length > 0;
+  } catch (err) {
+    console.error('[清晰度] 获取失败:', err);
+    message.error('获取视频清晰度失败，请稍后重试');
+    return false;
   }
 }
 

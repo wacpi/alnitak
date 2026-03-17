@@ -1,6 +1,17 @@
 <template>
   <div class="upload-video">
     <p class="title">视频管理</p>
+    <div class="tab-bar">
+      <span
+        v-for="tab in tabs"
+        :key="tab.key"
+        class="tab-item"
+        :class="{ active: activeTab === tab.key }"
+        @click="changeTab(tab.key)"
+      >
+        {{ tab.label }}
+      </span>
+    </div>
     <div class="video-box">
       <el-scrollbar>
         <ul class="video-list" v-infinite-scroll="scrollLoad">
@@ -24,6 +35,26 @@
                   :style="`color: ${getStatusTextColor(item.status)}`">{{ getStatusText(item.status) }}</span>
                 <span class="status status-btn" v-if="item.status === reviewCode.REVIEW_FAILED || item.status === reviewCode.PROCESSING_FAIL"
                   @click="showReason(item.vid)">查看原因</span>
+              </div>
+              <div class="progress-box" v-if="item.status === reviewCode.CREATED_VIDEO || item.status === reviewCode.VIDEO_PROCESSING || item.status === reviewCode.SUBMIT_REVIEW">
+                <div class="progress-head">
+                  <span>总体转码进度 {{ ((item.transcodingProgress || 0)).toFixed(1) }}%</span>
+                  <span class="expand-btn" v-if="(item.transcodingDetails || []).length"
+                    @click="toggleProgressDetail(item.vid)">
+                    {{ expandedDetail[item.vid] ? '收起' : '展开' }}
+                  </span>
+                </div>
+                <el-progress :percentage="Number(((item.transcodingProgress || 0)).toFixed(1))" :stroke-width="6" :show-text="false" />
+                <div class="progress-detail" v-if="expandedDetail[item.vid] && (item.transcodingDetails || []).length">
+                  <div class="detail-item" v-for="detail in item.transcodingDetails" :key="`${detail.resourceId}-${detail.quality}`">
+                    <div class="detail-title">
+                      {{ detail.resourceTitle || `分P${detail.resourceId}` }} / {{ detail.quality }}
+                      <el-tag v-if="detail.status === 'waiting'" size="small" type="info" style="margin-left: 6px">排队中</el-tag>
+                    </div>
+                    <el-progress :percentage="detail.status === 'waiting' ? 0 : Number((detail.progress || 0).toFixed(1))" :stroke-width="4"
+                      :status="detail.status === 'fail' ? 'exception' : (detail.status === 'success' ? 'success' : undefined)" />
+                  </div>
+                </div>
               </div>
             </div>
             <div class="item-right">
@@ -57,7 +88,7 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeMount, ref } from 'vue';
+import { onBeforeMount, onBeforeUnmount, ref } from 'vue';
 import { getUploadVideoAPI, deleteVideoAPI } from '@/api/video';
 import { MoreOne as MoreIcon } from '@icon-park/vue-next';
 import { getVideoReviewRecordAPI } from '@/api/revies';
@@ -71,15 +102,30 @@ const total = ref(0);
 const pageSize = 8;
 const noMore = ref(false);
 const loading = ref(false);
-const videoList = ref<Array<VideoType>>([]);
+const videoList = ref<Array<ManuscriptVideoType>>([]);
+let silentRefreshTimer: number | null = null;
+const activeTab = ref<'published' | 'pending' | 'rejected' | 'transcoding' | 'transcode_failed'>('published');
+const expandedDetail = ref<Record<number, boolean>>({});
+const tabs = [
+  { key: 'published', label: '已发布' },
+  { key: 'pending', label: '待审核' },
+  { key: 'rejected', label: '审核失败' },
+  { key: 'transcoding', label: '转码中' },
+  { key: 'transcode_failed', label: '转码失败' },
+] as const;
+
+const getCurrentCategory = () => activeTab.value;
 const getUploadVideo = async () => {
   if (loading.value || noMore.value) return;
   loading.value = true;
-  const res = await getUploadVideoAPI(page.value, pageSize);
+  const res = await getUploadVideoAPI(page.value, pageSize, getCurrentCategory());
   if (res.data.code === statusCode.OK) {
-    total.value = res.data.data.total;
+    total.value = res.data.data.total || 0;
     if (res.data.data.videos) {
       videoList.value = videoList.value.concat(res.data.data.videos);
+      if (videoList.value.length >= total.value || res.data.data.videos.length < pageSize) {
+        noMore.value = true;
+      }
     } else {
       noMore.value = true;
     }
@@ -94,11 +140,84 @@ const scrollLoad = () => {
   }
 }
 
+const silentRefreshUploadVideo = async () => {
+  if (loading.value || activeTab.value !== 'transcoding') return;
+
+  const loadedPages = Math.max(1, page.value);
+  const mergedVideos: ManuscriptVideoType[] = [];
+  let latestTotal = total.value;
+  let lastPageSize = 0;
+
+  try {
+    for (let i = 1; i <= loadedPages; i++) {
+      const res = await getUploadVideoAPI(i, pageSize, getCurrentCategory());
+      if (res.data.code !== statusCode.OK) {
+        return;
+      }
+      const currentVideos: ManuscriptVideoType[] = res.data.data.videos || [];
+      if (i === 1) {
+        latestTotal = res.data.data.total || 0;
+      }
+      lastPageSize = currentVideos.length;
+      mergedVideos.push(...currentVideos);
+      if (currentVideos.length < pageSize) {
+        break;
+      }
+    }
+
+    total.value = latestTotal;
+    videoList.value = mergedVideos;
+    noMore.value = mergedVideos.length >= latestTotal || lastPageSize < pageSize;
+
+    const maxPage = Math.max(1, Math.ceil((mergedVideos.length || 1) / pageSize));
+    if (page.value > maxPage) {
+      page.value = maxPage;
+    }
+  } catch {
+    // 静默刷新失败不打断当前页面
+  }
+}
+
+const startSilentRefresh = () => {
+  stopSilentRefresh();
+  if (activeTab.value !== 'transcoding') return;
+  silentRefreshTimer = window.setInterval(() => {
+    silentRefreshUploadVideo();
+  }, 3000);
+}
+
+const stopSilentRefresh = () => {
+  if (silentRefreshTimer !== null) {
+    window.clearInterval(silentRefreshTimer);
+    silentRefreshTimer = null;
+  }
+}
+
+const changeTab = (tab: typeof tabs[number]['key']) => {
+  if (activeTab.value === tab) return;
+  activeTab.value = tab;
+  page.value = 1;
+  total.value = 0;
+  noMore.value = false;
+  videoList.value = [];
+  expandedDetail.value = {};
+  if (tab === 'transcoding') {
+    startSilentRefresh();
+  } else {
+    stopSilentRefresh();
+  }
+  getUploadVideo();
+}
+
+const toggleProgressDetail = (vid: number) => {
+  expandedDetail.value[vid] = !expandedDetail.value[vid];
+}
+
 const deleteVideoIndex = ref(-1);
 const deleteVideoTitle = ref("");
 const deleteDialogVisible = ref(false);
-const deleteVideoInfo = ref<VideoType>();
-const deleteVideo = async (video: VideoType, index: number) => {
+const deleteVideoInfo = ref<ManuscriptVideoType>();
+const deleteVideo = async (video: ManuscriptVideoType, index: number) => {
   deleteVideoInfo.value = video;
   deleteVideoIndex.value = index;
   deleteDialogVisible.value = true;
@@ -189,6 +308,10 @@ const modifyVideo = (vid: number) => {
 onBeforeMount(() => {
   getUploadVideo();
 })
+
+onBeforeUnmount(() => {
+  stopSilentRefresh();
+})
 </script>
 
 <style lang="scss" scoped>
@@ -204,8 +327,28 @@ onBeforeMount(() => {
     padding: 16px 0 10px;
   }
 
+  .tab-bar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+
+    .tab-item {
+      padding: 6px 12px;
+      border-radius: 12px;
+      font-size: 13px;
+      color: var(--font-primary-3);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .tab-item.active {
+      color: #fff;
+      background: var(--primary-hover-color);
+    }
+  }
+
   .video-box {
-    height: calc(100% - 60px);
+    height: calc(100% - 102px);
   }
 
   .video-list {
@@ -292,6 +435,45 @@ onBeforeMount(() => {
 
         .status-btn {
           cursor: pointer;
+        }
+
+        .progress-box {
+          margin-top: 8px;
+
+          .progress-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 4px;
+            font-size: 12px;
+            color: var(--font-primary-3);
+          }
+
+          .expand-btn {
+            cursor: pointer;
+            color: var(--primary-hover-color);
+          }
+
+          .progress-detail {
+            margin-top: 8px;
+            padding: 8px;
+            border-radius: 6px;
+            background-color: var(--bg-elev-2);
+
+            .detail-item {
+              margin-bottom: 8px;
+
+              &:last-child {
+                margin-bottom: 0;
+              }
+            }
+
+            .detail-title {
+              font-size: 12px;
+              color: var(--font-primary-2);
+              margin-bottom: 4px;
+            }
+          }
         }
       }
 
