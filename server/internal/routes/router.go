@@ -1,6 +1,8 @@
 package routes
 
 import (
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	"interastral-peace.com/alnitak/internal/api/v1"
@@ -43,22 +45,36 @@ func InitRouter() {
 	// 检查是否启用HTTPS
 	sslConfig := global.Config.Server.Ssl
 	if sslConfig.Enabled {
-		// HTTPS模式
 		httpsPort := sslConfig.Port
 		if httpsPort == "" {
 			httpsPort = "443"
 		}
 
-		zap.L().Info("启动HTTPS服务器",
-			zap.String("port", httpsPort),
-			zap.String("cert", sslConfig.CertFile),
-			zap.String("key", sslConfig.KeyFile))
+		// HTTPS 与 HTTP 需不同端口，默认 HTTP 9000、HTTPS 9001
+		if httpsPort == httpPort {
+			httpsPort = "9001"
+		}
 
-		if err := r.RunTLS(":"+httpsPort, sslConfig.CertFile, sslConfig.KeyFile); err != nil {
-			zap.L().Fatal("HTTPS服务器启动失败", zap.Error(err))
+		zap.L().Info("启动HTTPS+HTTP双模式",
+			zap.String("https_port", httpsPort),
+			zap.String("http_port", httpPort),
+			zap.String("cert", sslConfig.CertFile))
+
+		// 启动 HTTPS（goroutine）
+		go func() {
+			zap.L().Info("HTTPS服务器已启动", zap.String("port", httpsPort))
+			if err := r.RunTLS(":"+httpsPort, sslConfig.CertFile, sslConfig.KeyFile); err != nil && err != http.ErrServerClosed {
+				zap.L().Error("HTTPS服务器异常退出", zap.Error(err))
+			}
+		}()
+
+		// 启动 HTTP（主协程，保持 9000 便于 Admin 等 HTTP 客户端）
+		zap.L().Info("HTTP服务器已启动", zap.String("port", httpPort))
+		if err := r.Run(":" + httpPort); err != nil {
+			zap.L().Fatal("HTTP服务器启动失败", zap.Error(err))
 		}
 	} else {
-		// HTTP模式
+		// 仅 HTTP 模式
 		zap.L().Info("启动HTTP服务器", zap.String("port", httpPort))
 		r.Run(":" + httpPort)
 	}
