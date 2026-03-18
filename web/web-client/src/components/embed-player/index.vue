@@ -280,6 +280,17 @@ const initPlayer = async () => {
           dashPlayer.on('error', (e: any) => {
             console.error('[embed-player] DASH 播放错误:', e);
           });
+
+          // 统一 DASH 模式：初始化完成后设置到默认选中的清晰度
+          if (dashUnifiedMode) {
+            dashPlayer.on('streamInitialized', () => {
+              const defaultQualityName = qualities[0]?.name;
+              const dashIndex = dashQualityMap.get(defaultQualityName);
+              if (dashIndex !== undefined) {
+                dashPlayer.setRepresentationForTypeByIndex('video', dashIndex, true);
+              }
+            });
+          }
         },
       },
     },
