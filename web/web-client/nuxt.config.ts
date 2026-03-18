@@ -1,6 +1,19 @@
 import { globalConfig } from "./src/utils/global-config";
+import fs from "node:fs";
+import path from "node:path";
+
+// 当 globalConfig.https 为 true 时，开发服务器以 HTTPS 启动（Nuxt 需要文件路径字符串）
+const certDir = path.resolve(process.cwd(), "../../../../server/alnitak/server/conf");
+const keyPath = path.join(certDir, "private.key");
+const certPath = path.join(certDir, "public.crt");
+const httpsConfig = globalConfig.https && fs.existsSync(keyPath)
+  ? { key: keyPath, cert: certPath }
+  : undefined;
 
 export default defineNuxtConfig({
+  devServer: {
+    https: httpsConfig,
+  },
   modules: [
     '@element-plus/nuxt',
     '@pinia/nuxt',
