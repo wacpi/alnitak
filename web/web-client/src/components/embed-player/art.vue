@@ -341,6 +341,18 @@ customType: {
           dashPlayer.on('error', (e: any) => {
             console.error('[art.vue] DASH 播放错误:', e);
           });
+
+          // 统一 DASH 模式：初始化完成后设置到默认选中的清晰度
+          if (dashUnifiedMode) {
+            dashPlayer.on('streamInitialized', () => {
+              const defaultItem = art.option.quality?.find((q: any) => q.default);
+              const defaultName = defaultItem?.html;
+              const dashIndex = dashQualityMap.get(defaultName);
+              if (dashIndex !== undefined) {
+                dashPlayer.setRepresentationForTypeByIndex('video', dashIndex, true);
+              }
+            });
+          }
         } else if (video.canPlayType('application/dash+xml')) {
           video.src = url;
         }
