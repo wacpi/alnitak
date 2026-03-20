@@ -102,6 +102,10 @@
         <history-icon class="icon"></history-icon>
         <div class="icon-text">历史</div>
       </nuxt-link>
+      <nuxt-link class="icon-btn" to="/space/collection">
+        <collect-icon class="icon"></collect-icon>
+        <div class="icon-text">收藏</div>
+      </nuxt-link>
       <!-- 投稿按钮 -->
       <nuxt-link class="upload-btn disabled-select" to="/upload/video">
         <upload-icon class="upload-icon"></upload-icon>
@@ -124,6 +128,7 @@ import LoginDialog from "@/components/login-dialog/index.vue";
 import {
   HamburgerButton, Upload as UploadIcon, Search as SearchIcon,
   Message as MessageIcon, History as HistoryIcon,
+  FolderFocusOne as CollectIcon,
   User as UserIcon, Logout as LogoutIcon, Right as RightIcon,
   Theme as ThemeIcon, SunOne as SunIcon, Moon as MoonIcon
 } from '@icon-park/vue-next';
@@ -320,7 +325,7 @@ onMounted(() => {
   }
 
   .header-right {
-    width: 286px;
+    width: 340px;
     display: flex;
     align-items: center;
 
