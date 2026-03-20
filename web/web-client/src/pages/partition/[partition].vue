@@ -8,9 +8,11 @@
       <div class="home-right" :style="`margin-left: ${menuFold ? '50px' : '220px'};`">
         <div class="home-recommended" :class="menuFold ? 'recommended-fold' : ''">
           <div class="recommended-carousel">
-            <client-only>
-              <HomeCarousel :partition-id="partitionId"></HomeCarousel>
-            </client-only>
+            <div class="recommended-carousel-inner">
+              <client-only>
+                <HomeCarousel :partition-id="partitionId"></HomeCarousel>
+              </client-only>
+            </div>
           </div>
           <video-item v-for="item in videoList" :info="item"></video-item>
         </div>
@@ -137,9 +139,28 @@ onBeforeUnmount(() => {
   overflow: hidden;
 
   .recommended-carousel {
-    height: 420px;
+    min-height: 320px;
     grid-row: 1/ span 2;
     grid-column: 1/ span 2;
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .recommended-carousel-inner {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+    border-radius: 9px;
+    overflow: hidden;
+  }
+
+  .recommended-carousel-inner :deep(.carousel-area) {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
   }
 }
 

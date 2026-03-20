@@ -7,12 +7,21 @@
       </div>
       <div class="home-right" :style="`margin-left: ${menuFold ? '50px' : '220px'};`">
         <div class="home-recommended" :class="menuFold ? 'recommended-fold' : ''">
-          <div class="recommended-carousel">
-            <client-only>
-              <HomeCarousel></HomeCarousel>
-            </client-only>
+          <div class="recommended-top">
+            <div class="recommended-carousel">
+              <div class="recommended-carousel-inner">
+                <client-only>
+                  <HomeCarousel></HomeCarousel>
+                </client-only>
+              </div>
+            </div>
+            <div class="recommended-side" :class="menuFold ? 'side-fold' : ''">
+              <video-item v-for="item in videoList.slice(0, menuFold ? 6 : 4)" :info="item"></video-item>
+            </div>
           </div>
-          <video-item v-for="item in videoList" :info="item"></video-item>
+          <div class="recommended-grid" :class="menuFold ? 'grid-fold' : ''">
+            <video-item v-for="item in videoList.slice(menuFold ? 6 : 4)" :info="item"></video-item>
+          </div>
         </div>
       </div>
     </div>
@@ -133,21 +142,63 @@ onBeforeUnmount(() => {
 }
 
 .home-recommended {
-  display: grid;
   margin-left: 20px;
   width: calc(100% - 50px);
-  gap: 0 16px;
-  grid-template-columns: repeat(4, 1fr);
   overflow: hidden;
+}
 
+.recommended-top {
+  display: flex;
+  align-items: stretch;
+  gap: 16px;
+
+  /* 与右侧两列视频总高度对齐，避免轮播底部留空；不设死高，避免整体过高 */
   .recommended-carousel {
-    height: 420px;
-    grid-row: 1/ span 2;
-    grid-column: 1/ span 2;
+    flex: 2;
+    min-width: 0;
+    min-height: 320px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .recommended-carousel-inner {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+    border-radius: 9px;
+    overflow: hidden;
+  }
+
+  .recommended-carousel-inner :deep(.carousel-area) {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  .recommended-side {
+    flex: 2;
+    min-width: 0;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+    align-content: start;
+  }
+
+  .side-fold {
+    flex: 3;
+    grid-template-columns: repeat(3, 1fr);
   }
 }
 
-.recommended-fold {
+.recommended-grid {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.grid-fold {
   grid-template-columns: repeat(5, 1fr);
 }
 </style>

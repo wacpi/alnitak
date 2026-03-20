@@ -3,8 +3,8 @@
     <header-bar></header-bar>
     <div class="search">
       <div class="search-form">
-        <input class="input" v-model="searchParam.keywords" @keydown.enter="searchVideo()">
-        <button class="btn" @click="searchVideo()">
+        <input class="input" v-model="searchParam.keywords" @keydown.enter="searchVideo(true)">
+        <button class="btn" @click="searchVideo(true)">
           <search-icon class="icon" size="16" />
         </button>
       </div>

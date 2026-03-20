@@ -29,17 +29,12 @@ const props = defineProps<{
 <style lang="scss" scoped>
 .video-item {
   width: 100%;
-  height: 260px;
 
   .img {
     position: relative;
     display: block;
-    height: auto;
-    /* 让高度自动调整以保持比例 */
-    //封面容器高度
-    max-height: 160px;
-    /* 最大高度限制 */
-    //圆角
+    aspect-ratio: 16 / 9;
+    max-height: 200px;
     border-radius: 9px;
     overflow: hidden;
     cursor: pointer;
@@ -49,7 +44,6 @@ const props = defineProps<{
       width: 100%;
       height: 100%;
       object-fit: cover;
-      /* 保持图片比例，裁剪超出的部分 */
     }
 
     .duration {
