@@ -1,8 +1,11 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -12,6 +15,27 @@ import (
 	"interastral-peace.com/alnitak/internal/service"
 	"interastral-peace.com/alnitak/utils"
 )
+
+var sliceMediaFileRegexp = regexp.MustCompile(`^[A-Za-z0-9_.-]+\.(m4s|ts)$`)
+
+func sanitizeSliceMediaFileName(file string) (string, error) {
+	file = strings.TrimSpace(file)
+	if file == "" {
+		return "", errors.New("empty file")
+	}
+
+	// 必须是纯文件名，不允许包含目录分隔符（防路径穿越）
+	if filepath.Base(file) != file {
+		return "", errors.New("invalid file name")
+	}
+
+	// 限定扩展名与字符集合，避免构造任意路径/协议
+	if !sliceMediaFileRegexp.MatchString(file) {
+		return "", errors.New("invalid file name format")
+	}
+
+	return file, nil
+}
 
 // 获取视频文件
 func GetVideoFile(ctx *gin.Context) {
@@ -70,7 +94,11 @@ func GetVideoFileManage(ctx *gin.Context) {
 // 获取视频切片（兼容模式：SegmentList）
 func GetVideoSlice(ctx *gin.Context) {
 	key := ctx.Query("key")
-	file := ctx.Param("file")
+	file, err := sanitizeSliceMediaFileName(ctx.Param("file"))
+	if err != nil {
+		resp.Forbidden(ctx)
+		return
+	}
 
 	dir := service.GetVideoSliceDir(key)
 	if dir == "" {
@@ -92,7 +120,11 @@ func GetVideoSlice(ctx *gin.Context) {
 // GetVideoStream 获取视频流（B站风格：支持字节范围请求）
 func GetVideoStream(ctx *gin.Context) {
 	key := ctx.Query("key")
-	file := ctx.Param("file")
+	file, err := sanitizeSliceMediaFileName(ctx.Param("file"))
+	if err != nil {
+		resp.Forbidden(ctx)
+		return
+	}
 
 	dir := service.GetVideoSliceDir(key)
 	if dir == "" {

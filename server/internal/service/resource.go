@@ -71,8 +71,7 @@ func DeleteResource(ctx *gin.Context, id uint) error {
 		decreaseVideoFileRefCount(resource.FileID, userId, resource.ID, indexFile.DirName)
 	} else if indexFile.DirName != "" {
 		// 兼容旧数据：通过 DirName 查找 VideoFile
-		var vf model.VideoFile
-		if global.Mysql.Where("dir_name = ?", indexFile.DirName).First(&vf).Error == nil {
+		if vf, err := findVideoFileByDirName(global.Mysql, indexFile.DirName); err == nil && vf != nil {
 			decreaseVideoFileRefCount(vf.ID, userId, resource.ID, indexFile.DirName)
 		}
 	}

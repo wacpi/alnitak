@@ -75,6 +75,16 @@ func UploadImg(ctx *gin.Context, file *multipart.FileHeader) (string, error) {
 		return "", errors.New("文件上传失败")
 	}
 
+	// 上传到 OSS（非 local）必须失败可感知，避免 DB 出现“无对象”的脏记录
+	if global.Config.Storage.OssType != "local" {
+		if err := global.Storage.PutObjectFromFile(objectKey, filePath); err != nil {
+			// 本地临时文件清理，避免磁盘泄漏
+			_ = os.Remove(filePath)
+			utils.ErrorLog("图片上传到OSS失败", "upload", err.Error())
+			return "", errors.New("文件上传失败")
+		}
+	}
+
 	// 记录到数据库
 	global.Mysql.Create(&model.ImageFile{
 		Uid:      userId,
@@ -83,10 +93,6 @@ func UploadImg(ctx *gin.Context, file *multipart.FileHeader) (string, error) {
 	})
 
 	url := generateFileUrl(objectKey)
-	if global.Config.Storage.OssType != "local" {
-		// 上传到OSS
-		global.Storage.PutObjectFromFile(objectKey, filePath)
-	}
 
 	// 缓存url
 	cache.SetUploadImage(url, userId)
@@ -517,6 +523,7 @@ func decreaseVideoFileRefCount(fileID, uid, resourceID uint, dirName string) {
 		return
 	}
 
+	shouldDeleteDir := false
 	if err := global.Mysql.Transaction(func(tx *gorm.DB) error {
 		// 删除用户的引用记录
 		if err := tx.Where("file_id = ? AND uid = ? AND resource_id = ?", fileID, uid, resourceID).
@@ -546,6 +553,10 @@ func decreaseVideoFileRefCount(fileID, uid, resourceID uint, dirName string) {
 			if err := tx.Where("id = ?", fileID).Delete(&model.VideoFile{}).Error; err != nil {
 				return fmt.Errorf("删除VideoFile失败: %w", err)
 			}
+			// 仅在“正常删除资源”路径（resourceID != 0）下同步清理目录，避免影响创建失败补偿路径。
+			if resourceID != 0 && dirName != "" {
+				shouldDeleteDir = true
+			}
 			utils.InfoLog(fmt.Sprintf("【删除VideoFile】fileID=%d, dirName=%s, 引用计数为0", fileID, dirName), "upload")
 		} else {
 			utils.InfoLog(fmt.Sprintf("【减少引用计数】fileID=%d, 剩余引用=%d", fileID, vf.RefCount), "upload")
@@ -553,6 +564,17 @@ func decreaseVideoFileRefCount(fileID, uid, resourceID uint, dirName string) {
 		return nil
 	}); err != nil {
 		utils.ErrorLog(fmt.Sprintf("减少文件引用计数事务失败, fileID=%d", fileID), "upload", err.Error())
+		return
+	}
+
+	// resource 计数归零后，尝试加速清理本地目录（并在非 local 存储时同步删除 OSS 对应对象）
+	if shouldDeleteDir {
+		localDir := filepath.Join("./upload/video", dirName)
+		var deleteErrors []string
+		deleteVideoFromOSS(localDir, &deleteErrors)
+		if err := os.RemoveAll(localDir); err != nil && !os.IsNotExist(err) {
+			utils.ErrorLog("同步清理本地视频目录失败", "cleanup", err.Error())
+		}
 	}
 }
 
@@ -650,10 +672,14 @@ func initVideo(userId uint, videoPath, title string) (uint, error) {
 
 	if err := GenerateCover(videoPath, filePath); err != nil {
 		utils.ErrorLog("生成封面失败", "upload", fmt.Sprintf("videoPath=%s, err=%v", videoPath, err))
+		return 0, err // 封面失败直接中断，避免写入无效 Video 记录
 	}
 	if global.Config.Storage.OssType != "local" {
 		// 上传到OSS
-		global.Storage.PutObjectFromFile(objectKey, filePath)
+		if err := global.Storage.PutObjectFromFile(objectKey, filePath); err != nil {
+			_ = os.Remove(filePath)
+			return 0, err
+		}
 	}
 	// 去掉后缀名并截断过长标题
 	titleWithoutExt := title[:len(title)-len(path.Ext(title))]

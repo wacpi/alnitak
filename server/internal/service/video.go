@@ -363,26 +363,11 @@ func parseSidxBox(filePath string) ([]sidxEntry, error) {
 
 	// 遍历顶层 box，找到 sidx
 	offset := int64(0)
-	header := make([]byte, 8)
 
 	for offset < fileSize {
-		if _, err := file.ReadAt(header, offset); err != nil {
+		boxSize, boxType, err := readMP4BoxSizeAndType(file, offset, fileSize)
+		if err != nil || boxSize <= 0 {
 			break
-		}
-
-		boxSize := int64(binary.BigEndian.Uint32(header[0:4]))
-		boxType := string(header[4:8])
-
-		// 扩展 size
-		if boxSize == 1 {
-			extHeader := make([]byte, 8)
-			if _, err := file.ReadAt(extHeader, offset+8); err != nil {
-				break
-			}
-			boxSize = int64(binary.BigEndian.Uint64(extHeader))
-		}
-		if boxSize == 0 {
-			boxSize = fileSize - offset
 		}
 
 		if boxType == "sidx" {
@@ -494,10 +479,7 @@ func buildM3U8MasterSegmentBase(file *model.VideoIndexFile, resourceId uint, key
 	sb.WriteString("\n")
 
 	// 【关键】构建子清单的完整 URL
-	var baseURL string
-	if global.Config.Storage.OssType == "local" && global.Config.Storage.Domain != "" {
-		baseURL = global.Config.Storage.Domain
-	}
+	baseURL := getLocalBaseURL()
 
 	// 音频组：引用音频子清单
 	audioURI := fmt.Sprintf("/api/v1/video/getVideoFile?resourceId=%d&quality=%s&format=m3u8audio&key=%s", resourceId, file.Quality, key)
@@ -617,10 +599,7 @@ func buildM3U8SegmentList(file *model.VideoIndexFile, key string) string {
 	sb.WriteString("#EXT-X-PLAYLIST-TYPE:VOD\n")
 
 	// 【关键】构建基础 URL
-	var baseURL string
-	if global.Config.Storage.OssType == "local" && global.Config.Storage.Domain != "" {
-		baseURL = global.Config.Storage.Domain
-	}
+	baseURL := getLocalBaseURL()
 
 	if isFMP4 {
 		initURI := fmt.Sprintf("/api/v1/video/slice/%s?key=%s", file.InitFile, key)
@@ -665,10 +644,7 @@ func buildMPDSegmentList(file *model.VideoIndexFile, key string) string {
 	}
 
 	// 【关键】构建基础 URL
-	var baseURL string
-	if global.Config.Storage.OssType == "local" && global.Config.Storage.Domain != "" {
-		baseURL = global.Config.Storage.Domain
-	}
+	baseURL := getLocalBaseURL()
 
 	var sb strings.Builder
 	sb.WriteString(`<?xml version="1.0" encoding="UTF-8"?>`)
@@ -681,17 +657,14 @@ func buildMPDSegmentList(file *model.VideoIndexFile, key string) string {
 		file.Quality, file.Bandwidth, file.Width, file.Height, file.FrameRate, codec))
 	sb.WriteString("\n")
 
+	sb.WriteString(fmt.Sprintf(`        <SegmentList timescale="1000" duration="%d">`, int(file.SegmentDuration*1000)))
+	sb.WriteString("\n")
 	if file.InitFile != "" {
-		sb.WriteString(fmt.Sprintf(`        <SegmentList timescale="1000" duration="%d">`, int(file.SegmentDuration*1000)))
-		sb.WriteString("\n")
 		initURL := fmt.Sprintf("/api/v1/video/slice/%s?key=%s", file.InitFile, key)
 		if baseURL != "" {
 			initURL = baseURL + initURL
 		}
 		sb.WriteString(fmt.Sprintf(`          <Initialization sourceURL="%s"/>`, initURL))
-		sb.WriteString("\n")
-	} else {
-		sb.WriteString(fmt.Sprintf(`        <SegmentList timescale="1000" duration="%d">`, int(file.SegmentDuration*1000)))
 		sb.WriteString("\n")
 	}
 
@@ -1036,8 +1009,7 @@ func deleteVideoAndRelatedData(id, ownerUid uint, video *model.Video) error {
 			decreaseVideoFileRefCount(resource.FileID, ownerUid, resource.ID, indexFile.DirName)
 		} else if indexFile.DirName != "" {
 			// 兼容旧数据：通过 DirName 查找 VideoFile
-			var vf model.VideoFile
-			if global.Mysql.Where("dir_name = ?", indexFile.DirName).First(&vf).Error == nil {
+			if vf, err := findVideoFileByDirName(global.Mysql, indexFile.DirName); err == nil && vf != nil {
 				decreaseVideoFileRefCount(vf.ID, ownerUid, resource.ID, indexFile.DirName)
 			}
 		}
@@ -1404,7 +1376,8 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 		if !found {
 			var indexFile model.VideoIndexFile
 			if err := global.Mysql.Unscoped().Where("resource_id = ?", resource.ID).First(&indexFile).Error; err == nil && indexFile.DirName != "" {
-				if err := global.Mysql.Where("dir_name = ?", indexFile.DirName).First(&vf).Error; err == nil && vf.DirName != "" {
+				if foundVF, err := findVideoFileByDirName(global.Mysql, indexFile.DirName); err == nil && foundVF != nil && foundVF.DirName != "" {
+					vf = *foundVF
 					found = true
 				}
 			}

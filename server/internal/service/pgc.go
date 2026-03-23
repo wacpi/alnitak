@@ -75,10 +75,15 @@ func CreatePGCContent(req dto.CreatePGCReq) (uint, error) {
 	pgcID := uint(global.SnowflakeNode.Generate())
 
 	tx := global.Mysql.Begin()
+	committed := false
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
 			utils.ErrorLog("创建PGC内容panic", "pgc", "")
+			return
+		}
+		if !committed {
+			tx.Rollback()
 		}
 	}()
 
@@ -98,7 +103,6 @@ func CreatePGCContent(req dto.CreatePGCReq) (uint, error) {
 	}
 
 	if err := tx.Create(pgcContent).Error; err != nil {
-		tx.Rollback()
 		utils.ErrorLog("创建PGC内容失败", "pgc", err.Error())
 		return 0, errors.New("创建PGC内容失败")
 	}
@@ -115,7 +119,6 @@ func CreatePGCContent(req dto.CreatePGCReq) (uint, error) {
 		}
 
 		if err := tx.Create(pgcEpisode).Error; err != nil {
-			tx.Rollback()
 			utils.ErrorLog("创建PGC剧集失败", "pgc", err.Error())
 			return 0, errors.New("创建剧集失败")
 		}
@@ -126,6 +129,7 @@ func CreatePGCContent(req dto.CreatePGCReq) (uint, error) {
 		return 0, errors.New("创建失败")
 	}
 
+	committed = true
 	utils.InfoLog("创建PGC内容成功", "pgc")
 
 	return pgcID, nil
@@ -211,21 +215,24 @@ func DeletePGCContent(pgcID uint) error {
 	}
 
 	tx := global.Mysql.Begin()
+	committed := false
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
 			utils.ErrorLog("删除PGC内容panic", "pgc", "")
+			return
+		}
+		if !committed {
+			tx.Rollback()
 		}
 	}()
 
 	if err := tx.Delete(&model.PGCContent{}, "pgc_id = ?", pgcID).Error; err != nil {
-		tx.Rollback()
 		utils.ErrorLog("删除PGC内容失败", "pgc", err.Error())
 		return errors.New("删除失败")
 	}
 
 	if err := tx.Delete(&model.PGCEpisode{}, "pgc_id = ?", pgcID).Error; err != nil {
-		tx.Rollback()
 		utils.ErrorLog("删除PGC剧集失败", "pgc", err.Error())
 		return errors.New("删除剧集失败")
 	}
@@ -235,6 +242,7 @@ func DeletePGCContent(pgcID uint) error {
 		return errors.New("删除失败")
 	}
 
+	committed = true
 	utils.InfoLog("删除PGC内容成功", "pgc")
 
 	return nil

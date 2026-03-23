@@ -46,30 +46,12 @@ func getMP4InitRange(filePath string) (initRange, indexRange string, err error) 
 	var sidxEnd int64 = 0
 
 	offset := int64(0)
-	header := make([]byte, 8)
 
 parseLoop:
 	for offset < fileSize {
-		_, err := file.ReadAt(header, offset)
-		if err != nil {
+		boxSize, boxType, err := readMP4BoxSizeAndType(file, offset, fileSize)
+		if err != nil || boxSize <= 0 {
 			break
-		}
-
-		// 解析 box size（4 字节大端）
-		boxSize := int64(uint32(header[0])<<24 | uint32(header[1])<<16 | uint32(header[2])<<8 | uint32(header[3]))
-		boxType := string(header[4:8])
-
-		// 处理扩展 size（size == 1 表示使用 64 位 size）
-		if boxSize == 1 {
-			extHeader := make([]byte, 8)
-			file.ReadAt(extHeader, offset+8)
-			boxSize = int64(uint64(extHeader[0])<<56 | uint64(extHeader[1])<<48 | uint64(extHeader[2])<<40 | uint64(extHeader[3])<<32 |
-				uint64(extHeader[4])<<24 | uint64(extHeader[5])<<16 | uint64(extHeader[6])<<8 | uint64(extHeader[7]))
-		}
-
-		// size == 0 表示 box 延伸到文件末尾
-		if boxSize == 0 {
-			boxSize = fileSize - offset
 		}
 
 		switch boxType {
@@ -141,7 +123,7 @@ var (
 	gpuAvailable         = true                                // GPU是否可用
 	gpuCheckMutex        sync.RWMutex                          // 保护GPU状态的读写锁
 	gpuFailCount         = 0                                   // GPU连续失败次数
-	maxGpuFailCount      = 3                                   // 最大允许GPU失败次数
+	maxGpuFailCount      = maxGpuFailCountThreshold             // 最大允许GPU失败次数
 	transcodingProcesses = make(map[uint][]TranscodingProcess) // key: videoID, value: 该视频的所有转码进程
 	processMapMutex      sync.RWMutex                          // 保护进程映射的读写锁
 	transcodingProgress  = make(map[uint]*resourceTranscodingProgress)
@@ -152,10 +134,10 @@ var (
 func initTranscodingSemaphore() {
 	semaphoreOnce.Do(func() {
 		// 默认允许2个转码任务并发（可根据实际服务器配置调整）
-		maxConcurrentTranscoding := 2
+		maxConcurrentTranscoding := maxCPUConcurrentTranscoding
 		if global.Config.Transcoding.UseGpu {
 			// GPU模式下可以稍微增加并发数
-			maxConcurrentTranscoding = 3
+			maxConcurrentTranscoding = maxGPUConcurrentTranscoding
 		}
 		transcodingSemaphore = make(chan struct{}, maxConcurrentTranscoding)
 		utils.InfoLog(fmt.Sprintf("【转码并发控制初始化】最大并发数=%d", maxConcurrentTranscoding), "transcoding")
@@ -586,7 +568,7 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 			if !needEncodeAudio {
 				// 等待其他 goroutine 完成音频编码
 				waitCount := 0
-				maxWaitCount := 3000 // 最多等待5分钟
+				maxWaitCount := audioWaitMaxPollCount // 最多等待5分钟
 				for {
 					// 检查音频编码是否已失败
 					audioMu.Lock()
@@ -604,7 +586,7 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 						break
 					}
 					waitCount++
-					if waitCount%100 == 0 {
+					if waitCount%audioWaitLogEveryPollCount == 0 {
 						var fileSize int64
 						if info != nil {
 							fileSize = info.Size()
@@ -617,7 +599,7 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 						utils.ErrorLog(fmt.Sprintf("【等待音频超时】%s 放弃等待", fileName), "transcoding", "")
 						return
 					}
-					time.Sleep(100 * time.Millisecond)
+					time.Sleep(audioWaitPollInterval)
 				}
 			}
 
@@ -631,6 +613,13 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 			videoInitRange, videoIndexRange, _ := getMP4InitRange(videoFilePath)
 			audioInitRange, audioIndexRange, _ := getMP4InitRange(audioFilePath)
 
+			videoCodec := "avc1.640028" // 兜底：保证可播放性
+			if c, err := probeH264Avc1CodecString(videoFilePath); err != nil {
+				utils.ErrorLog("探测 H264 codec 失败，使用默认值兜底", "transcoding", err.Error())
+			} else {
+				videoCodec = c
+			}
+
 			utils.InfoLog(fmt.Sprintf("【范围提取】%s video init=%s, index=%s; audio init=%s, index=%s",
 				fileName, videoInitRange, videoIndexRange, audioInitRange, audioIndexRange), "transcoding")
 
@@ -643,7 +632,7 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 				// 视频流信息
 				VideoFile:       fileName + "_video.m4s",
 				VideoBandwidth:  bandwidth,
-				VideoCodec:      "avc1.640028",
+				VideoCodec:      videoCodec,
 				Width:           width,
 				Height:          height,
 				FrameRate:       frameRate,
@@ -1001,6 +990,79 @@ func parseFfmpegClockToSeconds(clock string) float64 {
 	return hours*3600 + mins*60 + secs
 }
 
+// ProbeH264Avc1CodecString 对本地可读的视频文件（如 *_video.m4s）执行 ffprobe，生成与转码落库一致的 avc1 字符串。
+// 供维护脚本（如 cmd/fix_video_codec）使用。
+func ProbeH264Avc1CodecString(filePath string) (string, error) {
+	return probeH264Avc1CodecString(filePath)
+}
+
+// probeH264Avc1CodecString 生成 H.264 的 ISO BMFF codec 字符串形如 avc1.PPCCLL。
+// 这里基于 ffprobe 的 profile/level 组合生成：
+// - PP：profile_idc（baseline/main/high）
+// - CC：profile_compatibility（你的转码显式使用 -profile:v high，实践中可按 00 处理）
+// - LL：level_idc（ffprobe 的 level 例如 4.2 -> 42 -> 0x2A）
+func probeH264Avc1CodecString(filePath string) (string, error) {
+	// ffprobe 输出顺序与 show_entries 一致：profile、level
+	cmd := exec.Command(
+		"ffprobe",
+		"-v", "error",
+		"-select_streams", "v:0",
+		"-show_entries", "stream=profile,level",
+		"-of", "default=nw=1:nk=1",
+		filePath,
+	)
+
+	out, err := utils.RunCmd(cmd)
+	if err != nil {
+		return "", err
+	}
+
+	raw := strings.TrimSpace(out.String())
+	if raw == "" {
+		return "", fmt.Errorf("ffprobe output empty")
+	}
+
+	lines := make([]string, 0, 2)
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) < 2 {
+		return "", fmt.Errorf("ffprobe output unexpected: %q", raw)
+	}
+
+	profile := strings.ToLower(lines[0])
+	levelStr := strings.TrimSpace(lines[1])
+	level, err := strconv.Atoi(levelStr)
+	if err != nil {
+		return "", fmt.Errorf("parse level failed: %w", err)
+	}
+
+	return avc1CodecStringFromH264ProfileLevel(profile, level)
+}
+
+// avc1CodecStringFromH264ProfileLevel 是纯函数：把 profile/level 映射到 avc1.PPCCLL。
+// 注意：这里固定 CC=00，适配你当前转码链路（-profile:v high）。
+func avc1CodecStringFromH264ProfileLevel(profile string, level int) (string, error) {
+	profile = strings.ToLower(profile)
+	var profileHex string
+	switch {
+	case strings.Contains(profile, "baseline"):
+		profileHex = "42"
+	case strings.Contains(profile, "main"):
+		profileHex = "4D"
+	case strings.Contains(profile, "high"):
+		profileHex = "64"
+	default:
+		return "", fmt.Errorf("unsupported h264 profile: %s", profile)
+	}
+
+	levelHex := fmt.Sprintf("%02X", level)
+	return fmt.Sprintf("avc1.%s00%s", profileHex, levelHex), nil
+}
+
 func watchFFmpegProgress(scanner *bufio.Scanner, resourceID uint, quality string, totalDuration float64) {
 	if totalDuration <= 0 {
 		return
@@ -1291,7 +1353,7 @@ func parseQualityInfo(quality string) (width, height, bandwidth int, frameRate f
 
 // 并发上传文件到OSS
 func uploadFilesToOSS(dirName, outputDir, suffix string, files []os.DirEntry) int {
-	const maxConcurrency = 10 // 最大并发数
+	maxConcurrency := ossUploadMaxConcurrency // 最大并发数
 	utils.InfoLog(fmt.Sprintf("【OSS准备上传】文件总数=%d, 并发数=%d", len(files), maxConcurrency), "transcoding")
 
 	// 创建任务通道和结果通道
@@ -1330,7 +1392,7 @@ func uploadFilesToOSS(dirName, outputDir, suffix string, files []os.DirEntry) in
 				if err != nil {
 					utils.ErrorLog(fmt.Sprintf("【OSS上传失败】%s,重试中...", fileName), "oss", err.Error())
 					// 重试一次
-					time.Sleep(500 * time.Millisecond)
+					time.Sleep(ossUploadRetryDelay)
 					err = global.Storage.PutObjectFromFile(objectKey, filePath)
 				}
 
@@ -1525,8 +1587,7 @@ func updateVideoFileStatus(db *gorm.DB, currentResource model.Resource, resource
 				utils.InfoLog(fmt.Sprintf("【VideoFile状态更新】DirName=%s 状态设为 FileStatusReady(4), 影响行数=%d", videoIndex.DirName, result.RowsAffected), "transcoding")
 
 				// 同时更新 Resource.FileID（补充旧数据）
-				var vf model.VideoFile
-				if db.Where("dir_name = ?", videoIndex.DirName).First(&vf).Error == nil {
+				if vf, err := findVideoFileByDirName(db, videoIndex.DirName); err == nil && vf != nil {
 					db.Model(&model.Resource{}).Where("id = ? AND file_id = 0", resourceId).Update("file_id", vf.ID)
 					utils.InfoLog(fmt.Sprintf("【Resource关联更新】ResourceID=%d 设置 FileID=%d", resourceId, vf.ID), "transcoding")
 				}
