@@ -3,7 +3,7 @@ import Cookies from 'js-cookie';
 import { getUserInfoAPI } from '@/api/user';
 import { statusCode } from '@/utils/status-code';
 import { storageData } from '@/utils/storage-data';
-import { logoutAPI } from '@/api/auth';
+import { getAuthMeAPI, logoutAPI } from '@/api/auth';
 import { authDebug } from '@/utils/auth-debug';
 
 export type AuthStatus = 'unknown' | 'guest' | 'auth';
@@ -43,30 +43,43 @@ export const useAuthStore = defineStore('auth', {
         hasUserIdCookie: Boolean(Cookies.get('user_id')),
       });
 
-      // 无任何本地凭证时，直接判定为游客态，避免无意义的 /getUserInfo 探测。
-      // 否则在“跨标签页退出登录”场景下，可能触发接口返回 LOGIN_AGAIN，进而误弹登录弹窗。
-      if (!storageData.get('token') && !storageData.get('refreshToken') && !Cookies.get('user_id')) {
-        this.user = null;
-        this.status = 'guest';
-        this.lastAuthError = '';
-        authDebug('[auth] fetchMe skip (no credentials)', { status: this.status });
-        return;
-      }
+      const hasReadableCred =
+        Boolean(storageData.get('token') || storageData.get('refreshToken') || Cookies.get('user_id'));
 
       this._fetchingMe = true;
       this.lastAuthError = '';
       try {
-        const res = await getUserInfoAPI();
-        if (res.data.code === statusCode.OK) {
-          this.user = res.data.data.userInfo;
+        if (hasReadableCred) {
+          const res = await getUserInfoAPI();
+          if (res.data.code === statusCode.OK) {
+            this.user = res.data.data.userInfo;
+            this.status = 'auth';
+            authDebug('[auth] fetchMe ok', { status: this.status, uid: this.user?.uid });
+            return;
+          }
+          this.user = null;
+          this.status = 'guest';
+          this.lastAuthError = res.data.msg || '获取用户信息失败';
+          authDebug('[auth] fetchMe guest', { code: res.data.code, msg: res.data.msg });
+          return;
+        }
+
+        // 无本地可读凭证时仍可能具备 HttpOnly refresh Cookie：与 /auth/me 对齐会话（阶段 B）
+        const meRes = await getAuthMeAPI();
+        if (meRes.data.code === statusCode.OK && meRes.data.data?.userInfo) {
+          const d = meRes.data.data;
+          if (d.token) storageData.set('token', d.token, 60);
+          if (d.refreshToken) storageData.set('refreshToken', d.refreshToken, 7 * 24 * 60);
+          if (d.userId != null) Cookies.set('user_id', String(d.userId));
+          this.user = d.userInfo;
           this.status = 'auth';
-          authDebug('[auth] fetchMe ok', { status: this.status, uid: this.user?.uid });
+          authDebug('[auth] fetchMe ok (cookie me)', { status: this.status, uid: this.user?.uid });
           return;
         }
         this.user = null;
         this.status = 'guest';
-        this.lastAuthError = res.data.msg || '获取用户信息失败';
-        authDebug('[auth] fetchMe guest', { code: res.data.code, msg: res.data.msg });
+        this.lastAuthError = meRes.data.msg || '';
+        authDebug('[auth] fetchMe guest (me)', { code: meRes.data.code, msg: meRes.data.msg });
       } catch (e: any) {
         this.user = null;
         this.status = 'guest';
@@ -99,9 +112,8 @@ export const useAuthStore = defineStore('auth', {
       authDebug('[auth] logout start');
       try {
         const rt = storageData.get('refreshToken');
-        if (rt) {
-          await logoutAPI(rt);
-        }
+        // 无本地 refresh 时仍凭 Cookie 通知服务端吊销会话（阶段 B 行业标准）
+        await logoutAPI(rt || undefined);
       } catch {
         // 退出登录失败不阻止本地清理
       }
