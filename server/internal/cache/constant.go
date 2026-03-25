@@ -8,6 +8,12 @@ const EMAIL_CODE_KEY = "email_code_key:"
 // 邮箱验证码过期时间 n 分钟
 const EMIAL_CODE_EXPIRATION_TIME = time.Minute * time.Duration(5)
 
+// 邮箱验证码发送冷却标识符
+const EMAIL_CODE_COOLDOWN_KEY = "email_code_cooldown_key:"
+
+// 邮箱验证码发送冷却时间 n 秒
+const EMAIL_CODE_COOLDOWN_TIME = time.Second * time.Duration(60)
+
 // 滑块x坐标缓存标识符
 const SLIDER_X_KEY = "slider_x_key:"
 
