@@ -1,26 +1,20 @@
-import { storageData } from "@/utils/storage-data";
 import { useAuthStore } from "@/stores/auth-store";
 
 export default defineNuxtRouteMiddleware(async (to) => {
+  const auth = useAuthStore();
+
   if (process.server) {
-    // 阶段 A：SSR 侧无法可靠读取 localStorage 凭证，只能用 cookie 做粗判。
-    // 阶段 B：改为通过 HttpOnly Cookie + /auth/me 严格校验，并注入 AuthStore。
-    const userId = useCookie('user_id');
-    if (!userId.value) {
-      return navigateTo(`/login?redirect=${to.path}`);
+    // 阶段 B：严格依赖服务端插件 auth-init.server 中 HttpOnly Cookie + /auth/me 的校验结果
+    if (auth.status !== "auth") {
+      return navigateTo(`/login?redirect=${encodeURIComponent(to.fullPath)}`);
     }
     return;
   }
 
-  const auth = useAuthStore();
   const nuxtApp = useNuxtApp();
 
-  // 没有任何凭证线索时，直接当游客处理，避免无意义的接口探测。
-  if (!storageData.get('refreshToken') && auth.status === 'unknown') {
-    auth.markGuest();
-  }
-
-  if (auth.status === 'unknown') {
+  // 客户端进入受保护页：先拉齐会话（含 HttpOnly Cookie），避免仅凭默认 guest 误判
+  if (auth.status !== "auth") {
     await auth.fetchMe();
   }
 

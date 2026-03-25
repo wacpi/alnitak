@@ -107,6 +107,8 @@ FetchMe --> NavigateBack[NavigateTo(redirect)]
 - 避免把敏感 token 放在 `localStorage`（降低 XSS 风险）
 - SSR/CSR 登录态一致，避免首屏闪烁与误判
 
+**Flutter 客户端（如独立工程 `alnitak_flutter`）**：不参与浏览器 Cookie/SSR 流程，继续使用 **JSON 中的 `token` / `refreshToken` + `Authorization`**，与后端双栈兼容；`updateToken` 响应若含轮换后的 `refreshToken` 须在客户端持久化，`logout` 可仅靠 body 中的 refresh。详细说明见该工程根目录下的 `AUTH_IMPLEMENTATION.md`。
+
 ---
 
 ### 测试清单（建议）

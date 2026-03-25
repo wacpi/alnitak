@@ -1,0 +1,23 @@
+import { useAuthStore } from '@/stores/auth-store';
+import { statusCode } from '@/utils/status-code';
+
+export default defineNuxtPlugin(async () => {
+  if (process.client) return;
+
+  const auth = useAuthStore();
+  const headers = useRequestHeaders(['cookie']);
+  const url = `${useRequestURL().origin}/api/v1/auth/me`;
+
+  try {
+    const res: any = await $fetch(url, { headers });
+    if (res?.code === statusCode.OK && res?.data?.userInfo) {
+      auth.initFromSSR({ status: 'auth', user: res.data.userInfo });
+      return;
+    }
+  } catch {
+    // SSR 初始化失败不阻塞页面渲染，回退为游客态
+  }
+
+  auth.initFromSSR({ status: 'guest', user: null });
+});
+

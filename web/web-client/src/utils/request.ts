@@ -59,18 +59,15 @@ const refreshToken = async (): Promise<string> => {
   refreshPromise = (async () => {
     try {
       const localRefreshToken = storage.get('refreshToken');
-      if (!localRefreshToken) {
-        throw new Error('No refresh token available');
-      }
-
-      const tokenRes = await updateTokenAPI(localRefreshToken);
+      // 阶段 B：本地无 refresh 时仍可能具备 HttpOnly Cookie，交由服务端读取
+      const tokenRes = await updateTokenAPI(localRefreshToken || undefined);
       if (tokenRes.data.code === statusCode.OK) {
         const token = tokenRes.data.data.token;
         const refreshToken = tokenRes.data.data.refreshToken;
 
         storage.set("token", token, 60);
-        Cookies.set('user_id', tokenRes.data.data.userId);
-        if (refreshToken && refreshToken !== localRefreshToken) {
+        Cookies.set('user_id', String(tokenRes.data.data.userId));
+        if (refreshToken) {
           storage.set("refreshToken", refreshToken, 7 * 24 * 60);
         }
 
@@ -137,30 +134,24 @@ service.interceptors.response.use(async (res) => {
   if (process.client) {
     switch (res.data.code) {
       case statusCode.TOKEN_EXPRIED:
-        // token 过期，需要刷新
-        if (storage.get('refreshToken')) {
-          if (!isRefreshing) {
-            isRefreshing = true;
-            try {
-              const token = await refreshToken();
-              res.config.headers.Authorization = token;
-              return service.request(res.config); // 重新发起请求
-            } catch (error) {
-              console.error('Token refresh in response interceptor failed:', error);
-              // 刷新失败, 返回原响应
-              return res;
-            }
-          } else {
-            // 正在刷新中，等待刷新完成后重试
-            return new Promise((resolve) => {
-              requests.push((token: string) => {
-                res.config.headers.Authorization = token;
-                resolve(service(res.config)); // 重新发起请求
-              });
-            });
+        // token 过期：优先刷新；无本地 refresh 时仍可能通过 HttpOnly Cookie 由服务端续签
+        if (!isRefreshing) {
+          isRefreshing = true;
+          try {
+            const token = await refreshToken();
+            res.config.headers.Authorization = token;
+            return service.request(res.config); // 重新发起请求
+          } catch (error) {
+            console.error('Token refresh in response interceptor failed:', error);
+            return res;
           }
         }
-        break;
+        return new Promise((resolve) => {
+          requests.push((token: string) => {
+            res.config.headers.Authorization = token;
+            resolve(service(res.config));
+          });
+        });
       case statusCode.LOGIN_AGAIN:
         // 清理缓存信息并切换为游客态。
         // 注意：这里不要自动弹出登录弹窗，否则“跨标签页退出登录”或页面后台轮询时

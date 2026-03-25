@@ -15,14 +15,19 @@ export const emailLoginAPI = (login: UserLoginType) => {
   return request.post('v1/auth/login/email', login);
 }
 
-// 刷新token
-export function updateTokenAPI(refreshToken: string) {
-  return request.post('v1/auth/updateToken', { refreshToken });
+// 刷新 token：可传本地 refresh；不传时由后端从 HttpOnly Cookie 读取（阶段 B）
+export function updateTokenAPI(refreshToken?: string) {
+  return request.post('v1/auth/updateToken', refreshToken ? { refreshToken } : {});
 }
 
-// 退出登录
-export function logoutAPI(refreshToken: string) {
-  return request.post('v1/auth/logout', { refreshToken });
+// 当前会话（Cookie / Authorization 双栈，供 fetchMe 与 SSR 对齐）
+export function getAuthMeAPI() {
+  return request.get('v1/auth/me');
+}
+
+// 退出登录：可传本地 refresh；不传则仅靠 Cookie 即可完成吊销与清 Cookie
+export function logoutAPI(refreshToken?: string) {
+  return request.post('v1/auth/logout', refreshToken ? { refreshToken } : {});
 }
 
 // 重置密码验证

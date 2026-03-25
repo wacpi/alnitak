@@ -63,6 +63,10 @@ export default defineNuxtConfig({
       mode: 'client',
     },
     {
+      src: '@/plugins/auth-init.server',
+      mode: 'server',
+    },
+    {
       src: '@/plugins/error-handler.server',
       mode: 'server',
     },
