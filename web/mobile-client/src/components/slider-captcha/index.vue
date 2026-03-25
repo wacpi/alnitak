@@ -2,7 +2,7 @@
   <div id="mask" class="leaf-captcha" :class="props.show ? 'captcha-show' : ''" @click="maskClick">
     <div class="captcha-container">
       <div class="captcha-img">
-        <refresh class="refresh" @click="reset()"></refresh>
+        <refresh class="refresh" @click="reset(); getCaptcha()"></refresh>
         <img class="bg-img" :src="state.bg" alt="背景图">
         <img class="sub-img" :style="`top: ${state.top}px;left: ${state.left}px`" :src="state.subImg" alt="拼图">
         <div class="msg" :style="`background-color: ${state.msgBgColor}`">{{ state.msgText }}</div>
@@ -151,15 +151,15 @@ const moveEnd = () => {
       setMsg("fail")
       setTimeout(() => {
         reset();
+        getCaptcha();
       }, 800)
     }
   });
 }
 
-//重置
+//重置滑块状态
 const reset = () => {
   setMsg("")
-  getCaptcha();
   state.canMove = true;
   state.left = initialOffset;
   state.activeWidth = initialSliderSize;
