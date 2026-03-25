@@ -47,6 +47,7 @@ import { ElMessage } from 'element-plus';
 import { Close as CloseIcon, Plus as PlusIcon } from '@icon-park/vue-next';
 import { getCollectVideoInfoAPI, collectVideoAPI } from "@/api/collect";
 import { addCollectionAPI, getCollectionListAPI } from '@/api/collection';
+import { requireLogin } from '@/utils/require-login';
 
 
 const emits = defineEmits(['close']);
@@ -106,6 +107,7 @@ const changeAdd = () => {
 
 // 新建收藏夹
 const addCollection = async () => {
+  if (!(await requireLogin('新建收藏夹'))) return;
   if (!collectionName.value) {
     ElMessage.error('收藏夹名不能为空');
     return;
@@ -131,6 +133,7 @@ const addCollection = async () => {
 
 //保存收藏
 const submitCollect = async () => {
+  if (!(await requireLogin('收藏'))) return;
   const checkedValue = collectionList.value.filter(v => v.checked).map(v => v.id);
   //原数组不存在新数组存在表示添加
   const addList = checkedValue.filter((v) => {

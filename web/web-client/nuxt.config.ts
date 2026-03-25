@@ -55,6 +55,10 @@ export default defineNuxtConfig({
       mode: 'client',
     },
     {
+      src: '@/plugins/auth-sync.client',
+      mode: 'client',
+    },
+    {
       src: '@/plugins/theme-init.client',
       mode: 'client',
     },
