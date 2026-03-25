@@ -153,10 +153,17 @@ func UpdateToken(ctx *gin.Context, tokenReq dto.TokenReq) (accessToken, refreshT
 	return accessToken, refreshToken, claims.UserId, nil
 }
 
-func Logout(ctx *gin.Context, tokenReq dto.TokenReq) {
-	userId := ctx.GetUint("userId")
-	// 删除token
-	cache.DelRefreshToken(userId, tokenReq.RefreshToken)
+// Logout 吊销 refresh：阶段 B 下登出接口不再依赖 Auth 中间件注入 userId，
+// 须从 refresh JWT 解析出用户 id，与行业标准「仅凭 Cookie 即可退出」一致。
+func Logout(_ *gin.Context, tokenReq dto.TokenReq) {
+	if tokenReq.RefreshToken == "" {
+		return
+	}
+	_, claims, err := jwt.ParseToken(tokenReq.RefreshToken)
+	if err != nil {
+		return
+	}
+	cache.DelRefreshToken(claims.UserId, tokenReq.RefreshToken)
 }
 
 // 编辑用户信息
