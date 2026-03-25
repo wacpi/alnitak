@@ -141,8 +141,7 @@ func (m *MinIO) IsExists(objectKey string) (bool, error) {
 
 // 获取访问URL
 func (m *MinIO) GetObjectUrl(objectKey string) string {
-	// 为对象生成一个预签名的 URL，具有更长的有效期（例如 5 小时）
-	presignedURL, err := m.client.PresignedGetObject(context.Background(), m.config.Bucket, objectKey, time.Hour*5, nil)
+	presignedURL, err := m.client.PresignedGetObject(context.Background(), m.config.Bucket, objectKey, 24*time.Hour, nil)
 	if err != nil {
 		// 记录错误并显示更多详细信息
 		utils.ErrorLog("MinIO生成文件URL失败", "transcoding", fmt.Sprintf("Error: %v, ObjectKey: %s", err, objectKey))

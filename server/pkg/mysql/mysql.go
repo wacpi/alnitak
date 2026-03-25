@@ -2,10 +2,12 @@ package mysql
 
 import (
 	"fmt"
+	"time"
 
 	"go.uber.org/zap"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 	"interastral-peace.com/alnitak/internal/config"
 	"interastral-peace.com/alnitak/utils"
 	"moul.io/zapgorm2"
@@ -20,6 +22,8 @@ func Init(c config.Mysql) *gorm.DB {
 	zapLogger := zapgorm2.New(zap.L())
 	zapLogger.SetAsDefault()
 	zapLogger.IgnoreRecordNotFoundError = true // 关键配置：忽略ErrRecordNotFound错误
+	zapLogger.LogLevel = logger.Warn
+	zapLogger.SlowThreshold = 2 * time.Second
 
 	if mysqlClient, err := gorm.Open(mysql.Open(dns), &gorm.Config{Logger: zapLogger}); err != nil {
 		utils.ErrorLog("mysql连接失败", "db", err.Error())

@@ -49,7 +49,7 @@ func UploadVideoInfo(ctx *gin.Context, uploadVideoReq dto.UploadVideoReq) error 
 	}
 
 	err = global.Mysql.Model(&model.Video{}).Where("id = ? and uid = ?", uploadVideoReq.Vid, userId).Updates(
-		map[string]interface{}{
+		map[string]any{
 			"title":        uploadVideoReq.Title,
 			"cover":        uploadVideoReq.Cover,
 			"desc":         uploadVideoReq.Desc,
@@ -156,20 +156,20 @@ func buildMPDSegmentBase(file *model.VideoIndexFile, key string) string {
 	var sb strings.Builder
 	sb.WriteString(`<?xml version="1.0" encoding="UTF-8"?>`)
 	sb.WriteString("\n")
-	sb.WriteString(fmt.Sprintf(`<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="%s" minBufferTime="PT1.5S" profiles="urn:mpeg:dash:profile:isoff-on-demand:2011">`, durationStr))
+	fmt.Fprintf(&sb, `<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="%s" minBufferTime="PT1.5S" profiles="urn:mpeg:dash:profile:isoff-on-demand:2011">`, durationStr)
 	sb.WriteString("\n  <Period>\n")
 
 	// ========== 视频 AdaptationSet ==========
 	sb.WriteString(`    <AdaptationSet mimeType="video/mp4" segmentAlignment="true" startWithSAP="1">`)
 	sb.WriteString("\n")
-	sb.WriteString(fmt.Sprintf(`      <Representation id="%s" bandwidth="%d" width="%d" height="%d" frameRate="%.3f" codecs="%s">`,
-		file.Quality, file.VideoBandwidth, file.Width, file.Height, file.FrameRate, file.VideoCodec))
+	fmt.Fprintf(&sb, `      <Representation id="%s" bandwidth="%d" width="%d" height="%d" frameRate="%.3f" codecs="%s">`,
+		file.Quality, file.VideoBandwidth, file.Width, file.Height, file.FrameRate, file.VideoCodec)
 	sb.WriteString("\n")
-	sb.WriteString(fmt.Sprintf(`        <BaseURL>%s</BaseURL>`, safeVideoURL))
+	fmt.Fprintf(&sb, `        <BaseURL>%s</BaseURL>`, safeVideoURL)
 	sb.WriteString("\n")
-	sb.WriteString(fmt.Sprintf(`        <SegmentBase indexRange="%s">`, file.VideoIndexRange))
+	fmt.Fprintf(&sb, `        <SegmentBase indexRange="%s">`, file.VideoIndexRange)
 	sb.WriteString("\n")
-	sb.WriteString(fmt.Sprintf(`          <Initialization range="%s"/>`, file.VideoInitRange))
+	fmt.Fprintf(&sb, `          <Initialization range="%s"/>`, file.VideoInitRange)
 	sb.WriteString("\n")
 	sb.WriteString("        </SegmentBase>\n")
 	sb.WriteString("      </Representation>\n")
@@ -178,15 +178,15 @@ func buildMPDSegmentBase(file *model.VideoIndexFile, key string) string {
 	// ========== 音频 AdaptationSet ==========
 	sb.WriteString(`    <AdaptationSet mimeType="audio/mp4" segmentAlignment="true" startWithSAP="1">`)
 	sb.WriteString("\n")
-	sb.WriteString(fmt.Sprintf(`      <Representation id="audio" bandwidth="%d" codecs="%s">`,
-		file.AudioBandwidth, file.AudioCodec))
+	fmt.Fprintf(&sb, `      <Representation id="audio" bandwidth="%d" codecs="%s">`,
+		file.AudioBandwidth, file.AudioCodec)
 	sb.WriteString("\n")
-	sb.WriteString(fmt.Sprintf(`        <BaseURL>%s</BaseURL>`, safeAudioURL))
+	fmt.Fprintf(&sb, `        <BaseURL>%s</BaseURL>`, safeAudioURL)
 	sb.WriteString("\n")
 	if file.AudioIndexRange != "" {
-		sb.WriteString(fmt.Sprintf(`        <SegmentBase indexRange="%s">`, file.AudioIndexRange))
+		fmt.Fprintf(&sb, `        <SegmentBase indexRange="%s">`, file.AudioIndexRange)
 		sb.WriteString("\n")
-		sb.WriteString(fmt.Sprintf(`          <Initialization range="%s"/>`, file.AudioInitRange))
+		fmt.Fprintf(&sb, `          <Initialization range="%s"/>`, file.AudioInitRange)
 		sb.WriteString("\n")
 		sb.WriteString("        </SegmentBase>\n")
 	}
@@ -211,7 +211,7 @@ func buildMPDSegmentBaseUnified(files []model.VideoIndexFile, key string) string
 	var sb strings.Builder
 	sb.WriteString(`<?xml version="1.0" encoding="UTF-8"?>`)
 	sb.WriteString("\n")
-	sb.WriteString(fmt.Sprintf(`<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="%s" minBufferTime="PT1.5S" profiles="urn:mpeg:dash:profile:isoff-on-demand:2011">`, durationStr))
+	fmt.Fprintf(&sb, `<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="%s" minBufferTime="PT1.5S" profiles="urn:mpeg:dash:profile:isoff-on-demand:2011">`, durationStr)
 	sb.WriteString("\n  <Period>\n")
 
 	// ========== 视频 AdaptationSet（包含所有清晰度 Representation） ==========
@@ -219,17 +219,16 @@ func buildMPDSegmentBaseUnified(files []model.VideoIndexFile, key string) string
 	sb.WriteString("\n")
 	for _, file := range files {
 		videoURL := getMediaFileURL(file.DirName, file.VideoFile, key)
-		// 【关键修复：转义 URL】
 		safeVideoURL := xmlEscape(videoURL)
 
-		sb.WriteString(fmt.Sprintf(`      <Representation id="%s" bandwidth="%d" width="%d" height="%d" frameRate="%.3f" codecs="%s">`,
-			file.Quality, file.VideoBandwidth, file.Width, file.Height, file.FrameRate, file.VideoCodec))
+		fmt.Fprintf(&sb, `      <Representation id="%s" bandwidth="%d" width="%d" height="%d" frameRate="%.3f" codecs="%s">`,
+			file.Quality, file.VideoBandwidth, file.Width, file.Height, file.FrameRate, file.VideoCodec)
 		sb.WriteString("\n")
-		sb.WriteString(fmt.Sprintf(`        <BaseURL>%s</BaseURL>`, safeVideoURL))
+		fmt.Fprintf(&sb, `        <BaseURL>%s</BaseURL>`, safeVideoURL)
 		sb.WriteString("\n")
-		sb.WriteString(fmt.Sprintf(`        <SegmentBase indexRange="%s">`, file.VideoIndexRange))
+		fmt.Fprintf(&sb, `        <SegmentBase indexRange="%s">`, file.VideoIndexRange)
 		sb.WriteString("\n")
-		sb.WriteString(fmt.Sprintf(`          <Initialization range="%s"/>`, file.VideoInitRange))
+		fmt.Fprintf(&sb, `          <Initialization range="%s"/>`, file.VideoInitRange)
 		sb.WriteString("\n")
 		sb.WriteString("        </SegmentBase>\n")
 		sb.WriteString("      </Representation>\n")
@@ -239,20 +238,19 @@ func buildMPDSegmentBaseUnified(files []model.VideoIndexFile, key string) string
 	// ========== 音频 AdaptationSet（音频共享，取第一条记录） ==========
 	audio := files[0]
 	audioURL := getMediaFileURL(audio.DirName, audio.AudioFile, key)
-	// 【关键修复：转义 URL】
 	safeAudioURL := xmlEscape(audioURL)
 
 	sb.WriteString(`    <AdaptationSet mimeType="audio/mp4" segmentAlignment="true" startWithSAP="1">`)
 	sb.WriteString("\n")
-	sb.WriteString(fmt.Sprintf(`      <Representation id="audio" bandwidth="%d" codecs="%s">`,
-		audio.AudioBandwidth, audio.AudioCodec))
+	fmt.Fprintf(&sb, `      <Representation id="audio" bandwidth="%d" codecs="%s">`,
+		audio.AudioBandwidth, audio.AudioCodec)
 	sb.WriteString("\n")
-	sb.WriteString(fmt.Sprintf(`        <BaseURL>%s</BaseURL>`, safeAudioURL))
+	fmt.Fprintf(&sb, `        <BaseURL>%s</BaseURL>`, safeAudioURL)
 	sb.WriteString("\n")
 	if audio.AudioIndexRange != "" {
-		sb.WriteString(fmt.Sprintf(`        <SegmentBase indexRange="%s">`, audio.AudioIndexRange))
+		fmt.Fprintf(&sb, `        <SegmentBase indexRange="%s">`, audio.AudioIndexRange)
 		sb.WriteString("\n")
-		sb.WriteString(fmt.Sprintf(`          <Initialization range="%s"/>`, audio.AudioInitRange))
+		fmt.Fprintf(&sb, `          <Initialization range="%s"/>`, audio.AudioInitRange)
 		sb.WriteString("\n")
 		sb.WriteString("        </SegmentBase>\n")
 	}
@@ -436,7 +434,7 @@ func decodeSidxBox(reader io.ReaderAt, boxOffset, boxSize int64) ([]sidxEntry, e
 
 	entries := make([]sidxEntry, 0, refCount)
 
-	for i := 0; i < refCount; i++ {
+	for range refCount {
 		if pos+12 > len(data) {
 			break
 		}
@@ -486,9 +484,9 @@ func buildM3U8MasterSegmentBase(file *model.VideoIndexFile, resourceId uint, key
 	if baseURL != "" {
 		audioURI = baseURL + audioURI
 	}
-	sb.WriteString(fmt.Sprintf(
+	fmt.Fprintf(&sb,
 		"#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",NAME=\"Audio\",DEFAULT=YES,AUTOSELECT=YES,URI=\"%s\"\n",
-		audioURI))
+		audioURI)
 	sb.WriteString("\n")
 
 	// 视频流：引用视频子清单
@@ -496,9 +494,9 @@ func buildM3U8MasterSegmentBase(file *model.VideoIndexFile, resourceId uint, key
 	if baseURL != "" {
 		videoURI = baseURL + videoURI
 	}
-	sb.WriteString(fmt.Sprintf("#EXT-X-STREAM-INF:BANDWIDTH=%d,RESOLUTION=%dx%d,FRAME-RATE=%.3f,CODECS=\"%s,%s\",AUDIO=\"audio\"\n",
+	fmt.Fprintf(&sb, "#EXT-X-STREAM-INF:BANDWIDTH=%d,RESOLUTION=%dx%d,FRAME-RATE=%.3f,CODECS=\"%s,%s\",AUDIO=\"audio\"\n",
 		file.VideoBandwidth+file.AudioBandwidth, file.Width, file.Height, file.FrameRate,
-		file.VideoCodec, file.AudioCodec))
+		file.VideoCodec, file.AudioCodec)
 	sb.WriteString(videoURI + "\n")
 
 	return sb.String()
@@ -540,7 +538,7 @@ func buildByteRangeM3U8(entries []sidxEntry, streamURL, initRange string) string
 			maxDuration = e.Duration
 		}
 	}
-	sb.WriteString(fmt.Sprintf("#EXT-X-TARGETDURATION:%d\n", int(maxDuration)+1))
+	fmt.Fprintf(&sb, "#EXT-X-TARGETDURATION:%d\n", int(maxDuration)+1)
 	sb.WriteString("#EXT-X-MEDIA-SEQUENCE:0\n")
 	sb.WriteString("#EXT-X-PLAYLIST-TYPE:VOD\n")
 
@@ -551,13 +549,13 @@ func buildByteRangeM3U8(entries []sidxEntry, streamURL, initRange string) string
 		start := parseRangeInt(initParts[0])
 		end := parseRangeInt(initParts[1])
 		length := end - start + 1
-		sb.WriteString(fmt.Sprintf("#EXT-X-MAP:URI=\"%s\",BYTERANGE=\"%d@%d\"\n", streamURL, length, start))
+		fmt.Fprintf(&sb, "#EXT-X-MAP:URI=\"%s\",BYTERANGE=\"%d@%d\"\n", streamURL, length, start)
 	}
 
 	// 每个 fragment 作为一个 segment
 	for _, entry := range entries {
-		sb.WriteString(fmt.Sprintf("#EXTINF:%.6f,\n", entry.Duration))
-		sb.WriteString(fmt.Sprintf("#EXT-X-BYTERANGE:%d@%d\n", entry.Size, entry.Offset))
+		fmt.Fprintf(&sb, "#EXTINF:%.6f,\n", entry.Duration)
+		fmt.Fprintf(&sb, "#EXT-X-BYTERANGE:%d@%d\n", entry.Size, entry.Offset)
 		sb.WriteString(streamURL + "\n")
 	}
 
@@ -594,7 +592,7 @@ func buildM3U8SegmentList(file *model.VideoIndexFile, key string) string {
 		sb.WriteString("#EXT-X-VERSION:3\n")
 	}
 
-	sb.WriteString(fmt.Sprintf("#EXT-X-TARGETDURATION:%d\n", int(file.SegmentDuration)+1))
+	fmt.Fprintf(&sb, "#EXT-X-TARGETDURATION:%d\n", int(file.SegmentDuration)+1)
 	sb.WriteString("#EXT-X-MEDIA-SEQUENCE:0\n")
 	sb.WriteString("#EXT-X-PLAYLIST-TYPE:VOD\n")
 
@@ -606,10 +604,10 @@ func buildM3U8SegmentList(file *model.VideoIndexFile, key string) string {
 		if baseURL != "" {
 			initURI = baseURL + initURI
 		}
-		sb.WriteString(fmt.Sprintf("#EXT-X-MAP:URI=\"%s\"\n", initURI))
+		fmt.Fprintf(&sb, "#EXT-X-MAP:URI=\"%s\"\n", initURI)
 	}
 
-	for i := 0; i < file.SegmentCount; i++ {
+	for i := range file.SegmentCount {
 		duration := file.SegmentDuration
 		if i == file.SegmentCount-1 {
 			duration = file.LastSegmentDuration
@@ -621,7 +619,7 @@ func buildM3U8SegmentList(file *model.VideoIndexFile, key string) string {
 		}
 		fileName := fmt.Sprintf("%s_%05d%s", file.Quality, i, ext)
 
-		sb.WriteString(fmt.Sprintf("#EXTINF:%.3f,\n", duration))
+		fmt.Fprintf(&sb, "#EXTINF:%.3f,\n", duration)
 
 		segmentURI := fmt.Sprintf("/api/v1/video/slice/%s?key=%s", fileName, key)
 		if baseURL != "" {
@@ -649,26 +647,26 @@ func buildMPDSegmentList(file *model.VideoIndexFile, key string) string {
 	var sb strings.Builder
 	sb.WriteString(`<?xml version="1.0" encoding="UTF-8"?>`)
 	sb.WriteString("\n")
-	sb.WriteString(fmt.Sprintf(`<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="%s" minBufferTime="PT2S" profiles="urn:mpeg:dash:profile:isoff-on-demand:2011">`, durationStr))
+	fmt.Fprintf(&sb, `<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="%s" minBufferTime="PT2S" profiles="urn:mpeg:dash:profile:isoff-on-demand:2011">`, durationStr)
 	sb.WriteString("\n  <Period>\n")
 	sb.WriteString(`    <AdaptationSet mimeType="video/mp4" segmentAlignment="true" startWithSAP="1">`)
 	sb.WriteString("\n")
-	sb.WriteString(fmt.Sprintf(`      <Representation id="%s" bandwidth="%d" width="%d" height="%d" frameRate="%.0f" codecs="%s">`,
-		file.Quality, file.Bandwidth, file.Width, file.Height, file.FrameRate, codec))
+	fmt.Fprintf(&sb, `      <Representation id="%s" bandwidth="%d" width="%d" height="%d" frameRate="%.0f" codecs="%s">`,
+		file.Quality, file.Bandwidth, file.Width, file.Height, file.FrameRate, codec)
 	sb.WriteString("\n")
 
-	sb.WriteString(fmt.Sprintf(`        <SegmentList timescale="1000" duration="%d">`, int(file.SegmentDuration*1000)))
+	fmt.Fprintf(&sb, `        <SegmentList timescale="1000" duration="%d">`, int(file.SegmentDuration*1000))
 	sb.WriteString("\n")
 	if file.InitFile != "" {
 		initURL := fmt.Sprintf("/api/v1/video/slice/%s?key=%s", file.InitFile, key)
 		if baseURL != "" {
 			initURL = baseURL + initURL
 		}
-		sb.WriteString(fmt.Sprintf(`          <Initialization sourceURL="%s"/>`, initURL))
+		fmt.Fprintf(&sb, `          <Initialization sourceURL="%s"/>`, initURL)
 		sb.WriteString("\n")
 	}
 
-	for i := 0; i < file.SegmentCount; i++ {
+	for i := range file.SegmentCount {
 		ext := ".m4s"
 		if file.InitFile == "" {
 			ext = ".ts"
@@ -678,8 +676,7 @@ func buildMPDSegmentList(file *model.VideoIndexFile, key string) string {
 		if baseURL != "" {
 			segmentURL = baseURL + segmentURL
 		}
-		sb.WriteString(fmt.Sprintf(`          <SegmentURL media="%s"/>`, segmentURL))
-		sb.WriteString("\n")
+		fmt.Fprintf(&sb, "          <SegmentURL media=\"%s\"/>\n", segmentURL)
 	}
 
 	sb.WriteString("        </SegmentList>\n")
