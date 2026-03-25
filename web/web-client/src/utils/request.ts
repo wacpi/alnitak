@@ -5,6 +5,7 @@ import { updateTokenAPI } from "@/api/auth";
 import { statusCode } from "./status-code";
 import { globalConfig as config, } from "./global-config";
 import { storageData as storage } from "./storage-data";
+import { useAuthStore } from "@/stores/auth-store";
 
 // 重试配置
 const MAX_RETRIES = 3;
@@ -161,11 +162,19 @@ service.interceptors.response.use(async (res) => {
         }
         break;
       case statusCode.LOGIN_AGAIN:
-        // 清理缓存信息并跳转到登录页
+        // 清理缓存信息并切换为游客态。
+        // 注意：这里不要自动弹出登录弹窗，否则“跨标签页退出登录”或页面后台轮询时
+        // 会在用户无操作的情况下频繁弹窗，影响体验。
         storage.remove("token");
         storage.remove('refreshToken');
         Cookies.remove('user_id');
-        navigateTo({ name: 'login' });
+        try {
+          const auth = useAuthStore();
+          auth.markGuest();
+          auth.closeLoginModal();
+        } catch {
+          // 兜底：不阻塞响应流
+        }
         break;
     }
   }

@@ -8,7 +8,7 @@
       <p>{{ stat.like }}</p>
     </div>
     <div class="archive-item">
-      <el-icon :class="archive.hasCollect ? 'active' : 'icon'" @click="showCollect = true">
+      <el-icon :class="archive.hasCollect ? 'active' : 'icon'" @click="collectClick">
         <collect-icon></collect-icon>
       </el-icon>
       <p>{{ stat.collect }}</p>
@@ -43,10 +43,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onBeforeMount, computed, reactive } from 'vue';
-import { ElIcon, ElMessage } from 'element-plus';
+import { ref, onBeforeMount, computed, reactive, watch } from 'vue';
+import { ElIcon } from 'element-plus';
 import { useRoute } from 'vue-router';
 import { statusCode } from '@/utils/status-code';
+import { requireLogin } from '@/utils/require-login';
+import { useAuthStore } from '@/stores/auth-store';
 import LikeIcon from "@/components/icons/LikeIcon.vue";
 import CollectIcon from "@/components/icons/CollectIcon.vue";
 import ShareIcon from '@/components/icons/ShareIcon.vue';
@@ -72,6 +74,19 @@ const archive = reactive({ // 是否点赞收藏
   hasCollect: false,
   hasLike: false
 })
+
+const auth = useAuthStore();
+
+const refreshViewerStatus = async () => {
+  if (!auth.isLoggedIn) {
+    archive.hasLike = false;
+    archive.hasCollect = false;
+    showCollect.value = false;
+    return;
+  }
+  await getLikeStatus();
+  await getCollectStatus();
+};
 
 // 分享相关
 const shareTab = ref('link');
@@ -152,6 +167,7 @@ const getCollectStatus = async () => {
 const likeAnimation = ref('');
 const likeClick = async () => { // 点赞点赞按钮
   if (loading.value) return;
+  if (!(await requireLogin('点赞'))) return;
   if (!archive.hasLike) {
     //调用点赞接口
     await likeVideoAPI(props.vid);
@@ -167,6 +183,11 @@ const likeClick = async () => { // 点赞点赞按钮
 
 
 const showCollect = ref(false);
+const collectClick = async () => {
+  if (loading.value) return;
+  if (!(await requireLogin('收藏'))) return;
+  showCollect.value = true;
+};
 // 关闭收藏弹窗
 const closeCollectionCard = (val: number) => {
   if (val === 1) {
@@ -182,11 +203,18 @@ const closeCollectionCard = (val: number) => {
 
 onBeforeMount(async () => {
   await getArchiveStat();
-  await getLikeStatus();
-  await getCollectStatus();
+  await refreshViewerStatus();
 
   loading.value = false;
 })
+
+watch(
+  () => auth.isLoggedIn,
+  async () => {
+    if (loading.value) return;
+    await refreshViewerStatus();
+  }
+);
 </script>
 
 <style lang="scss" scoped>

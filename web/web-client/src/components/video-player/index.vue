@@ -4,7 +4,7 @@
     <div class="player" id="dplayer"></div>
     <div class="danmaku-send">
       <danmaku-send ref="danmakuSendRef" @send="sendDanmaku" @change-show="changeShow" @opacity-change="opacityChange"
-        @set-filter="filterDanmaku"></danmaku-send>
+        @set-filter="filterDanmaku" :is-logged-in="isLoggedIn"></danmaku-send>
     </div>
   </div>
 </template>
@@ -14,11 +14,12 @@
 import Hls from "hls.js";
 import * as dashjs from "dashjs";
 import Wplayer from 'wplayer-next';
-import { ref, shallowRef, onBeforeMount, watch, onMounted, onBeforeUnmount } from 'vue';
+import { ref, shallowRef, onBeforeMount, watch, onMounted, onBeforeUnmount, computed } from 'vue';
 import { getDanmakuAPI, sendDanmakuAPI } from "@/api/danmaku";
 import DanmakuSend from "./components/DanmakuSend.vue";
 import { getResourceQualityApi, getVideoFileUrl, getVideoFileUrlDash, getVideoFileUrlDashUnified } from "@/api/video";
 import { addHistoryAPI } from "@/api/history";
+import { useAuthStore } from "@/stores/auth-store";
 import {
   createHlsPlayer,
   destroyHlsPlayer,
@@ -51,122 +52,12 @@ const hasEnded = ref(false);
 // ===== DASH 统一 MPD 模式状态 =====
 let dashUnifiedMode = false;
 let dashQualityMap: Map<string, number> = new Map(); // 清晰度显示名 → dash.js Representation 索引
-let currentResourceId: number | null = null; // 当前资源 ID，用于刷新播放地址
-let qualityNameToRaw: Map<string, string> = new Map(); // 清晰度显示名 → 原始 quality 字符串（如 '1920x1080_8000k_30'）
-
-// ===== 播放地址刷新控制（签名过期自动续播） =====
-let lastRefreshAt = 0;
-let refreshFailCount = 0;
-
-const getActiveVideoElement = (): HTMLVideoElement | null => {
-  // 优先使用 HLS 状态里的 videoElement，其次用 wplayer 的 video
-  return (hlsPlayerState.videoElement as HTMLVideoElement | null) || (player?.video as HTMLVideoElement | null) || null;
-};
-
-const refreshPlaySource = async () => {
-  if (!currentResourceId) {
-    console.warn('[video-player] refreshPlaySource: currentResourceId is null');
-    return;
-  }
-  const video = getActiveVideoElement();
-  if (!video) {
-    console.warn('[video-player] refreshPlaySource: video element not found');
-    return;
-  }
-
-  const currentTime = video.currentTime || 0;
-  const isPlaying = !video.paused && !video.ended && currentTime > 0;
-
-  let newUrl: string | null = null;
-  const refreshTs = Date.now();
-
-  // 根据当前模式重新获取播放地址
-  if (dashUnifiedMode) {
-    // 统一 DASH MPD：只依赖 resourceId
-    newUrl = getVideoFileUrlDashUnified(currentResourceId, refreshTs);
-  } else if (options.video.type === 'customHls') {
-    // HLS：根据当前清晰度显示名找到原始 quality 字符串
-    const raw = qualityNameToRaw.get(defaultQuality.value) || Array.from(qualityNameToRaw.values())[0];
-    if (!raw) {
-      console.warn('[video-player] refreshPlaySource: raw quality not found for', defaultQuality.value);
-      return;
-    }
-    newUrl = getVideoFileUrl(currentResourceId, raw, refreshTs);
-  } else {
-    // 其他模式暂不处理
-    console.warn('[video-player] refreshPlaySource: unsupported mode for refresh', { dashUnifiedMode, type: options.video.type });
-    return;
-  }
-
-  try {
-    console.warn('[video-player] refreshing play source', { newUrl, dashUnifiedMode, type: options.video.type });
-
-    if (options.video.type === 'customHls') {
-      // ===== HLS 续签 =====
-      if (hlsPlayerState.instance && hlsPlayerState.videoElement) {
-        const hls = hlsPlayerState.instance;
-        hls.stopLoad();
-        hls.detachMedia();
-        hls.loadSource(newUrl);
-        hls.attachMedia(video);
-
-        hls.once(Hls.Events.LEVEL_LOADED, () => {
-          if (currentTime > 0) video.currentTime = currentTime;
-          if (isPlaying) {
-            video.play().catch(() => {});
-          }
-        });
-      } else {
-        // Safari 原生 HLS
-        video.src = newUrl;
-        if (currentTime > 0) video.currentTime = currentTime;
-        if (isPlaying) {
-          video.play().catch(() => {});
-        }
-      }
-    } else if (dashUnifiedMode && dash.value) {
-      // ===== 统一 DASH 续签 =====
-      const dashPlayer = dash.value;
-      dashPlayer.attachSource(newUrl);
-      dashPlayer.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, () => {
-        if (currentTime > 0) video.currentTime = currentTime;
-        if (isPlaying) {
-          video.play().catch(() => {});
-        }
-        // 恢复首选清晰度
-        const dashIndex = dashQualityMap.get(defaultQuality.value);
-        if (dashIndex !== undefined) {
-          dashPlayer.setRepresentationForTypeByIndex('video', dashIndex, false);
-        }
-      });
-    }
-  } catch (err) {
-    console.error('[video-player] refreshPlaySource error', err);
-    throw err;
-  }
-};
-
-const safeRefreshPlaySource = async (reason?: string) => {
-  const now = Date.now();
-  // 10 秒内只允许一次自动刷新，避免死循环
-  if (now - lastRefreshAt < 10_000) return;
-  if (refreshFailCount >= 3) {
-    console.warn('[video-player] refreshPlaySource disabled after multiple failures');
-    return;
-  }
-  lastRefreshAt = now;
-  try {
-    console.warn('[video-player] safeRefreshPlaySource triggered', { reason });
-    await refreshPlaySource();
-    refreshFailCount = 0;
-  } catch {
-    refreshFailCount += 1;
-  }
-};
 
 // ===== HLS 清晰度切换时保存播放状态（HLS 模式下 Wplayer 仍会创建新 video 元素） =====
 let lastPlaybackState: { time: number; playing: boolean } = { time: 0, playing: false };
 const danmakuSendRef = ref<InstanceType<typeof DanmakuSend> | null>(null);
+const auth = useAuthStore();
+const isLoggedIn = computed(() => auth.isLoggedIn);
 const options: PlayerOptionsType = {
   container: null,
   video: {
@@ -194,13 +85,6 @@ const options: PlayerOptionsType = {
             {
               maxBufferLength: 30,
               maxMaxBufferLength: 60,
-              onError: (_event, data) => {
-                const code = data?.response?.code ?? data?.response?.status;
-                if (code === 401 || code === 403) {
-                  // OSS 签名或鉴权过期：刷新播放地址并续播
-                  safeRefreshPlaySource('[HLS] 401/403');
-                }
-              },
             }
           );
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
@@ -307,11 +191,6 @@ const options: PlayerOptionsType = {
 
         dash.value.on('error', (e: any) => {
           console.error('[DASH] 播放错误:', e);
-          const status = e?.event?.response?.status;
-          if (status === 401 || status === 403) {
-            // MPD/segment 请求 401/403，认为签名可能过期，尝试刷新播放地址
-            safeRefreshPlaySource('[DASH] 401/403');
-          }
         });
       },
     },
@@ -559,15 +438,12 @@ const loadResource = async (part: number) => {
     return;
   }
 
-  currentResourceId = resource.id;
   const requestTs = Date.now();
 
   const res = await getResourceQualityApi(resource.id)
   if (res.data.code === statusCode.OK && res.data.data.quality?.length > 0) {
     // 复制并根据分辨率宽度 & 帧率从高到低排序
     const qualities = [...res.data.data.quality] as string[]
-    // 记录 原始 quality 字符串 与 显示名 的映射，供后续刷新播放地址使用
-    qualityNameToRaw = new Map();
     qualities.sort((a, b) => {
       const wa = parseInt(a.split('x')[0], 10)
       const wb = parseInt(b.split('x')[0], 10)
@@ -583,11 +459,7 @@ const loadResource = async (part: number) => {
     const qualityOrderFromServer = (res.data.data.qualityOrder as string[]) || []
 
     // 当前视频不包含上次保存的清晰度名时，回退到本视频的最高档，并同步更新 localStorage
-    const qualityNames = qualities.map((q) => {
-      const name = getQualityDisplayName(q);
-      qualityNameToRaw.set(name, q);
-      return name;
-    })
+    const qualityNames = qualities.map((q) => getQualityDisplayName(q))
     if (!qualityNames.includes(defaultQuality.value)) {
       const highestName = qualityNames[0] || '720p'
       defaultQuality.value = highestName

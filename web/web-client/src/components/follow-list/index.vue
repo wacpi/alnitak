@@ -16,8 +16,10 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeMount, ref, reactive } from "vue";
+import { ref, reactive, watch, computed } from "vue";
 import { getFollowingAPI, getFollowersAPI, followAPI, unfollowAPI, getUserRelationAPI } from '@/api/relation';
+import { requireLogin } from "@/utils/require-login";
+import { useAuthStore } from "@/stores/auth-store";
 
 const props = withDefaults(defineProps<{
   userId: number,
@@ -50,6 +52,7 @@ const loading = ref(false);//加载中
 const followList = ref<RelationListType[]>([]);
 
 const getRelationList = async () => {
+  if (!props.userId) return;
   loading.value = true;
   const reqFunc = props.following ? getFollowingAPI : getFollowersAPI;
   const res = await reqFunc(props.userId, pageInfo.current, pageInfo.pageSize);
@@ -69,6 +72,7 @@ const scrollLoad = () => {
 }
 
 const followBtnClick = async (relation: RelationListType) => {
+  if (!(await requireLogin('关注'))) return;
   const reqFunc = relation.relation === relationCode.NOT_FOLLOWING ? followAPI : unfollowAPI;
   const res = await reqFunc(relation.user.uid);
   if (res.data.code === statusCode.OK) {
@@ -81,9 +85,26 @@ const followBtnClick = async (relation: RelationListType) => {
   }
 }
 
-onBeforeMount(() => {
+const auth = useAuthStore();
+const viewerLoggedIn = computed(() => auth.isLoggedIn);
+
+const resetAndReload = () => {
+  pageInfo.current = 1;
+  noMore.value = false;
+  followList.value = [];
   getRelationList();
-})
+};
+
+watch(
+  () => [props.userId, props.following] as const,
+  () => resetAndReload(),
+  { immediate: true }
+);
+
+watch(
+  () => viewerLoggedIn.value,
+  () => resetAndReload()
+);
 </script>
 
 <style lang="scss" scoped>

@@ -11,7 +11,7 @@
   <div class="comment-box">
     <common-avatar v-if="isLoggedIn" class="avatar" :url="userInfo?.avatar" :size="40"></common-avatar>
     <div v-else class="avatar">
-      <div class="login-btn">登录</div>
+      <div class="login-btn" @click="requireLogin('发表评论')">登录</div>
     </div>
     <el-input class="comment-input" v-model="commentContent" resize="none" :rows="3" type="textarea"
       placeholder="善语结善缘，恶言伤人心" id="video-comment-input" name="videoComment" />
@@ -102,15 +102,16 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeMount, onBeforeUnmount, reactive, ref } from "vue";
+import { onBeforeMount, onBeforeUnmount, reactive, ref, computed } from "vue";
 import { handleMention } from '@/utils/mention';
 import { statusCode } from '@/utils/status-code';
 import { ElMessage } from "element-plus";
 import { formatRelativeTime } from "@/utils/format";
-import { asyncGetUserBaseInfoAPI, getUserInfoAPI } from "@/api/user";
 import CommonAvatar from "@/components/common-avatar/index.vue";
 import { addVideoCommentAPI, getVideoCommentAPI, getVideoReplyAPI, deleteVideoCommentAPI } from "@/api/comment";
 import { scrollToViewCenter } from "@/utils/scroll";
+import { requireLogin } from "@/utils/require-login";
+import { useAuthStore } from "@/stores/auth-store";
 
 const props = defineProps<{
   vid: number
@@ -183,28 +184,9 @@ const handleMentionAndTime = (content: string, atUserIds: string, atUsernames: s
   return result;
 };
 
-const getUserInfo = async () => {
-  const res = await getUserInfoAPI();
-  if (res.data.code === statusCode.OK) {
-    userInfo.value = res.data.data.userInfo;
-    isLoggedIn.value = true;
-  }
-}
-
-const isLoggedIn = ref(false);
-const userId = useCookie('user_id');
-const userInfo = ref<UserInfoType>();
-const { data } = await asyncGetUserBaseInfoAPI(userId.value!);
-if ((data.value as any).code === statusCode.OK) {
-  userInfo.value = (data.value as any).data.userInfo;
-  isLoggedIn.value = true;
-}
-
-if (!process.server) {
-  if (!userInfo.value) {
-    getUserInfo();
-  }
-}
+const auth = useAuthStore();
+const isLoggedIn = computed(() => auth.isLoggedIn);
+const userInfo = computed(() => auth.user);
 
 const pagination = reactive({
   page: 1,
@@ -255,7 +237,10 @@ const commentForm = reactive<AddCommentType>({
 })
 
 const submitComment = async () => {
-  if (!isLoggedIn.value) return;
+  if (!isLoggedIn.value) {
+    await requireLogin('发表评论');
+    return;
+  }
 
   commentForm.parentId = 0;
   commentForm.content = commentContent.value;
@@ -298,7 +283,10 @@ const showReplyBox = async (comment: CommentType, reply?: ReplyType) => {
     item.showReplyBox = false;
   })
   // 判断是否登录
-  if (!isLoggedIn.value) return;
+  if (!isLoggedIn.value) {
+    await requireLogin('回复');
+    return;
+  }
   // 初始化数据
   comment.showReplyBox = true;
   commentForm.content = '';
@@ -323,6 +311,11 @@ const showReplyBox = async (comment: CommentType, reply?: ReplyType) => {
 }
 
 const addComment = async () => {
+  // 兜底：理论上 submitComment/showReplyBox 已拦截，但这里防御性再判断一次
+  if (!isLoggedIn.value || !userInfo.value) {
+    await requireLogin('发表评论');
+    return 0;
+  }
   // 处理@
   const regex = /@(\S+)\s/g;
   const matches = commentForm.content.match(regex);

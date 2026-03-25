@@ -1,7 +1,7 @@
 <template>
   <div class="login-form">
     <base-tabs :tabs="tabs" @tab-change="tabChange"></base-tabs>
-    <div class="login-panel">
+    <form class="login-panel" @submit.prevent="handelLogin">
       <div v-if="currentTab === 'account'" class="input-group">
         <div class="input-box">
           <input v-model="loginForm.email" placeholder="请输入邮箱" class="input account-input" maxlength="64">
@@ -28,10 +28,10 @@
         <div class="error-text">{{ errorTips.codeError }}</div>
       </div>
       <div class="button-group">
-        <button class="btn-other" @click="emit('changeForm')">注册</button>
-        <button class="btn-primary" @click="handelLogin">登录</button>
+        <button class="btn-other" type="button" @click="emit('changeForm')">注册</button>
+        <button class="btn-primary" type="submit">登录</button>
       </div>
-    </div>
+    </form>
     <client-only>
       <slider-captcha v-model:show="showCaptcha" :captcha-id="loginForm.captchaId"
         @success="captchaSuccess"></slider-captcha>
