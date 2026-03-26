@@ -1,5 +1,9 @@
 /conf/*.yaml
+/conf/*.key
+/conf/*.pem
+/conf/*.crt
 /logs/*.log
+/data/
 /upload/video/*
 /upload/image/*
 !/upload/video/.gitkeep
