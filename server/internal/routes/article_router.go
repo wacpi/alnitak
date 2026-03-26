@@ -38,4 +38,6 @@ func CollectArticleRoutes(r *gin.RouterGroup) {
 	articleGroup.GET("getArticleByUser", api.GetArticleByUser)
 	// 获取随机文章列表
 	articleGroup.GET("getRandomArticleList", api.GetRandomArticleList)
+	// 搜索专栏（关键词分页，与视频搜索一致）
+	articleGroup.POST("searchArticle", api.SearchArticle)
 }

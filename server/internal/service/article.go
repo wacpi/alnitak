@@ -324,6 +324,45 @@ func FindArticleById(id uint) (article model.Article, err error) {
 	return
 }
 
+// SearchArticle 搜索已过审专栏（标题/标签/内容简介模糊匹配，不对正文长文本 LIKE）
+func SearchArticle(ctx *gin.Context, req dto.SearchKeywordPageReq) []vo.ArticleResp {
+	var articleIds []uint
+	page := req.Page
+	if page < 1 {
+		page = 1
+	}
+	ps := req.PageSize
+	if ps < 1 {
+		ps = 15
+	}
+	kw := strings.TrimSpace(req.KeyWords)
+	if utf8.RuneCountInString(kw) > 100 {
+		kw = string([]rune(kw)[:100])
+	}
+
+	if len(kw) == 0 {
+		global.Mysql.Model(&model.Article{}).Where("status = ?", global.AUDIT_APPROVED).
+			Limit(ps).Offset((page - 1) * ps).Pluck("id", &articleIds)
+	} else {
+		pattern := "%" + kw + "%"
+		global.Mysql.Model(&model.Article{}).
+			Where("status = ? AND (title LIKE ? OR tags LIKE ? OR content_desc LIKE ?)",
+				global.AUDIT_APPROVED, pattern, pattern, pattern).
+			Limit(ps).Offset((page - 1) * ps).Pluck("id", &articleIds)
+	}
+
+	articles := make([]vo.ArticleResp, 0, len(articleIds))
+	for _, id := range articleIds {
+		a := GetArticleItemInfo(id)
+		if a.ID == 0 {
+			continue
+		}
+		a.Clicks += GetArticleClicks(id)
+		articles = append(articles, a)
+	}
+	return articles
+}
+
 func getContentDsec(c string) string {
 
 	if utf8.RuneCountInString(c) > 200 {

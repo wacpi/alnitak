@@ -3,7 +3,9 @@ package service
 import (
 	"errors"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
@@ -564,6 +566,43 @@ func FindUserIdsByName(names []string) (ids []uint) {
 func FindUserLastBan(userId uint) (ban vo.BanResp) {
 	global.Mysql.Model(&model.UserBan{}).Where("uid = ?", userId).Order("id desc").First(&ban)
 	return
+}
+
+// SearchUser 按用户名、签名模糊搜索正常状态用户（status=0），返回公开字段（经 GetUserBaseInfo）
+func SearchUser(ctx *gin.Context, req dto.SearchKeywordPageReq) []vo.UserInfoResp {
+	var userIds []uint
+	page := req.Page
+	if page < 1 {
+		page = 1
+	}
+	ps := req.PageSize
+	if ps < 1 {
+		ps = 15
+	}
+	kw := strings.TrimSpace(req.KeyWords)
+	if utf8.RuneCountInString(kw) > 100 {
+		kw = string([]rune(kw)[:100])
+	}
+
+	if len(kw) == 0 {
+		global.Mysql.Model(&model.User{}).Where("status = ?", 0).
+			Limit(ps).Offset((page - 1) * ps).Pluck("id", &userIds)
+	} else {
+		pattern := "%" + kw + "%"
+		global.Mysql.Model(&model.User{}).
+			Where("status = ? AND (username LIKE ? OR sign LIKE ?)", 0, pattern, pattern).
+			Limit(ps).Offset((page - 1) * ps).Pluck("id", &userIds)
+	}
+
+	users := make([]vo.UserInfoResp, 0, len(userIds))
+	for _, id := range userIds {
+		u := GetUserBaseInfo(id)
+		if u.ID == 0 {
+			continue
+		}
+		users = append(users, u)
+	}
+	return users
 }
 
 // 随机生成一个不重复的用户名

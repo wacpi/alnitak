@@ -172,6 +172,27 @@ func GetRandomArticleList(ctx *gin.Context) {
 	resp.OkWithData(ctx, gin.H{"articles": articles})
 }
 
+// SearchArticle 搜索专栏（公开）
+func SearchArticle(ctx *gin.Context) {
+	var req dto.SearchKeywordPageReq
+	if err := ctx.Bind(&req); err != nil {
+		resp.FailWithMessage(ctx, "请求参数有误")
+		return
+	}
+	if req.PageSize > 30 {
+		resp.FailWithMessage(ctx, "请求数量过多")
+		return
+	}
+	if req.Page < 1 {
+		req.Page = 1
+	}
+	if req.PageSize < 1 {
+		req.PageSize = 15
+	}
+	articles := service.SearchArticle(ctx, req)
+	resp.OkWithData(ctx, gin.H{"articles": articles})
+}
+
 // 获取待审核文章列表
 func GetReviewArticleList(ctx *gin.Context) {
 	// 获取参数
