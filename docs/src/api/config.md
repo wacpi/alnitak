@@ -230,3 +230,103 @@
 
 #### 备注
 无
+
+<!-- ************************ 分隔符 ************************ -->
+
+## 获取资源清理预览
+
+#### 请求URL
+- `/api/v1/config/getCleanupPreview`
+  
+#### 请求方式
+- GET 
+
+####  请求头
+- `Authorization': token`
+
+#### 返回示例 
+``` json
+{
+  "code": 200,
+  "data": {
+    "result": {
+      "cleanedVideoDirs": 0,
+      "cleanedImages": 0,
+      "cleanedVideoFiles": 0,
+      "cleanedIndexFiles": 0,
+      "cleanedImageFiles": 0,
+      "cleanedResources": 0,
+      "errors": [],
+      "dryRun": true,
+      "items": []
+    }
+  },
+  "msg": "ok"
+}
+```
+
+#### 返回参数说明 
+| 参数名            | 类型   | 说明                     |
+| :---------------- | :----- | ------------------------ |
+| cleanedVideoDirs  | int    | 清理的视频目录数量       |
+| cleanedImages     | int    | 清理的图片数量           |
+| cleanedVideoFiles | int    | 清理的视频文件记录数量   |
+| cleanedIndexFiles | int    | 清理的索引文件记录数量   |
+| cleanedImageFiles | int    | 清理的图片文件记录数量   |
+| cleanedResources  | int    | 清理的资源记录数量       |
+| errors            | array  | 错误信息列表             |
+| dryRun            | bool   | 是否为预览模式           |
+| items             | array  | 待清理/已清理的文件列表  |
+
+#### 备注
+无
+
+<!-- ************************ 分隔符 ************************ -->
+
+## 执行资源清理
+
+#### 请求URL
+- `/api/v1/config/executeCleanup`
+  
+#### 请求方式
+- POST 
+
+####  请求头
+- `Authorization': token`
+
+#### 返回示例 
+``` json
+{
+  "code": 200,
+  "data": {
+    "result": {
+      "cleanedVideoDirs": 0,
+      "cleanedImages": 0,
+      "cleanedVideoFiles": 0,
+      "cleanedIndexFiles": 0,
+      "cleanedImageFiles": 0,
+      "cleanedResources": 0,
+      "errors": [],
+      "dryRun": false,
+      "items": []
+    }
+  },
+  "msg": "ok"
+}
+```
+
+#### 返回参数说明 
+| 参数名            | 类型   | 说明                     |
+| :---------------- | :----- | ------------------------ |
+| cleanedVideoDirs  | int    | 清理的视频目录数量       |
+| cleanedImages     | int    | 清理的图片数量           |
+| cleanedVideoFiles | int    | 清理的视频文件记录数量   |
+| cleanedIndexFiles | int    | 清理的索引文件记录数量   |
+| cleanedImageFiles | int    | 清理的图片文件记录数量   |
+| cleanedResources  | int    | 清理的资源记录数量       |
+| errors            | array  | 错误信息列表             |
+| dryRun            | bool   | 是否为预览模式           |
+| items             | array  | 待清理/已清理的文件列表  |
+
+#### 备注
+无

@@ -55,6 +55,7 @@
     "danmaku": [
       {
         "id": 1,
+        "uid": 1,
         "time": 10,
         "type": 0,
         "color": "#fff",
@@ -71,6 +72,7 @@
 | 参数名 | 类型   | 说明     |
 | :----- | :----- | -------- |
 | id     | int    | 弹幕ID   |
+| uid    | int    | 用户ID   |
 | time   | int    | 进度     |
 | type   | int    | 弹幕类型 |
 | color  | string | 弹幕颜色 |
