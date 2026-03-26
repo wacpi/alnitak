@@ -100,14 +100,11 @@ service.interceptors.request.use(async (config) => {
 
   // 确保只在客户端处理 token
   if (process.client) {
-    if (isWatchPage()) {
-      // 播放页不做任何 token 续签/刷新逻辑，只透传请求
-      return config;
-    }
     const token = storage.get('token');
     if (token) {
       config.headers.Authorization = token;
-    } else {
+    } else if (!isWatchPage()) {
+      // 播放页不做 token 续签/刷新，避免后端重启后产生噪音重试
       // 如果没有 accessToken 且有 refreshToken
       const localRefreshToken = storage.get('refreshToken');
       if (localRefreshToken) {
