@@ -47,70 +47,59 @@ func UserRegister(ctx *gin.Context, registerReq dto.RegisterReq) error {
 	return nil
 }
 
+// generateTokenPair 生成 accessToken + refreshToken 并存入缓存
+func generateTokenPair(userId uint) (accessToken, refreshToken string, err error) {
+	if accessToken, err = jwt.GenerateAccessToken(userId); err != nil {
+		return "", "", errors.New("验证token生成失败")
+	}
+	if refreshToken, err = jwt.GenerateRefreshToken(userId); err != nil {
+		return "", "", errors.New("刷新token生成失败")
+	}
+	cache.SetRefreshToken(userId, refreshToken)
+	return accessToken, refreshToken, nil
+}
+
 func UserLogin(ctx *gin.Context, loginReq dto.LoginReq) (accessToken, refreshToken string, userId uint, err error) {
-	// 读取数据库
 	user, err := FindUserByEmail(loginReq.Email)
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			cache.IncrLoginTryCount(loginReq.Email) // 记录登录尝试次数
+			cache.IncrLoginTryCount(loginReq.Email)
 			return "", "", 0, errors.New("用户名密码不匹配")
-		} else {
-			return "", "", 0, errors.New("获取用户信息失败")
 		}
+		return "", "", 0, errors.New("获取用户信息失败")
 	}
 
-	// 验证账号密码
-	passwordError := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(loginReq.Password))
-	if passwordError != nil {
-		cache.IncrLoginTryCount(loginReq.Email) // 记录登录尝试次数
+	if bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(loginReq.Password)) != nil {
+		cache.IncrLoginTryCount(loginReq.Email)
 		return "", "", 0, errors.New("用户名密码不匹配")
 	}
 
-	// 生成验证token
-	if accessToken, err = jwt.GenerateAccessToken(user.ID); err != nil {
-		return "", "", 0, errors.New("验证token生成失败")
+	accessToken, refreshToken, err = generateTokenPair(user.ID)
+	if err != nil {
+		return "", "", 0, err
 	}
-	// 生成刷新token
-	if refreshToken, err = jwt.GenerateRefreshToken(user.ID); err != nil {
-		return "", "", 0, errors.New("刷新token生成失败")
-	}
-
-	// 存入缓存
-	cache.SetRefreshToken(user.ID, refreshToken)
-
 	return accessToken, refreshToken, user.ID, nil
 }
 
 func EmailLogin(ctx *gin.Context, loginReq dto.EmailLoginReq) (accessToken, refreshToken string, userId uint, err error) {
-	// 读取数据库
 	user, err := FindUserByEmail(loginReq.Email)
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			cache.IncrLoginTryCount(loginReq.Email) // 记录登录尝试次数
+			cache.IncrLoginTryCount(loginReq.Email)
 			return "", "", 0, errors.New("用户名密码不匹配")
-		} else {
-			return "", "", 0, errors.New("获取用户信息失败")
 		}
+		return "", "", 0, errors.New("获取用户信息失败")
 	}
 
-	// 验证邮箱验证码
 	if cache.GetEmailCode(loginReq.Email) != loginReq.Code {
-		cache.IncrLoginTryCount(loginReq.Email) // 记录登录尝试次数
+		cache.IncrLoginTryCount(loginReq.Email)
 		return "", "", 0, errors.New("邮箱验证错误")
 	}
 
-	// 生成验证token
-	if accessToken, err = jwt.GenerateAccessToken(user.ID); err != nil {
-		return "", "", 0, errors.New("验证token生成失败")
+	accessToken, refreshToken, err = generateTokenPair(user.ID)
+	if err != nil {
+		return "", "", 0, err
 	}
-	// 生成刷新token
-	if refreshToken, err = jwt.GenerateRefreshToken(user.ID); err != nil {
-		return "", "", 0, errors.New("刷新token生成失败")
-	}
-
-	// 存入缓存
-	cache.SetRefreshToken(user.ID, refreshToken)
-
 	return accessToken, refreshToken, user.ID, nil
 }
 
@@ -120,6 +109,11 @@ func UpdateToken(ctx *gin.Context, tokenReq dto.TokenReq) (accessToken, refreshT
 	if err != nil {
 		utils.ErrorLog("token验证失败", "user", err.Error())
 		return "", "", 0, errors.New("token验证失败")
+	}
+
+	// 必须为 refreshToken（TokenType=1），拒绝 accessToken 被用于刷新
+	if claims.TokenType != 1 {
+		return "", "", 0, errors.New("token类型错误")
 	}
 
 	// 读取缓存

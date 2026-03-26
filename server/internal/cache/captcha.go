@@ -30,7 +30,7 @@ func GetCaptchaStatus(captchaId string) int { // 0 不存在 1未验证  2验证
 }
 
 func SetCaptchaStatus(captchaId string, status int) {
-	global.Redis.Set(CAPTCHA_STATUS_KEY+captchaId, status, CAPTCHA_STATUS_EXPRIRATION_TIME)
+	global.Redis.Set(CAPTCHA_STATUS_KEY+captchaId, status, CAPTCHA_STATUS_EXPIRATION_TIME)
 }
 
 func DelCaptchaStatus(captchaId string) {

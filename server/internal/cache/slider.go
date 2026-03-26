@@ -21,7 +21,7 @@ func GetSliderX(captchaId string) int {
 }
 
 func SetSliderX(captchaId string, x int) {
-	global.Redis.Set(SLIDER_X_KEY+captchaId, x, SLIDER_X_EXPRIRATION_TIME)
+	global.Redis.Set(SLIDER_X_KEY+captchaId, x, SLIDER_X_EXPIRATION_TIME)
 }
 
 func DelSlider(captchaId string) {

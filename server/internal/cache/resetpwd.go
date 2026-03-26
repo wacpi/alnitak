@@ -22,7 +22,7 @@ func GetResetPwdCheckStatus(email string) int {
 }
 
 func SetResetPwdCheckStatus(email string, status int) {
-	global.Redis.Set(RESET_PWD_CHECK_KEY+email, status, RESET_PWD_CHECK_EXPRIRATION_TIME)
+	global.Redis.Set(RESET_PWD_CHECK_KEY+email, status, RESET_PWD_CHECK_EXPIRATION_TIME)
 }
 
 func DelResetPwdCheckStatus(email string) {

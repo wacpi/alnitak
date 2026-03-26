@@ -21,7 +21,7 @@ func GetUploadImage(url string) uint {
 }
 
 func SetUploadImage(url string, userID uint) {
-	global.Redis.Set(UPLOAD_IMAGE_KEY+url, userID, UPLOAD_IMAGE_EXPRIRATION_TIME)
+	global.Redis.Set(UPLOAD_IMAGE_KEY+url, userID, UPLOAD_IMAGE_EXPIRATION_TIME)
 }
 
 func DelUploadImage(url string) {

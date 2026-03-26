@@ -65,16 +65,40 @@ func Register(ctx *gin.Context) {
 	resp.Ok(ctx)
 }
 
+// checkCaptchaAndLimit 统一处理人机验证和登录尝试次数限制
+// 返回 true 表示需要人机验证（已写响应），调用方应直接 return
+func checkCaptchaAndLimit(ctx *gin.Context, email, captchaId string) bool {
+	// 如果人机验证通过，删除登录尝试次数
+	if captchaId != "" {
+		if cache.GetCaptchaStatus(captchaId) == global.CAPTCHA_STATUS_PASS {
+			cache.DelLoginTryCount(email)
+			cache.DelCaptchaStatus(captchaId)
+		}
+	}
+
+	// 读取登录尝试次数，超过3次进行滑块验证
+	if cache.GetLoginTryCount(email) >= 3 {
+		newCaptchaId := cache.CreateCaptchaStatus()
+		resp.Result(ctx, -1, gin.H{"captchaId": newCaptchaId}, "需要人机验证")
+		return true
+	}
+	return false
+}
+
+// sendLoginResponse 统一写登录成功响应（设 Cookie + 返回 token）
+func sendLoginResponse(ctx *gin.Context, accessToken, refreshToken string, userId uint) {
+	setRefreshCookie(ctx, refreshToken)
+	resp.OkWithData(ctx, gin.H{"token": accessToken, "refreshToken": refreshToken, "userId": userId})
+}
+
 // 登录
 func Login(ctx *gin.Context) {
-	// 获取参数
 	var loginReq dto.LoginReq
 	if err := ctx.Bind(&loginReq); err != nil {
 		resp.FailWithMessage(ctx, "请求参数有误")
 		return
 	}
 
-	// 参数校验
 	if !utils.VerifyEmail(loginReq.Email) {
 		resp.FailWithMessage(ctx, "邮箱格式错误")
 		return
@@ -84,22 +108,8 @@ func Login(ctx *gin.Context) {
 		resp.FailWithMessage(ctx, "密码长度不能小于6位")
 		return
 	}
-	// 如果人机验证通过，删除登录尝试次数
-	if utils.VerifyStringLength(loginReq.CaptchaId, ">", 0) {
-		if cache.GetCaptchaStatus(loginReq.CaptchaId) == global.CAPTCHA_STATUS_PASS {
-			// 删除登录尝试次数
-			cache.DelLoginTryCount(loginReq.Email)
-			// 删除人机验证状态
-			cache.DelCaptchaStatus(loginReq.CaptchaId)
-		}
-	}
 
-	// 读取登录尝试次数，超过3次进行滑块验证
-	loginTryCount := cache.GetLoginTryCount(loginReq.Email)
-	if loginTryCount >= 3 {
-		captchaId := cache.CreateCaptchaStatus()
-
-		resp.Result(ctx, -1, gin.H{"captchaId": captchaId}, "需要人机验证")
+	if checkCaptchaAndLimit(ctx, loginReq.Email, loginReq.CaptchaId) {
 		return
 	}
 
@@ -109,44 +119,23 @@ func Login(ctx *gin.Context) {
 		return
 	}
 
-	// 写入 HttpOnly Cookie，供 SSR/多标签页严格校验使用（兼容原 JSON 返回）
-	setRefreshCookie(ctx, refreshToken)
-
-	// 返回给前端
-	resp.OkWithData(ctx, gin.H{"token": accessToken, "refreshToken": refreshToken, "userId": userId})
+	sendLoginResponse(ctx, accessToken, refreshToken, userId)
 }
 
 // 邮箱登录
 func EmailLogin(ctx *gin.Context) {
-	// 获取参数
 	var loginReq dto.EmailLoginReq
 	if err := ctx.Bind(&loginReq); err != nil {
 		resp.FailWithMessage(ctx, "请求参数有误")
 		return
 	}
 
-	// 参数校验
 	if !utils.VerifyEmail(loginReq.Email) {
 		resp.FailWithMessage(ctx, "邮箱格式错误")
 		return
 	}
 
-	// 如果人机验证通过，删除登录尝试次数
-	if utils.VerifyStringLength(loginReq.CaptchaId, ">", 0) {
-		if cache.GetCaptchaStatus(loginReq.CaptchaId) == global.CAPTCHA_STATUS_PASS {
-			// 删除登录尝试次数
-			cache.DelLoginTryCount(loginReq.Email)
-			// 删除人机验证状态
-			cache.DelCaptchaStatus(loginReq.CaptchaId)
-		}
-	}
-
-	// 读取登录尝试次数，超过3次进行滑块验证
-	loginTryCount := cache.GetLoginTryCount(loginReq.Email)
-	if loginTryCount >= 3 {
-		captchaId := cache.CreateCaptchaStatus()
-
-		resp.Result(ctx, -1, gin.H{"captchaId": captchaId}, "需要人机验证")
+	if checkCaptchaAndLimit(ctx, loginReq.Email, loginReq.CaptchaId) {
 		return
 	}
 
@@ -156,11 +145,7 @@ func EmailLogin(ctx *gin.Context) {
 		return
 	}
 
-	// 写入 HttpOnly Cookie，供 SSR/多标签页严格校验使用（兼容原 JSON 返回）
-	setRefreshCookie(ctx, refreshToken)
-
-	// 返回给前端
-	resp.OkWithData(ctx, gin.H{"token": accessToken, "refreshToken": refreshToken, "userId": userId})
+	sendLoginResponse(ctx, accessToken, refreshToken, userId)
 }
 
 // 刷新token
