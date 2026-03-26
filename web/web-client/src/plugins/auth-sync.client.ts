@@ -32,7 +32,9 @@ export default defineNuxtPlugin(() => {
       return;
     }
 
-    // 登录/刷新凭证变化时再同步拉取用户信息
+    // 登录/刷新凭证变化时再同步拉取用户信息。
+    // 重置 _fetchingMe 锁，避免初始 fetchMe 仍在进行时跨标签事件被丢弃。
+    auth._fetchingMe = false;
     auth.fetchMe();
   };
 
