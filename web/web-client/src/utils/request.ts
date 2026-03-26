@@ -1,11 +1,10 @@
 import axios from "axios";
-import Cookies from "js-cookie";
 import type { AxiosInstance, AxiosError } from "axios";
 import { updateTokenAPI } from "@/api/auth";
 import { statusCode } from "./status-code";
 import { globalConfig as config, } from "./global-config";
 import { storageData as storage } from "./storage-data";
-import { useAuthStore } from "@/stores/auth-store";
+import { useAuthStore, saveCredentials, clearCredentials } from "@/stores/auth-store";
 
 // 重试配置
 const MAX_RETRIES = 3;
@@ -65,25 +64,25 @@ const refreshToken = async (): Promise<string> => {
   refreshPromise = (async () => {
     try {
       const localRefreshToken = storage.get('refreshToken');
-      // 阶段 B：本地无 refresh 时仍可能具备 HttpOnly Cookie，交由服务端读取
       const tokenRes = await updateTokenAPI(localRefreshToken || undefined);
       if (tokenRes.data.code === statusCode.OK) {
         const token = tokenRes.data.data.token;
-        const refreshToken = tokenRes.data.data.refreshToken;
+        const rt = tokenRes.data.data.refreshToken;
 
-        storage.set("token", token, 60);
-        Cookies.set('user_id', String(tokenRes.data.data.userId));
-        if (refreshToken) {
-          storage.set("refreshToken", refreshToken, 7 * 24 * 60);
-        }
+        saveCredentials({ token, refreshToken: rt, userId: tokenRes.data.data.userId });
 
-        // 执行队列中的所有回调
+        // 执行队列中的所有等待回调
         requests.forEach(cb => cb(token));
         requests = [];
 
         return token;
       }
       throw new Error('Token refresh failed');
+    } catch (err) {
+      // 刷新失败时，reject 队列中所有等待的请求，避免永久挂起
+      requests.forEach(cb => cb(''));
+      requests = [];
+      throw err;
     } finally {
       isRefreshing = false;
       refreshPromise = null;
@@ -166,9 +165,7 @@ service.interceptors.response.use(async (res) => {
         // 清理缓存信息并切换为游客态。
         // 注意：这里不要自动弹出登录弹窗，否则“跨标签页退出登录”或页面后台轮询时
         // 会在用户无操作的情况下频繁弹窗，影响体验。
-        storage.remove("token");
-        storage.remove('refreshToken');
-        Cookies.remove('user_id');
+        clearCredentials();
         try {
           const auth = useAuthStore();
           auth.markGuest();

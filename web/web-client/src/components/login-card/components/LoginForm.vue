@@ -1,7 +1,7 @@
 <template>
   <div class="login-form">
     <base-tabs :tabs="tabs" @tab-change="tabChange"></base-tabs>
-    <form class="login-panel" @submit.prevent="handelLogin">
+    <form class="login-panel" @submit.prevent="handleLogin">
       <div v-if="currentTab === 'account'" class="input-group">
         <div class="input-box">
           <input v-model="loginForm.email" placeholder="请输入邮箱" class="input account-input" maxlength="64">
@@ -40,12 +40,12 @@
 </template>
 
 <script setup lang="ts">
-import Cookies from "js-cookie";
 import { isEmail } from "@/utils/verify";
 import { loginAPI, emailLoginAPI } from "@/api/auth";
 import type { AxiosResponse } from "axios";
 import BaseTabs from "@/components/base-tabs/index.vue";
 import { sendEmailCodeAPI } from "@/api/code";
+import { saveCredentials } from "@/stores/auth-store";
 
 const emit = defineEmits(["success", "changeForm"]);
 
@@ -60,7 +60,7 @@ let captchaTrigger = "";
 const showCaptcha = ref(false);
 const captchaSuccess = () => {
   if (captchaTrigger === "login") {
-    handelLogin();
+    handleLogin();
   } else {
     sendEmailCode();
   }
@@ -84,7 +84,7 @@ const loginForm = reactive<UserLoginType>({
   code: '',
   captchaId: ''
 })
-const handelLogin = () => {
+const handleLogin = () => {
   initErrorTips();
   if (!loginForm.email) {
     errorTips.emailError = '邮箱不能为空';
@@ -115,7 +115,7 @@ const accountLogin = async () => {
   }
 
   const res = await loginAPI(loginForm);
-  handelLoginRes(res);
+  handleLoginRes(res);
 }
 
 // 验证码登录
@@ -178,10 +178,10 @@ const codeLogin = async () => {
   }
 
   const res = await emailLoginAPI(loginForm);
-  handelLoginRes(res);
+  handleLoginRes(res);
 }
 
-const handelLoginRes = async (res: AxiosResponse<any, any>) => {
+const handleLoginRes = async (res: AxiosResponse<any, any>) => {
   switch (res.data.code) {
     case statusCode.CAPTCHA_REQUIRED:
       captchaTrigger = "login";
@@ -189,10 +189,7 @@ const handelLoginRes = async (res: AxiosResponse<any, any>) => {
       showCaptcha.value = true;
       break;
     case statusCode.OK:
-      storageData.set("token", res.data.data.token, 60);
-      storageData.set("refreshToken", res.data.data.refreshToken, 7 * 24 * 60);
-      Cookies.set('user_id', res.data.data.userId)
-
+      saveCredentials(res.data.data);
       emit("success");
       break;
     default:
