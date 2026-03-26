@@ -156,14 +156,14 @@ onBeforeUnmount(() => {
   .recommended-carousel {
     flex: 2;
     min-width: 0;
-    min-height: 320px;
+    /* 行业常用：响应式高度 + 上限，避免轮播过高 */
+    min-height: 0;
     display: flex;
     flex-direction: column;
   }
 
   .recommended-carousel-inner {
-    flex: 1;
-    min-height: 0;
+    height: clamp(220px, 26vw, 890px);
     position: relative;
     border-radius: 9px;
     overflow: hidden;
