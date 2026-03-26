@@ -14,6 +14,49 @@
       </div>
     </div>
 
+    <div class="filter-bar">
+      <div class="chips">
+        <el-tag v-if="timeRange !== 'all'" class="chip" type="info" effect="plain" closable @close="clearTimeRange">
+          {{ timeRangeLabel }}
+        </el-tag>
+        <el-tag v-if="sort !== 'relevance'" class="chip" type="info" effect="plain" closable @close="clearSort">
+          {{ sortLabel }}
+        </el-tag>
+      </div>
+      <el-button class="filter-btn" text @click="openFilter">
+        筛选
+      </el-button>
+    </div>
+
+    <el-drawer v-model="filterOpen" title="搜索过滤条件" size="420px">
+      <div class="filter-panel">
+        <div class="filter-group">
+          <div class="filter-title">排序依据</div>
+          <el-radio-group v-model="sort" class="filter-radio">
+            <el-radio-button label="relevance">相关性</el-radio-button>
+            <el-radio-button label="newest">上传日期</el-radio-button>
+            <el-radio-button label="most_viewed">观看次数</el-radio-button>
+          </el-radio-group>
+        </div>
+
+        <div class="filter-group">
+          <div class="filter-title">上传日期</div>
+          <el-radio-group v-model="timeRange" class="filter-radio">
+            <el-radio-button label="all">不限</el-radio-button>
+            <el-radio-button label="24h">今天</el-radio-button>
+            <el-radio-button label="week">本周</el-radio-button>
+            <el-radio-button label="month">本月</el-radio-button>
+            <el-radio-button label="year">今年</el-radio-button>
+          </el-radio-group>
+        </div>
+
+        <div class="filter-actions">
+          <el-button @click="resetFilters">重置</el-button>
+          <el-button type="primary" @click="applyFilters">应用</el-button>
+        </div>
+      </div>
+    </el-drawer>
+
     <el-tabs v-model="activeTab" class="search-tabs" @tab-change="onTabChange">
       <el-tab-pane label="视频" name="video">
         <div class="card-list">
@@ -87,6 +130,10 @@ const routeKeywords = ref('');
 const activeTab = ref<'video' | 'article' | 'user'>('video');
 const didSearch = ref(false);
 
+const filterOpen = ref(false);
+const sort = ref<'relevance' | 'newest' | 'most_viewed'>('relevance');
+const timeRange = ref<'all' | '24h' | 'week' | 'month' | 'year'>('all');
+
 const videoList = ref<VideoType[]>([]);
 const videoPage = ref(1);
 const videoNoMore = ref(false);
@@ -101,6 +148,48 @@ const userList = ref<UserInfoType[]>([]);
 const userPage = ref(1);
 const userNoMore = ref(false);
 const userLoading = ref(false);
+
+const sortLabel = computed(() => {
+  switch (sort.value) {
+    case 'newest':
+      return '上传日期'
+    case 'most_viewed':
+      return '观看次数'
+    default:
+      return '相关性'
+  }
+});
+
+const timeRangeLabel = computed(() => {
+  switch (timeRange.value) {
+    case '24h':
+      return '今天'
+    case 'week':
+      return '本周'
+    case 'month':
+      return '本月'
+    case 'year':
+      return '今年'
+    default:
+      return '不限'
+  }
+});
+
+const readFiltersFromRoute = () => {
+  const q: any = route.query || {};
+  const s = String(q.sort || 'relevance');
+  const t = String(q.timeRange || 'all');
+  if (s === 'newest' || s === 'most_viewed' || s === 'relevance') {
+    sort.value = s;
+  } else {
+    sort.value = 'relevance';
+  }
+  if (t === '24h' || t === 'week' || t === 'month' || t === 'year' || t === 'all') {
+    timeRange.value = t;
+  } else {
+    timeRange.value = 'all';
+  }
+};
 
 const syncKeywordsFromRoute = () => {
   const raw = route.params.keywords?.toString() ?? '';
@@ -125,6 +214,25 @@ const resetAllLists = () => {
   didSearch.value = false;
 };
 
+const openFilter = () => {
+  filterOpen.value = true;
+};
+
+const resetFilters = () => {
+  sort.value = 'relevance';
+  timeRange.value = 'all';
+};
+
+const clearTimeRange = async () => {
+  timeRange.value = 'all';
+  await applyFilters();
+};
+
+const clearSort = async () => {
+  sort.value = 'relevance';
+  await applyFilters();
+};
+
 const loadVideos = async (init: boolean) => {
   if (videoLoading.value) return;
   videoLoading.value = true;
@@ -137,6 +245,8 @@ const loadVideos = async (init: boolean) => {
     page: videoPage.value,
     pageSize,
     keywords: routeKeywords.value,
+    sort: sort.value,
+    timeRange: timeRange.value,
   });
   if (res.data.code === statusCode.OK && res.data.data.videos) {
     const chunk = res.data.data.videos;
@@ -162,6 +272,8 @@ const loadArticles = async (init: boolean) => {
     page: articlePage.value,
     pageSize,
     keywords: routeKeywords.value,
+    sort: sort.value,
+    timeRange: timeRange.value,
   });
   if (res.data.code === statusCode.OK && res.data.data.articles) {
     const chunk = res.data.data.articles;
@@ -187,6 +299,8 @@ const loadUsers = async (init: boolean) => {
     page: userPage.value,
     pageSize,
     keywords: routeKeywords.value,
+    sort: sort.value,
+    timeRange: timeRange.value,
   });
   if (res.data.code === statusCode.OK && res.data.data.users) {
     const chunk = res.data.data.users;
@@ -212,13 +326,32 @@ const submitSearch = () => {
     ElMessage.warning('请输入关键词');
     return;
   }
-  router.push(`/search/${encodeURIComponent(k)}`);
+  router.push({
+    path: `/search/${encodeURIComponent(k)}`,
+    query: {
+      sort: sort.value,
+      timeRange: timeRange.value,
+    },
+  });
 };
 
 const onTabChange = (name: string) => {
   if (!routeKeywords.value.trim()) return;
   if (name === 'article' && articleList.value.length === 0) loadArticles(true);
   if (name === 'user' && userList.value.length === 0) loadUsers(true);
+};
+
+const applyFilters = async () => {
+  filterOpen.value = false;
+  await router.replace({
+    query: {
+      ...route.query,
+      sort: sort.value,
+      timeRange: timeRange.value,
+    },
+  });
+  resetAllLists();
+  await loadCurrentTab(true);
 };
 
 const footerLoading = computed(() => {
@@ -262,6 +395,7 @@ watch(
   () => route.params.keywords,
   async () => {
     syncKeywordsFromRoute();
+    readFiltersFromRoute();
     resetAllLists();
     activeTab.value = 'video';
     await loadVideos(true);
@@ -270,6 +404,7 @@ watch(
 
 onBeforeMount(async () => {
   syncKeywordsFromRoute();
+  readFiltersFromRoute();
   await loadVideos(true);
   window.addEventListener('scroll', lazyLoading, true);
 });
@@ -337,6 +472,52 @@ onBeforeUnmount(() => {
 .search-tabs {
   width: 90%;
   margin: 0 auto;
+}
+
+.filter-bar {
+  width: 90%;
+  margin: -10px auto 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  .chips {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .chip {
+    border-radius: 999px;
+  }
+}
+
+.filter-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding-right: 6px;
+
+  .filter-group {
+    .filter-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--font-primary-2);
+      margin-bottom: 10px;
+    }
+    .filter-radio {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+  }
+
+  .filter-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 6px;
+  }
 }
 
 .card-list {

@@ -139,7 +139,8 @@ onBeforeUnmount(() => {
   overflow: hidden;
 
   .recommended-carousel {
-    min-height: 320px;
+    /* 行业常用：响应式高度 + 上限，避免轮播过高 */
+    min-height: 0;
     grid-row: 1/ span 2;
     grid-column: 1/ span 2;
     align-self: stretch;
@@ -149,8 +150,7 @@ onBeforeUnmount(() => {
   }
 
   .recommended-carousel-inner {
-    flex: 1;
-    min-height: 0;
+    height: clamp(220px, 26vw, 890px);
     position: relative;
     border-radius: 9px;
     overflow: hidden;
