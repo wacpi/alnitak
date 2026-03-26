@@ -21,3 +21,8 @@ export const getUserBaseInfoAPI = (userId: number) => {
 export const asyncGetUserBaseInfoAPI = async (userId: number | string) => {
   return await useAsyncData(() => $fetch(`${baseURL}/api/v1/user/getUserBaseInfo?userId=${userId}`));
 }
+
+// 搜索用户 / UP
+export const searchUserAPI = (data: SearchKeywordPageType) => {
+  return request.post('v1/user/searchUser', data);
+};

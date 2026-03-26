@@ -10,6 +10,8 @@ interface UserInfoType {
   birthday?: string
   createdAt?: string
   role?: number
+  /** 搜索用户等接口可能返回 */
+  fans?: number
 }
 
 interface EditUserInfoType {
