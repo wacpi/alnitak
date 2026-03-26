@@ -1275,15 +1275,38 @@ func GetRelatedVideoList(ctx *gin.Context, videoId uint) []vo.VideoResp {
 // 搜索视频
 func SearchVideo(ctx *gin.Context, searchVideoReq dto.SearchVideoReq) []vo.VideoResp {
 	var videoIds []uint
-	if len(searchVideoReq.KeyWords) == 0 {
-		global.Mysql.Model(&model.Video{}).Where("`status` = ?", global.AUDIT_APPROVED).
-			Limit(searchVideoReq.PageSize).Offset((searchVideoReq.Page-1)*searchVideoReq.PageSize).Pluck("id", &videoIds)
-	} else {
-		// 直接用mysql模糊查询，之后可能会更换为es
-		keywords := "%" + searchVideoReq.KeyWords + "%"
-		global.Mysql.Model(&model.Video{}).Where("`status` = ? and (title like ? or tags like ?)", global.AUDIT_APPROVED, keywords, keywords).
-			Limit(searchVideoReq.PageSize).Offset((searchVideoReq.Page-1)*searchVideoReq.PageSize).Pluck("id", &videoIds)
+
+	page := searchVideoReq.Page
+	if page < 1 {
+		page = 1
 	}
+	ps := searchVideoReq.PageSize
+	if ps < 1 {
+		ps = 15
+	}
+
+	q := global.Mysql.Model(&model.Video{}).Where("`status` = ?", global.AUDIT_APPROVED)
+
+	tr := normalizeTimeRange(searchVideoReq.TimeRange)
+	if start := parseTimeRangeStart(tr); start != nil {
+		q = q.Where("created_at >= ?", *start)
+	}
+
+	if len(searchVideoReq.KeyWords) > 0 {
+		// 直接用mysql模糊查询，之后可能会更换为es
+		kw := "%" + escapeLikeKeyword(searchVideoReq.KeyWords) + "%"
+		q = q.Where("(title LIKE ? ESCAPE '\\\\' OR tags LIKE ? ESCAPE '\\\\')", kw, kw)
+	}
+
+	// 排序：YouTube 风格（MVP）
+	switch normalizeSort(searchVideoReq.Sort) {
+	case "most_viewed":
+		q = q.Order("clicks desc").Order("id desc")
+	default: // newest / relevance
+		q = q.Order("created_at desc").Order("id desc")
+	}
+
+	q.Limit(ps).Offset((page - 1) * ps).Pluck("id", &videoIds)
 
 	videos := make([]vo.VideoResp, 0, len(videoIds))
 	for _, id := range videoIds {

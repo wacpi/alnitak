@@ -4,3 +4,6 @@
 /upload/image/*
 !/upload/video/.gitkeep
 !/upload/image/.gitkeep
+
+# Local AI assistant config (do not commit)
+.claude/

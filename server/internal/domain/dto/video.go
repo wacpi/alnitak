@@ -40,7 +40,9 @@ type EditVideoReq struct {
 }
 
 type SearchVideoReq struct {
-	Page     int    `json:"page"`
-	PageSize int    `json:"pageSize"`
-	KeyWords string `json:"keywords"`
+	Page      int    `json:"page"`
+	PageSize  int    `json:"pageSize"`
+	KeyWords  string `json:"keywords"`
+	Sort      string `json:"sort"`
+	TimeRange string `json:"timeRange"`
 }

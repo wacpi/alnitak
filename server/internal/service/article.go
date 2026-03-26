@@ -340,16 +340,27 @@ func SearchArticle(ctx *gin.Context, req dto.SearchKeywordPageReq) []vo.ArticleR
 		kw = string([]rune(kw)[:100])
 	}
 
-	if len(kw) == 0 {
-		global.Mysql.Model(&model.Article{}).Where("status = ?", global.AUDIT_APPROVED).
-			Limit(ps).Offset((page - 1) * ps).Pluck("id", &articleIds)
-	} else {
-		pattern := "%" + kw + "%"
-		global.Mysql.Model(&model.Article{}).
-			Where("status = ? AND (title LIKE ? OR tags LIKE ? OR content_desc LIKE ?)",
-				global.AUDIT_APPROVED, pattern, pattern, pattern).
-			Limit(ps).Offset((page - 1) * ps).Pluck("id", &articleIds)
+	q := global.Mysql.Model(&model.Article{}).Where("status = ?", global.AUDIT_APPROVED)
+
+	tr := normalizeTimeRange(req.TimeRange)
+	if start := parseTimeRangeStart(tr); start != nil {
+		q = q.Where("created_at >= ?", *start)
 	}
+
+	if len(kw) > 0 {
+		pattern := "%" + escapeLikeKeyword(kw) + "%"
+		q = q.Where("(title LIKE ? ESCAPE '\\\\' OR tags LIKE ? ESCAPE '\\\\' OR content_desc LIKE ? ESCAPE '\\\\')",
+			pattern, pattern, pattern)
+	}
+
+	switch normalizeSort(req.Sort) {
+	case "most_viewed":
+		q = q.Order("clicks desc").Order("id desc")
+	default:
+		q = q.Order("created_at desc").Order("id desc")
+	}
+
+	q.Limit(ps).Offset((page - 1) * ps).Pluck("id", &articleIds)
 
 	articles := make([]vo.ArticleResp, 0, len(articleIds))
 	for _, id := range articleIds {

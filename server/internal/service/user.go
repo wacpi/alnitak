@@ -584,15 +584,25 @@ func SearchUser(ctx *gin.Context, req dto.SearchKeywordPageReq) []vo.UserInfoRes
 		kw = string([]rune(kw)[:100])
 	}
 
-	if len(kw) == 0 {
-		global.Mysql.Model(&model.User{}).Where("status = ?", 0).
-			Limit(ps).Offset((page - 1) * ps).Pluck("id", &userIds)
-	} else {
-		pattern := "%" + kw + "%"
-		global.Mysql.Model(&model.User{}).
-			Where("status = ? AND (username LIKE ? OR sign LIKE ?)", 0, pattern, pattern).
-			Limit(ps).Offset((page - 1) * ps).Pluck("id", &userIds)
+	q := global.Mysql.Model(&model.User{}).Where("status = ?", 0)
+
+	tr := normalizeTimeRange(req.TimeRange)
+	if start := parseTimeRangeStart(tr); start != nil {
+		q = q.Where("created_at >= ?", *start)
 	}
+
+	if len(kw) > 0 {
+		pattern := "%" + escapeLikeKeyword(kw) + "%"
+		q = q.Where("(username LIKE ? ESCAPE '\\\\' OR sign LIKE ? ESCAPE '\\\\')", pattern, pattern)
+	}
+
+	// 用户排序：most_fans 后续需要稳定 fans_count；MVP 默认 newest
+	switch normalizeSort(req.Sort) {
+	default:
+		q = q.Order("created_at desc").Order("id desc")
+	}
+
+	q.Limit(ps).Offset((page - 1) * ps).Pluck("id", &userIds)
 
 	users := make([]vo.UserInfoResp, 0, len(userIds))
 	for _, id := range userIds {
