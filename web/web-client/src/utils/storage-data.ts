@@ -67,16 +67,15 @@ export const storageData = {
             source.value = JSON.parse(readStorage);
 
             if (source.value) {
-                //超过失效时 删除
                 if (!source.value.expired) {
                     return source.value.data;
                 }
-                else if (now >= source.value.expired) {
-                    this.remove(source.key);
+                // 过期时仅返回 null，不主动 removeItem，
+                // 避免触发其他标签页的 storage 事件导致连锁退出
+                if (now >= source.value.expired) {
                     return null;
-                } else {
-                    return source.value.data;
                 }
+                return source.value.data;
             }
 
             return null;
