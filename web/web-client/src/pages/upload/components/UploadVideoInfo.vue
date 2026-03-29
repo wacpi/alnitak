@@ -49,13 +49,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, reactive } from "vue";
+import { ref, onMounted, reactive, watch, nextTick } from "vue";
 import { statusCode } from "@/utils/status-code";
 import { isLegalTag } from "@/utils/verify";
 import CoverUploader from "./CoverUploader.vue";
 import PartitionSelector from "./PartitionSelector.vue";
 import FormSkeleton from "@/components/form-skeleton/index.vue";
 import { uploadVideoInfoAPI, editVideoAPI } from "@/api/video";
+import { normalizeVideoTags } from "@/utils/video-tags";
 import { getPartitionAPI } from '@/api/partition';
 import { ElForm, ElFormItem, ElInput, ElSwitch, ElButton, ElSkeleton, ElSkeletonItem, ElMessage } from "element-plus";
 
@@ -177,9 +178,7 @@ const getPartitionName = (id: number) => {
 
 const loadVideoInfo = async () => {
   if (props.info.vid) {
-    if (props.info.tags) {
-      dynamicTags.value = props.info.tags.split(',');
-    }
+    dynamicTags.value = normalizeVideoTags(props.info.tags);
     Object.assign(videoForm, props.info);
     getPartitionName(props.info.partitionId);
 

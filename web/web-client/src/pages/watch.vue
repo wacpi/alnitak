@@ -29,6 +29,7 @@
             <div class="toolbar-right">
               <span>{{ onlineCount }} 人在看</span>
               <span>{{ videoInfo?.clicks }} 播放</span>
+              <span v-if="videoInfo?.fans != null && videoInfo.fans > 0">{{ videoInfo.fans }} 粉丝</span>
               <span>{{ videoInfo ? formatTime(videoInfo.createdAt) : '' }}</span>
             </div>
           </div>
@@ -43,7 +44,7 @@
           </div>
           <!-- 标签部分 -->
           <div class="tags-box">
-            <div class="tag" v-for="item in (videoInfo?.tags ?? '').split(',').filter(Boolean)" :key="item">{{ item }}</div>
+            <div class="tag" v-for="item in videoTagList" :key="item">{{ item }}</div>
           </div>
           <!-- 评论区 -->
           <comment-list v-if="videoInfo" :vid="videoInfo.vid" @seek-time="handleSeekTime"></comment-list>
@@ -88,6 +89,7 @@ import HeaderBar from "@/components/header-bar/index.vue";
 import VideoPlayer from "@/components/video-player/index.vue";
 import RecommendList from "./video/components/RecommendList.vue";
 import { asyncGetVideoInfoAPI } from "@/api/video";
+import { normalizeVideoTags } from "@/utils/video-tags";
 import { createUUID } from "@/utils/uuid";
 import { getDanmakuAPI } from "@/api/danmaku";
 import { getHistoryProgressAPI, addHistoryAPI } from "@/api/history";
@@ -95,6 +97,7 @@ import { globalConfig } from '@/utils/global-config';
 import { updateTokenAPI } from '@/api/auth';
 import { storageData } from '@/utils/storage-data';
 import { useAuthStore, saveCredentials } from '@/stores/auth-store';
+import { statusCode } from '@/utils/status-code';
 
 const route = useRoute();
 const router = useRouter();
@@ -109,6 +112,8 @@ const videoId = v;
 
 // 获取视频信息
 const videoInfo = ref<VideoType>();
+const videoTagList = computed(() => normalizeVideoTags(videoInfo.value?.tags));
+
 const { data } = await asyncGetVideoInfoAPI(videoId);
 if ((data.value as any).code === statusCode.OK) {
   videoInfo.value = (data.value as any).data.video as VideoType;

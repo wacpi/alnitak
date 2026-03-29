@@ -118,3 +118,15 @@ export const asyncGetRelatedVideoList = async (videoId: number) => {
 export const searchVideoAPI = (data: SearchVideoType) => {
   return request.post("v1/video/searchVideo", data);
 }
+
+/** 播放授权：换发 grant，在 expires 前续期即可无感 */
+export const postPlayGrantAPI = (resourceShortId: string) => {
+  return request.post('v1/play/grant', { resourceShortId });
+}
+
+/** 换取当前分 P 的音视频直链（query 需带 token） */
+export const getPlayUrlsAPI = (resourceShortId: string, token: string, quality?: string) => {
+  return request.get(`v1/play/${encodeURIComponent(resourceShortId)}`, {
+    params: { token, ...(quality ? { quality } : {}) },
+  });
+}
