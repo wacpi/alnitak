@@ -14,8 +14,9 @@ type ResourceResp struct {
 	Title     string    `json:"title"`
 	Duration  float64   `json:"duration"`
 	Status    int       `json:"status"`
-	FileID    uint      `json:"fileId"` // 关联的视频文件ID（全局去重用）
-	Uid       uint      `json:"uid"`    // 上传者ID
+	FileID    uint      `json:"fileId"`    // 关联的视频文件ID（全局去重用）
+	Uid       uint      `json:"uid"`       // 上传者ID
+	SortOrder int       `json:"sortOrder"` // 排序序号
 }
 
 // RelatedResourceResp 相同文件的关联稿件信息
@@ -40,5 +41,6 @@ func ResourceToResourceResp(resource model.Resource) ResourceResp {
 		Status:    resource.Status,
 		FileID:    resource.FileID,
 		Uid:       resource.Uid,
+		SortOrder: resource.SortOrder,
 	}
 }

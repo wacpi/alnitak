@@ -86,7 +86,7 @@ func DeleteResource(ctx *gin.Context, id uint) error {
 func GetVideoResourceByStatus(videoId uint, status int) (resources []vo.ResourceResp) {
 	global.Mysql.Model(&model.Resource{}).
 		Where("vid = ? and status = ?", videoId, status).
-		Order("title ASC, id ASC").
+		Order("sort_order ASC, id ASC").
 		Scan(&resources)
 
 	return
@@ -95,9 +95,9 @@ func GetVideoResourceByStatus(videoId uint, status int) (resources []vo.Resource
 // 获取视频资源（含fileId和uid用于全局去重）
 func GetReviewResourceList(videoId uint) (resources []vo.ResourceResp) {
 	global.Mysql.Model(&model.Resource{}).
-		Select("id, created_at, vid, title, duration, status, file_id, uid").
+		Select("id, created_at, vid, title, duration, status, file_id, uid, sort_order").
 		Where("vid = ?", videoId).
-		Order("title ASC, id ASC").
+		Order("sort_order ASC, id ASC").
 		Scan(&resources)
 
 	return
@@ -179,6 +179,87 @@ func buildResourceQualityInfo(id uint) (*ResourceQualityInfo, error) {
 	}
 
 	return result, nil
+}
+
+// 资源排序
+func ReorderResources(ctx *gin.Context, req dto.ReorderResourceReq) error {
+	userId := ctx.GetUint("userId")
+
+	// 验证视频属于当前用户
+	var video model.Video
+	global.Mysql.Model(&model.Video{}).Where("id = ? and uid = ?", req.Vid, userId).First(&video)
+	if video.ID == 0 {
+		return errors.New("视频不存在")
+	}
+
+	tx := global.Mysql.Begin()
+	if tx.Error != nil {
+		utils.ErrorLog("开启排序事务失败", "resource", tx.Error.Error())
+		return errors.New("更新排序失败")
+	}
+
+	// 校验：请求中的资源ID必须与该视频资源集合完全一致（防止部分更新造成顺序错乱）
+	var dbResourceIds []uint
+	if err := tx.Model(&model.Resource{}).
+		Where("vid = ? AND uid = ?", req.Vid, userId).
+		Order("id ASC").
+		Pluck("id", &dbResourceIds).Error; err != nil {
+		tx.Rollback()
+		utils.ErrorLog("查询资源列表失败", "resource", err.Error())
+		return errors.New("更新排序失败")
+	}
+	if len(dbResourceIds) == 0 {
+		tx.Rollback()
+		return errors.New("资源不存在")
+	}
+	if len(dbResourceIds) != len(req.ResourceIds) {
+		tx.Rollback()
+		return errors.New("资源数量不匹配")
+	}
+
+	dbIdSet := make(map[uint]struct{}, len(dbResourceIds))
+	for _, id := range dbResourceIds {
+		dbIdSet[id] = struct{}{}
+	}
+	reqIdSet := make(map[uint]struct{}, len(req.ResourceIds))
+	for _, id := range req.ResourceIds {
+		if _, exists := reqIdSet[id]; exists {
+			tx.Rollback()
+			return errors.New("资源ID重复")
+		}
+		reqIdSet[id] = struct{}{}
+		if _, exists := dbIdSet[id]; !exists {
+			tx.Rollback()
+			return errors.New("存在无效资源ID")
+		}
+	}
+
+	// 批量更新 sort_order
+	for i, resourceId := range req.ResourceIds {
+		result := tx.Model(&model.Resource{}).
+			Where("id = ? AND vid = ? AND uid = ?", resourceId, req.Vid, userId).
+			Update("sort_order", i)
+		if result.Error != nil {
+			tx.Rollback()
+			utils.ErrorLog("更新资源排序失败", "resource", result.Error.Error())
+			return errors.New("更新排序失败")
+		}
+		if result.RowsAffected != 1 {
+			tx.Rollback()
+			utils.ErrorLog("更新资源排序影响行数异常", "resource", fmt.Sprintf("resourceId=%d rows=%d", resourceId, result.RowsAffected))
+			return errors.New("更新排序失败")
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		utils.ErrorLog("提交排序事务失败", "resource", err.Error())
+		return errors.New("更新排序失败")
+	}
+
+	// 清除视频信息缓存
+	cache.DelVideoInfo(req.Vid)
+
+	return nil
 }
 
 func IsResourceExist(resourceId uint) bool {

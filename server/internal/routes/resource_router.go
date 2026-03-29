@@ -13,6 +13,7 @@ func CollectResourceRoutes(r *gin.RouterGroup) {
 	resourceAuth.Use(middleware.Auth())
 	{
 		resourceAuth.PUT("modifyTitle", api.ModifyResourceTitle)
+		resourceAuth.PUT("reorder", api.ReorderResources)
 		resourceAuth.DELETE("deleteResource/:id", api.DeleteResource)
 		resourceAuth.POST("checkReplace", api.CheckReplaceResource)
 		resourceAuth.POST("replaceResource", api.ReplaceResource)

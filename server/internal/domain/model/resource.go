@@ -12,6 +12,9 @@ type Resource struct {
 	Status    int     `gorm:"comment:审核状态;not null;index"`
 	ShortID   string  `gorm:"type:varchar(16);comment:短ID;uniqueIndex" json:"shortId"`
 
+	// 排序字段（值越小越靠前，类似B站默认按上传顺序）
+	SortOrder int `gorm:"comment:排序序号;default:0;index"`
+
 	// 全局去重相关字段
 	FileID uint `gorm:"comment:关联的视频文件ID;index"`
 

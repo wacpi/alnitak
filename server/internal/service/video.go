@@ -1216,6 +1216,29 @@ func GetHotVideo(ctx *gin.Context, page, pageSize int) []vo.VideoResp {
 	return videos
 }
 
+// 获取最近上传的视频
+func GetLatestVideo(ctx *gin.Context, page, pageSize int) []vo.VideoResp {
+	var videoIds []uint
+	global.Mysql.Model(&model.Video{}).
+		Where("status = ?", global.AUDIT_APPROVED).
+		Order("created_at DESC").
+		Limit(pageSize).Offset((page - 1) * pageSize).
+		Pluck("id", &videoIds)
+
+	videos := make([]vo.VideoResp, 0, len(videoIds))
+	for _, id := range videoIds {
+		v := GetVideoInfo(id)
+		if v.ID == 0 {
+			continue
+		}
+		v.Clicks += GetVideoClicks(id)
+		v.DanmakuCount = GetDanmakuCount(id)
+		videos = append(videos, v)
+	}
+
+	return videos
+}
+
 // 获取分区视频
 func GetVideoListByPartition(ctx *gin.Context, size int, partitionId uint) []vo.VideoResp {
 	videoIds := cache.GetVideoIdByPartition(partitionId, int64(size))

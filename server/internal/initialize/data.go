@@ -105,6 +105,7 @@ func initApiData() {
 		{Method: "POST", Path: "/api/v1/relation/unfollow", Category: "关注", Desc: "取关用户"},
 		{Method: "DELETE", Path: "/api/v1/resource/deleteResource/:id", Category: "资源", Desc: "删除视频资源"},
 		{Method: "PUT", Path: "/api/v1/resource/modifyTitle", Category: "资源", Desc: "修改资源标题"},
+		{Method: "PUT", Path: "/api/v1/resource/reorder", Category: "资源", Desc: "资源排序"},
 		{Method: "GET", Path: "/api/v1/review/getArticleReviewRecord", Category: "审核", Desc: "获取文章审核记录"},
 		{Method: "GET", Path: "/api/v1/review/getVideoReviewRecord", Category: "审核", Desc: "获取视频审核记录"},
 		{Method: "POST", Path: "/api/v1/review/reviewArticleApproved", Category: "审核", Desc: "文章审核通过（后台管理）"},
@@ -222,6 +223,7 @@ func initCasbinRuleData() {
 		{Ptype: "p", V0: "001", V1: "/api/v1/relation/unfollow", V2: "POST"},
 		{Ptype: "p", V0: "001", V1: "/api/v1/resource/deleteResource/:id", V2: "DELETE"},
 		{Ptype: "p", V0: "001", V1: "/api/v1/resource/modifyTitle", V2: "PUT"},
+		{Ptype: "p", V0: "001", V1: "/api/v1/resource/reorder", V2: "PUT"},
 		{Ptype: "p", V0: "001", V1: "/api/v1/review/getArticleReviewRecord", V2: "GET"},
 		{Ptype: "p", V0: "001", V1: "/api/v1/review/getVideoReviewRecord", V2: "GET"},
 		{Ptype: "p", V0: "001", V1: "/api/v1/upload/image", V2: "POST"},
@@ -322,6 +324,7 @@ func initCasbinRuleData() {
 		{Ptype: "p", V0: "002", V1: "/api/v1/relation/unfollow", V2: "POST"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/resource/deleteResource/:id", V2: "DELETE"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/resource/modifyTitle", V2: "PUT"},
+		{Ptype: "p", V0: "002", V1: "/api/v1/resource/reorder", V2: "PUT"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/review/getArticleReviewRecord", V2: "GET"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/review/getVideoReviewRecord", V2: "GET"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/review/reviewArticleApproved", V2: "POST"},
@@ -663,6 +666,7 @@ var authApiDesc = map[string]string{
 	// 资源
 	"DELETE|/api/v1/resource/deleteResource/:id": "删除视频资源",
 	"PUT|/api/v1/resource/modifyTitle":           "修改资源标题",
+	"PUT|/api/v1/resource/reorder":               "资源排序",
 	"POST|/api/v1/resource/replaceResource":      "替换视频资源",
 	// 审核
 	"GET|/api/v1/review/getArticleReviewRecord": "获取文章审核记录",

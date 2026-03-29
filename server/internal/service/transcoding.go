@@ -1464,11 +1464,11 @@ func completeTransCoding(videoId, resourceId uint, status int, originalVideoStat
 	tx.Model(&model.Resource{}).Where("vid = ? and status = ? and id != ?", videoId, global.VIDEO_PROCESSING, resourceId).Count(&processingCount)
 	utils.InfoLog(fmt.Sprintf("【事务查询】VideoID=%d 除当前资源外,仍在转码中(status=200)的资源数=%d", videoId, processingCount), "transcoding")
 
-	// 如果视频原本已审核通过（当前status=0，或重新转码记录的原始status=0），资源直接设为审核通过
-	// originalVideoStatus >= 0 表示是重新转码场景（普通上传转码为-1）
-	if status == global.WAITING_REVIEW && (currentVideo.Status == global.AUDIT_APPROVED || (originalVideoStatus >= 0 && originalVideoStatus == global.AUDIT_APPROVED)) {
+	// 仅“重新转码”场景允许资源自动恢复为审核通过。
+	// 普通新增分P（originalVideoStatus=-1）必须保持 WAITING_REVIEW，避免绕过人工审核。
+	if status == global.WAITING_REVIEW && originalVideoStatus >= 0 && originalVideoStatus == global.AUDIT_APPROVED {
 		status = global.AUDIT_APPROVED
-		utils.InfoLog("【状态修正】视频原本已审核通过,资源status从WAITING_REVIEW(500)改为AUDIT_APPROVED(0)", "transcoding")
+		utils.InfoLog("【状态修正】重新转码场景恢复资源为AUDIT_APPROVED(0)", "transcoding")
 	}
 
 	// 先更新当前资源的状态（无论是否还有其他资源在转码）
@@ -1520,6 +1520,11 @@ func completeTransCoding(videoId, resourceId uint, status int, originalVideoStat
 		// 所有资源都失败，视频状态设为处理失败
 		videoStatus = global.PROCESSING_FAIL
 		utils.InfoLog("【判断】全部资源失败，video status设为PROCESSING_FAIL(3000)", "transcoding")
+	} else if currentVideo.Status == global.AUDIT_APPROVED {
+		// 视频已审核通过（添加新分P场景），保持审核通过状态不变
+		// 新分P由资源级别的状态独立控制审核，不影响已上线的视频
+		videoStatus = global.AUDIT_APPROVED
+		utils.InfoLog("【判断】视频已审核通过，保持AUDIT_APPROVED(0)不变（新分P独立审核）", "transcoding")
 	} else if originalVideoStatus >= 0 && originalVideoStatus == global.AUDIT_APPROVED {
 		// 重新转码且原始状态是审核通过，恢复为审核通过
 		videoStatus = global.AUDIT_APPROVED

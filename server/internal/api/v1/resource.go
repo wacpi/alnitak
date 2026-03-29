@@ -88,6 +88,27 @@ func GetResourceQualityManage(ctx *gin.Context) {
 	})
 }
 
+// 资源排序
+func ReorderResources(ctx *gin.Context) {
+	var req dto.ReorderResourceReq
+	if err := ctx.Bind(&req); err != nil {
+		resp.FailWithMessage(ctx, "请求参数有误")
+		return
+	}
+
+	if req.Vid == 0 || len(req.ResourceIds) == 0 {
+		resp.FailWithMessage(ctx, "参数不能为空")
+		return
+	}
+
+	if err := service.ReorderResources(ctx, req); err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+
+	resp.Ok(ctx)
+}
+
 // 检查资源是否需要替换
 func CheckReplaceResource(ctx *gin.Context) {
 	// 获取参数

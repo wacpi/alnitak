@@ -254,6 +254,21 @@ func GetHotVideo(ctx *gin.Context) {
 	resp.OkWithData(ctx, gin.H{"videos": videos})
 }
 
+// 获取最近上传的视频
+func GetLatestVideo(ctx *gin.Context) {
+	page := utils.StringToInt(ctx.Query("page"))
+	pageSize := utils.StringToInt(ctx.Query("pageSize"))
+
+	if pageSize > 30 {
+		resp.FailWithMessage(ctx, "请求数量过多")
+		return
+	}
+
+	videos := service.GetLatestVideo(ctx, page, pageSize)
+
+	resp.OkWithData(ctx, gin.H{"videos": videos})
+}
+
 // 获取分区视频
 func GetVideoListByPartition(ctx *gin.Context) {
 	size := utils.StringToInt(ctx.Query("size"))

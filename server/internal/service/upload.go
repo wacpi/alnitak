@@ -596,13 +596,19 @@ func CompleteUploadVideo(vid, userId, fileID uint, videoName, title string, skip
 		if err := global.Mysql.Where("file_id = ?", fileID).First(&existingResource).Error; err == nil {
 			// 【重要】秒传的资源也需要审核，状态设为 WAITING_REVIEW
 			// 审核员决定是否通过，不能因为别人上传过就自动通过
+			// 获取当前最大排序序号
+			var maxOrder int
+			global.Mysql.Model(&model.Resource{}).Where("vid = ?", vid).
+				Select("COALESCE(MAX(sort_order), -1)").Scan(&maxOrder)
+
 			resource := model.Resource{
-				Vid:      vid,
-				Uid:      userId,
-				Title:    titleWithoutExt,
-				Status:   global.WAITING_REVIEW, // 等待审核，不直接通过
-				Duration: existingResource.Duration,
-				FileID:   fileID,
+				Vid:       vid,
+				Uid:       userId,
+				Title:     titleWithoutExt,
+				Status:    global.WAITING_REVIEW, // 等待审核，不直接通过
+				Duration:  existingResource.Duration,
+				FileID:    fileID,
+				SortOrder: maxOrder + 1,
 				// 资源短ID，用于对外 resourceId
 				ShortID:   utils.EncodeUint64ToShortID(uint64(global.SnowflakeNode.Generate())),
 				CodecName: existingResource.CodecName,
@@ -624,6 +630,11 @@ func CompleteUploadVideo(vid, userId, fileID uint, videoName, title string, skip
 		return vo.ResourceResp{}, errors.New("读取视频信息失败")
 	}
 
+	// 获取当前最大排序序号
+	var maxOrder int
+	global.Mysql.Model(&model.Resource{}).Where("vid = ?", vid).
+		Select("COALESCE(MAX(sort_order), -1)").Scan(&maxOrder)
+
 	// 存入数据库
 	resource := model.Resource{
 		Vid:       vid,
@@ -633,6 +644,7 @@ func CompleteUploadVideo(vid, userId, fileID uint, videoName, title string, skip
 		Status:    global.VIDEO_PROCESSING,
 		Duration:  transcodingInfo.Duration,
 		FileID:    fileID,
+		SortOrder: maxOrder + 1,
 		// 资源短ID，用于对外 resourceId
 		ShortID: utils.EncodeUint64ToShortID(uint64(global.SnowflakeNode.Generate())),
 	}

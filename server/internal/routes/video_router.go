@@ -58,6 +58,8 @@ func CollectVideoRoutes(r *gin.RouterGroup) {
 	videoGroup.GET("getVideoByUser", api.GetVideoByUser)
 	// 获取热门视频
 	videoGroup.GET("getHotVideo", api.GetHotVideo)
+	// 获取最近上传的视频
+	videoGroup.GET("getLatestVideo", api.GetLatestVideo)
 	// 获取分区视频
 	videoGroup.GET("getVideoListByPartition", api.GetVideoListByPartition)
 	// 获取相关推荐视频

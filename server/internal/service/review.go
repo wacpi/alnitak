@@ -16,18 +16,19 @@ import (
 // 审核通过(视频)
 func ReviewVideoApproved(ctx *gin.Context, reviewVideoReq dto.ReviewVideoReq) error {
 	tx := global.Mysql.Begin()
-	// 把所有待审核的资源改为审核通过
-	if err := tx.Model(&model.Resource{}).Where("vid = ?", reviewVideoReq.Vid).Updates(
-		map[string]interface{}{"status": global.AUDIT_APPROVED},
-	).Error; err != nil {
+	// 只把待审核的资源改为审核通过（不影响转码中、已通过等其他状态的资源）
+	if err := tx.Model(&model.Resource{}).
+		Where("vid = ? AND status = ?", reviewVideoReq.Vid, global.WAITING_REVIEW).
+		Updates(map[string]interface{}{"status": global.AUDIT_APPROVED}).Error; err != nil {
 		tx.Rollback()
 		utils.ErrorLog("更新资源状态失败", "review", err.Error())
 		return errors.New("更新状态失败")
 	}
 
-	// 统计视频时长并存入数据库
+	// 统计已审核通过的资源时长（不含转码中/失败的）
 	var duration float64
-	tx.Model(&model.Resource{}).Where("vid = ?", reviewVideoReq.Vid).Pluck("SUM(duration) as duration", &duration)
+	tx.Model(&model.Resource{}).Where("vid = ? AND status = ?", reviewVideoReq.Vid, global.AUDIT_APPROVED).
+		Pluck("SUM(duration) as duration", &duration)
 
 	// 更新视频状态为审核通过
 	if err := tx.Model(&model.Video{}).Where("id = ?", reviewVideoReq.Vid).Updates(map[string]interface{}{
