@@ -5,10 +5,19 @@ interface BaseResourceType {
 
 // 分P
 interface ResourceType extends BaseResourceType {
-  url: string;
+  shortId?: string;
+  fileId?: number;
+  sortOrder?: number;
+  playUrl?: string;
+  statusName?: string;
+  createdAt?: string;
+  uid?: number;
+  /** 时长（秒，整数） */
   duration: number;
   status: number;
-  quality: number;
+  /** 上传流程本地态 */
+  url?: string;
+  quality?: number;
   uploading?: boolean;
   percent?: number;
 }

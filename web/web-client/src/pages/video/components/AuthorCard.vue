@@ -14,7 +14,7 @@
             <div class="up-detail-top">
               <nuxt-link class="up-name" :to="`/user/${props.info.uid}`" target="_blank">{{ props.info.name }}</nuxt-link>
             </div>
-            <div class="up-description up-detail-bottom">{{ props.info.sign }}</div>
+            <div v-if="props.info.sign" class="up-description up-detail-bottom">{{ props.info.sign }}</div>
           </div>
         </div>
         <!-- 关注按钮部分 -->
