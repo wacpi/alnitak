@@ -6,45 +6,57 @@
     </el-upload>
   </div>
   <div class="upload-video">
-    <div class="video-item" v-for="(item, index) in resourceList" :key="index">
-      <div class="video-icon-box">
-        <el-icon :size="38">
-          <monitor-icon></monitor-icon>
-        </el-icon>
-        <span class="part"> P{{ index + 1 }} </span>
-      </div>
-      <div class="info-box">
-        <div class="file-info">
-          <div class="title-box">
-            <div class="title" v-if="modifyIndex !== index" @click="titleClick(item, index)">
-              <span>{{ item.title || "未命名视频" }}</span>
+    <draggable v-model="resourceList" item-key="id" handle=".drag-handle" @end="onDragEnd"
+      :animation="200" ghost-class="drag-ghost">
+      <template #item="{ element: item, index }">
+        <div class="video-item">
+          <div class="drag-handle" title="拖拽排序">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <circle cx="5" cy="3" r="1.5"/><circle cx="11" cy="3" r="1.5"/>
+              <circle cx="5" cy="8" r="1.5"/><circle cx="11" cy="8" r="1.5"/>
+              <circle cx="5" cy="13" r="1.5"/><circle cx="11" cy="13" r="1.5"/>
+            </svg>
+          </div>
+          <div class="video-icon-box">
+            <el-icon :size="38">
+              <monitor-icon></monitor-icon>
+            </el-icon>
+            <span class="part"> P{{ index + 1 }} </span>
+          </div>
+          <div class="info-box">
+            <div class="file-info">
+              <div class="title-box">
+                <div class="title" v-if="modifyIndex !== index" @click="titleClick(item, index)">
+                  <span>{{ item.title || "未命名视频" }}</span>
+                </div>
+                <el-input v-else ref="titleInput" v-model="modifyForm.title" maxlength="100" show-word-limit
+                  @blur="modifyTitle(item)" />
+              </div>
+              <div class="action-btns">
+                <el-upload :show-file-list="false" :before-upload="beforeUploadVideo"
+                  @change="(file: any) => handleReplace(file, item, index)">
+                  <span class="replace-btn" v-if="!item.uploading">替换</span>
+                </el-upload>
+                <client-only>
+                  <el-popconfirm v-if="resourceList.length > 1" title="是否移除该条视频？" confirm-button-text="确认" cancel-button-text="取消"
+                    @confirm="deleteResource(item.id, index)">
+                    <template #reference>
+                      <span class="remove-btn">移除</span>
+                    </template>
+                  </el-popconfirm>
+                </client-only>
+              </div>
             </div>
-            <el-input v-else ref="titleInput" v-model="modifyForm.title" maxlength="100" show-word-limit
-              @blur="modifyTitle(item)" />
-          </div>
-          <div class="action-btns">
-            <el-upload :show-file-list="false" :before-upload="beforeUploadVideo"
-              @change="(file: any) => handleReplace(file, item, index)">
-              <span class="replace-btn" v-if="!item.uploading">替换</span>
-            </el-upload>
-            <client-only>
-              <el-popconfirm v-if="resourceList.length > 1" title="是否移除该条视频？" confirm-button-text="确认" cancel-button-text="取消"
-                @confirm="deleteResource(item.id, index)">
-                <template #reference>
-                  <span class="remove-btn">移除</span>
-                </template>
-              </el-popconfirm>
-            </client-only>
+            <div class="progress-box">
+              <span class="upload-status">{{ item.uploading ? `上传中 ${item.percent}%` : getTagText(item.status) }}</span>
+              <div class="progress-bar">
+                <div class="progress" :style="`width: ${item.uploading ? item.percent : 100}%`"></div>
+              </div>
+            </div>
           </div>
         </div>
-        <div class="progress-box">
-          <span class="upload-status">{{ item.uploading ? `上传中 ${item.percent}%` : getTagText(item.status) }}</span>
-          <div class="progress-bar">
-            <div class="progress" :style="`width: ${item.uploading ? item.percent : 100}%`"></div>
-          </div>
-        </div>
-      </div>
-    </div>
+      </template>
+    </draggable>
   </div>
 </template>
 
@@ -54,8 +66,9 @@ import { Plus } from '@icon-park/vue-next';
 import { reviewCode } from '@/utils/review-code';
 import { ElIcon, ElButton, ElInput, ElPopconfirm } from "element-plus";
 import MonitorIcon from "@/components/icons/MonitorIcon.vue";
+import draggable from "vuedraggable";
 import { submitReviewAPI, getVideoStatusAPI } from "@/api/video";
-import { deleteResourceAPI, modifyTitleAPI, replaceResourceAPI, checkReplaceResourceAPI } from "@/api/resource";
+import { deleteResourceAPI, modifyTitleAPI, replaceResourceAPI, checkReplaceResourceAPI, reorderResourceAPI } from "@/api/resource";
 import { uploadFileChunkAPI } from "@/api/upload";
 import { getFileMD5 } from '@/utils/md5';
 
@@ -148,6 +161,9 @@ const beforeUploadVideo = async (options: any) => {
   return isJpgOrPng && isLtMaxSize;
 }
 
+// 上传临时ID计数器，用于唯一标识每个上传中的项
+let uploadIdCounter = 0;
+
 //上传变化的回调
 const handleChange = (uploadFile: any) => {
   if (!uploadFile.raw) return;
@@ -155,30 +171,37 @@ const handleChange = (uploadFile: any) => {
     resourceList.value = [];
   }
 
+  const uploadKey = --uploadIdCounter; // 负数ID，避免和真实资源ID冲突
+
   const uploadData: UploadResourceType = {
-    id: 0,
+    id: uploadKey,
     status: -1,
     title: "",
     percent: 0,
     uploading: true,
   }
 
-  const index = resourceList.value.push(uploadData) - 1;
+  resourceList.value.push(uploadData);
+
+  const findIndex = () => resourceList.value.findIndex(r => r.id === uploadKey);
 
   uploadFileChunkAPI({
     name: "video",
     action: props.vid ? `v1/upload/video/${props.vid}` : `v1/upload/video`,
     file: uploadFile.raw,
     onProgress: (val: any) => {
+      const idx = findIndex();
+      if (idx === -1) return;
       uploadData.percent = val;
-      resourceList.value[index] = JSON.parse(JSON.stringify(uploadData));
+      resourceList.value[idx] = JSON.parse(JSON.stringify(uploadData));
     },
     onError: () => {
-      // 在上传列表中移除
-      resourceList.value.splice(index, 1);
+      const idx = findIndex();
+      if (idx !== -1) resourceList.value.splice(idx, 1);
     },
     onFinish: (data?: any) => {
-      resourceList.value[index] = data.data.resource;
+      const idx = findIndex();
+      if (idx !== -1) resourceList.value[idx] = data.data.resource;
     },
   })
 }
@@ -238,6 +261,16 @@ const handleReplace = async (uploadFile: any, resource: ResourceType | UploadRes
   })
 }
 
+// 拖拽排序结束
+const onDragEnd = async () => {
+  const ids = resourceList.value.filter(r => r.id > 0).map(r => r.id);
+  if (ids.length === 0 || !props.vid) return;
+  const res = await reorderResourceAPI(props.vid, ids);
+  if (res.data.code !== statusCode.OK) {
+    ElMessage.error(res.data.msg || '排序失败');
+  }
+}
+
 watch(() => props.resources, (newVal) => {
   resourceList.value = newVal ?? [];
 })
@@ -267,6 +300,12 @@ watch(() => props.resources, (newVal) => {
   padding: 0 20px;
   box-sizing: border-box;
 
+  .drag-ghost {
+    opacity: 0.4;
+    background-color: var(--hover-bg);
+    border-radius: 4px;
+  }
+
   .video-item {
     display: flex;
     align-items: center;
@@ -278,6 +317,10 @@ watch(() => props.resources, (newVal) => {
     }
 
     &:hover {
+      .drag-handle {
+        opacity: 1;
+      }
+
       .info-box {
         .file-info {
           .replace-btn,
@@ -285,6 +328,26 @@ watch(() => props.resources, (newVal) => {
             display: block;
           }
         }
+      }
+    }
+
+    .drag-handle {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      cursor: grab;
+      color: var(--font-primary-3);
+      opacity: 0;
+      transition: opacity 0.2s;
+      flex-shrink: 0;
+
+      &:active {
+        cursor: grabbing;
+      }
+
+      &:hover {
+        color: var(--font-primary-2);
       }
     }
 
