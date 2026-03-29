@@ -25,15 +25,14 @@ func ReviewVideoApproved(ctx *gin.Context, reviewVideoReq dto.ReviewVideoReq) er
 		return errors.New("更新状态失败")
 	}
 
-	// 统计已审核通过的资源时长（不含转码中/失败的）
-	var duration float64
+	var totalSec int64
 	tx.Model(&model.Resource{}).Where("vid = ? AND status = ?", reviewVideoReq.Vid, global.AUDIT_APPROVED).
-		Pluck("SUM(duration) as duration", &duration)
+		Select("COALESCE(SUM(duration), 0)").Scan(&totalSec)
 
 	// 更新视频状态为审核通过
 	if err := tx.Model(&model.Video{}).Where("id = ?", reviewVideoReq.Vid).Updates(map[string]interface{}{
 		"status":   global.AUDIT_APPROVED,
-		"duration": duration,
+		"duration": int(totalSec),
 	}).Error; err != nil {
 		tx.Rollback()
 		utils.ErrorLog("更新视频状态失败", "review", err.Error())

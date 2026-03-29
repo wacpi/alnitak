@@ -13,6 +13,7 @@ import (
 	"interastral-peace.com/alnitak/internal/global"
 	"interastral-peace.com/alnitak/internal/resp"
 	"interastral-peace.com/alnitak/internal/service"
+	"interastral-peace.com/alnitak/pkg/playtoken"
 	"interastral-peace.com/alnitak/utils"
 )
 
@@ -35,6 +36,25 @@ func sanitizeSliceMediaFileName(file string) (string, error) {
 	}
 
 	return file, nil
+}
+
+// resolveStreamDir 支持 legacy key→Redis 映射，或 st=JWT（dir+file 绑定防篡改）。
+func resolveStreamDir(ctx *gin.Context, key, file string) (dir string, ok bool) {
+	if st := strings.TrimSpace(ctx.Query("st")); st != "" {
+		claims, err := playtoken.ParseStreamToken(st)
+		if err != nil || claims.File != file || claims.Dir == "" {
+			return "", false
+		}
+		return claims.Dir, true
+	}
+	if key == "" {
+		return "", false
+	}
+	d := service.GetVideoSliceDir(key)
+	if d == "" {
+		return "", false
+	}
+	return d, true
 }
 
 // 获取视频文件
@@ -100,8 +120,8 @@ func GetVideoSlice(ctx *gin.Context) {
 		return
 	}
 
-	dir := service.GetVideoSliceDir(key)
-	if dir == "" {
+	dir, ok := resolveStreamDir(ctx, key, file)
+	if !ok {
 		resp.Forbidden(ctx)
 		return
 	}
@@ -126,8 +146,8 @@ func GetVideoStream(ctx *gin.Context) {
 		return
 	}
 
-	dir := service.GetVideoSliceDir(key)
-	if dir == "" {
+	dir, ok := resolveStreamDir(ctx, key, file)
+	if !ok {
 		resp.Forbidden(ctx)
 		return
 	}

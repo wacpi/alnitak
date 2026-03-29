@@ -31,6 +31,13 @@ type UserBaseInfoResp struct {
 	Gender   int    `json:"gender"`
 }
 
+// AuthorPublicResp 视频/稿件对外展示的作者信息（禁止包含邮箱、手机等敏感字段）。
+type AuthorPublicResp struct {
+	UID    uint   `json:"uid"`
+	Name   string `json:"name"`
+	Avatar string `json:"avatar"`
+}
+
 type UserInfoManageResp struct {
 	ID         uint      `json:"uid"`
 	Username   string    `json:"name"`

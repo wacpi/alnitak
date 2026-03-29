@@ -67,37 +67,31 @@ func UploadVideoInfo(ctx *gin.Context, uploadVideoReq dto.UploadVideoReq) error 
 
 	// 清除缓存
 	cache.DelVideoInfo(uploadVideoReq.Vid)
+	SyncVideoTagsFromCSV(uploadVideoReq.Vid, uploadVideoReq.Tags)
 
 	return nil
 }
 
-// ParseVideoID 兼容短ID和数字ID，将前端传入的 vid/rawID 解析为内部自增ID
-// 约定：
-// - 优先按 short_id 精确匹配（11 位且字符合法）
-// - 找不到再回退到数字 ID 解析
+// ParseVideoID 兼容对外 shortId（随机不透明串）与数字自增 id。
 func ParseVideoID(raw string) (uint, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return 0, errors.New("视频ID不能为空")
 	}
 
-	// 1. 短 ID：长度 11 且字符集合法，按 short_id 查一次
-	if len(raw) == 11 {
-		if _, err := utils.DecodeShortIDToUint64(raw); err == nil {
-			var video model.Video
-			if err := global.Mysql.Where("short_id = ?", raw).First(&video).Error; err == nil && video.ID != 0 {
-				return video.ID, nil
-			}
-			// 找不到则继续按数字 ID 尝试
+	if utils.IsAllASCIIDigits(raw) {
+		id := utils.StringToUint(raw)
+		if id == 0 {
+			return 0, errors.New("视频不存在")
 		}
+		return id, nil
 	}
 
-	// 2. 回退到数字 ID
-	id := utils.StringToUint(raw)
-	if id == 0 {
+	var video model.Video
+	if err := global.Mysql.Where("short_id = ?", raw).First(&video).Error; err != nil || video.ID == 0 {
 		return 0, errors.New("视频不存在")
 	}
-	return id, nil
+	return video.ID, nil
 }
 
 func GetVideoStatus(ctx *gin.Context, vid uint) (video vo.VideoStatusResp, err error) {
@@ -107,6 +101,7 @@ func GetVideoStatus(ctx *gin.Context, vid uint) (video vo.VideoStatusResp, err e
 		return video, errors.New("视频不存在")
 	}
 
+	video.Tags = LoadVideoTagNames(vid)
 	//查询分区下的视频资源
 	video.Resources = GetReviewResourceList(vid)
 
@@ -969,6 +964,7 @@ func EditVideoInfo(ctx *gin.Context, editVideoReq dto.EditVideoReq) error {
 
 	// 删除视频信息缓存
 	cache.DelVideoInfo(editVideoReq.Vid)
+	SyncVideoTagsFromCSV(editVideoReq.Vid, editVideoReq.Tags)
 
 	return nil
 }
@@ -1078,12 +1074,11 @@ func GetVideoById(ctx *gin.Context, videoId uint) (vo.VideoResp, error) {
 	AddVideoClicks(videoId, ctx.ClientIP())
 	video.Clicks += GetVideoClicks(video.ID)
 
-	// 实时查询作者粉丝数（视频缓存中不包含此动态数据）
 	var fans int64
 	global.Mysql.Model(&model.Relation{}).
 		Where("target_uid = ? and (relation = ? or relation = ?)", video.Uid, global.FOLLOWED, global.MUTUAL_FANS).
 		Count(&fans)
-	video.Author.Fans = fans
+	video.Fans = fans
 
 	return video, nil
 }
@@ -1124,6 +1119,7 @@ func GetVideoListManage(videoListReq dto.VideoListReq) (total int64, videos []vo
 	for i := 0; i < len(videos); i++ {
 		videos[i].Clicks += GetVideoClicks(videos[i].ID)
 		videos[i].Author = GetUserBaseInfo(videos[i].Uid)
+		videos[i].Tags = LoadVideoTagNames(videos[i].ID)
 	}
 
 	return
@@ -1139,6 +1135,7 @@ func GetFailedVideoList(videoListReq dto.VideoListReq) (total int64, videos []vo
 	for i := 0; i < len(videos); i++ {
 		videos[i].Clicks += GetVideoClicks(videos[i].ID)
 		videos[i].Author = GetUserBaseInfo(videos[i].Uid)
+		videos[i].Tags = LoadVideoTagNames(videos[i].ID)
 	}
 
 	return
@@ -1156,6 +1153,7 @@ func GetProcessingVideoList(videoListReq dto.VideoListReq) (total int64, videos 
 	for i := 0; i < len(videos); i++ {
 		videos[i].Clicks += GetVideoClicks(videos[i].ID)
 		videos[i].Author = GetUserBaseInfo(videos[i].Uid)
+		videos[i].Tags = LoadVideoTagNames(videos[i].ID)
 		transcodingVideoIDs = append(transcodingVideoIDs, videos[i].ID)
 	}
 
@@ -1191,6 +1189,7 @@ func GetReviewList(reviewListReq dto.ReviewListReq) (total int64, videos []vo.Re
 	// 更新播放量和作者数据
 	for i := 0; i < len(videos); i++ {
 		videos[i].Author = GetUserBaseInfo(videos[i].Uid)
+		videos[i].Tags = LoadVideoTagNames(videos[i].ID)
 	}
 
 	return
@@ -1343,9 +1342,12 @@ func SearchVideo(ctx *gin.Context, searchVideoReq dto.SearchVideoReq) []vo.Video
 }
 
 func CreateVideo(video *model.Video) (uint, error) {
-	// 若尚未设置短ID，这里生成一个
 	if video.ShortID == "" {
-		video.ShortID = utils.EncodeUint64ToShortID(uint64(global.SnowflakeNode.Generate()))
+		sid, err := AllocateUniqueVideoShortID()
+		if err != nil {
+			return 0, err
+		}
+		video.ShortID = sid
 	}
 
 	if err := global.Mysql.Create(video).Error; err != nil {
@@ -1505,15 +1507,20 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 			}
 
 			// 创建新的资源记录
+			rSid, errSid := AllocateUniqueResourceShortID()
+			if errSid != nil {
+				utils.ErrorLog("分配分P shortId 失败", "video", errSid.Error())
+				continue
+			}
 			newResource := model.Resource{
 				Vid:       videoId,
 				Uid:       video.Uid,
 				Title:     rf.resource.Title,
 				CodecName: info.CodecName,
 				Status:    global.VIDEO_PROCESSING,
-				Duration:  info.Duration,
+				Duration:  utils.SecFromFloat(info.Duration),
 				FileID:    rf.vf.ID,
-				ShortID:   utils.EncodeUint64ToShortID(uint64(global.SnowflakeNode.Generate())),
+				ShortID:   rSid,
 			}
 			if err := global.Mysql.Create(&newResource).Error; err != nil {
 				utils.ErrorLog("创建新资源记录失败", "transcoding", err.Error())
@@ -1685,8 +1692,8 @@ func VideoWriteCache(videoId uint) (video vo.VideoResp) {
 		return
 	}
 
-	// 获取作者信息
-	video.Author = GetUserBaseInfo(video.Uid)
+	video.Author = GetAuthorPublic(video.Uid)
+	video.Tags = LoadVideoTagNames(videoId)
 	// 获取视频资源
 	video.Resources = GetVideoResourceByStatus(videoId, global.AUDIT_APPROVED)
 	// 确保Resources不是nil，如果是nil则初始化为空切片，避免JSON序列化为null

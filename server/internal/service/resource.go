@@ -413,7 +413,7 @@ func ReplaceResource(ctx *gin.Context, replaceReq dto.ReplaceResourceReq) (vo.Re
 		map[string]interface{}{
 			"codec_name": transcodingInfo.CodecName,
 			"status":     global.VIDEO_PROCESSING,
-			"duration":   transcodingInfo.Duration,
+			"duration":   utils.SecFromFloat(transcodingInfo.Duration),
 			"file_id":    newFileInfo.ID,
 		},
 	).Error; err != nil {

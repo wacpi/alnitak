@@ -1,6 +1,10 @@
 package utils
 
-import "errors"
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"errors"
+)
 
 // Short ID 使用的 64 字符表（URL 安全）
 // 与常见 Base64 URL 变体兼容，但不使用 '=' 作为填充。
@@ -60,5 +64,15 @@ func DecodeShortIDToUint64(s string) (uint64, error) {
 	}
 
 	return result, nil
+}
+
+// NewOpaqueShortID 生成不可从 ID 反推、不可枚举的公开短标识（URL-safe Base64，无填充，固定 12 字符）。
+// 熵约 72 bit（9 随机字节），需配合数据库 unique 索引并在冲突时重试。
+func NewOpaqueShortID() (string, error) {
+	b := make([]byte, 9)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 

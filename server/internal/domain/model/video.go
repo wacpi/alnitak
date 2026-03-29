@@ -12,8 +12,8 @@ type Video struct {
 	Clicks      int64   `gorm:"comment:点击量;default:0"`
 	Status      int     `gorm:"comment:审核状态;not null;index"`
 	PartitionId uint    `gorm:"comment:分区ID"`
-	Tags        string  `gorm:"type:varchar(100);comment:标签;"`
-	Duration    float64 `gorm:"comment:视频时长;default:0"`
+	Tags        string  `gorm:"type:varchar(100);comment:标签冗余(CSV,便于搜索);"`
+	Duration    int     `gorm:"comment:视频时长秒;default:0"`
 	Shares      int64   `gorm:"comment:分享数;default:0"`
 	ShortID     string  `gorm:"type:varchar(16);comment:短ID;uniqueIndex" json:"shortId"`
 

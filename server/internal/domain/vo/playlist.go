@@ -43,7 +43,7 @@ type PlaylistVideoResp struct {
 	Vid       uint      `json:"vid"`
 	Title     string    `json:"title"`
 	Cover     string    `json:"cover"`
-	Duration  float64   `json:"duration"`
+	Duration  int       `json:"duration"`
 	Clicks    int64     `json:"clicks"`
 	Desc      string    `json:"desc"`
 	CreatedAt time.Time `json:"createdAt"`

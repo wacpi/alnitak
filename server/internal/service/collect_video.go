@@ -96,7 +96,8 @@ func GetCollectVideo(ctx *gin.Context, collectionId uint, page, pageSize int) (t
 	}
 
 	for i := 0; i < len(videos); i++ {
-		videos[i].Author = GetUserBaseInfo(videos[i].Uid)
+		videos[i].Author = GetAuthorPublic(videos[i].Uid)
+		videos[i].Tags = LoadVideoTagNames(videos[i].ID)
 		videos[i].Clicks += GetVideoClicks(videos[i].ID)
 	}
 

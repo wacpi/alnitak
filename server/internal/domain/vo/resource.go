@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"interastral-peace.com/alnitak/internal/domain/model"
+	"interastral-peace.com/alnitak/internal/global"
 )
 
 type ResourceResp struct {
@@ -12,8 +13,10 @@ type ResourceResp struct {
 	CreatedAt time.Time `json:"createdAt"`
 	Vid       uint      `json:"vid"`
 	Title     string    `json:"title"`
-	Duration  float64   `json:"duration"`
-	Status    int       `json:"status"`
+	Duration    int    `json:"duration"` // 秒
+	Status      int    `json:"status"`
+	StatusName  string `json:"statusName,omitempty"`
+	PlayURL     string `json:"playUrl,omitempty"` // 相对路径入口，需配合 play/grant token
 	FileID    uint      `json:"fileId"`    // 关联的视频文件ID（全局去重用）
 	Uid       uint      `json:"uid"`       // 上传者ID
 	SortOrder int       `json:"sortOrder"` // 排序序号
@@ -32,15 +35,17 @@ type RelatedResourceResp struct {
 
 func ResourceToResourceResp(resource model.Resource) ResourceResp {
 	return ResourceResp{
-		ID:        resource.ID,
-		ShortID:   resource.ShortID,
-		CreatedAt: resource.CreatedAt,
-		Vid:       resource.Vid,
-		Title:     resource.Title,
-		Duration:  resource.Duration,
-		Status:    resource.Status,
-		FileID:    resource.FileID,
-		Uid:       resource.Uid,
-		SortOrder: resource.SortOrder,
+		ID:         resource.ID,
+		ShortID:    resource.ShortID,
+		CreatedAt:  resource.CreatedAt,
+		Vid:        resource.Vid,
+		Title:      resource.Title,
+		Duration:   resource.Duration,
+		Status:     resource.Status,
+		StatusName: global.ResourceStatusName(resource.Status),
+		PlayURL:    "/api/v1/play/" + resource.ShortID,
+		FileID:     resource.FileID,
+		Uid:        resource.Uid,
+		SortOrder:  resource.SortOrder,
 	}
 }

@@ -601,6 +601,10 @@ func CompleteUploadVideo(vid, userId, fileID uint, videoName, title string, skip
 			global.Mysql.Model(&model.Resource{}).Where("vid = ?", vid).
 				Select("COALESCE(MAX(sort_order), -1)").Scan(&maxOrder)
 
+			rSid, errSid := AllocateUniqueResourceShortID()
+			if errSid != nil {
+				return vo.ResourceResp{}, errSid
+			}
 			resource := model.Resource{
 				Vid:       vid,
 				Uid:       userId,
@@ -609,8 +613,7 @@ func CompleteUploadVideo(vid, userId, fileID uint, videoName, title string, skip
 				Duration:  existingResource.Duration,
 				FileID:    fileID,
 				SortOrder: maxOrder + 1,
-				// 资源短ID，用于对外 resourceId
-				ShortID:   utils.EncodeUint64ToShortID(uint64(global.SnowflakeNode.Generate())),
+				ShortID:   rSid,
 				CodecName: existingResource.CodecName,
 			}
 			if err := global.Mysql.Create(&resource).Error; err != nil {
@@ -635,6 +638,10 @@ func CompleteUploadVideo(vid, userId, fileID uint, videoName, title string, skip
 	global.Mysql.Model(&model.Resource{}).Where("vid = ?", vid).
 		Select("COALESCE(MAX(sort_order), -1)").Scan(&maxOrder)
 
+	rSid, errSid := AllocateUniqueResourceShortID()
+	if errSid != nil {
+		return vo.ResourceResp{}, errSid
+	}
 	// 存入数据库
 	resource := model.Resource{
 		Vid:       vid,
@@ -642,11 +649,10 @@ func CompleteUploadVideo(vid, userId, fileID uint, videoName, title string, skip
 		Title:     titleWithoutExt,
 		CodecName: transcodingInfo.CodecName,
 		Status:    global.VIDEO_PROCESSING,
-		Duration:  transcodingInfo.Duration,
+		Duration:  utils.SecFromFloat(transcodingInfo.Duration),
 		FileID:    fileID,
 		SortOrder: maxOrder + 1,
-		// 资源短ID，用于对外 resourceId
-		ShortID: utils.EncodeUint64ToShortID(uint64(global.SnowflakeNode.Generate())),
+		ShortID:   rSid,
 	}
 	if err := global.Mysql.Create(&resource).Error; err != nil {
 		return vo.ResourceResp{}, errors.New("保存视频失败")

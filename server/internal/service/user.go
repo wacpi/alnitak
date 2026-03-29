@@ -519,6 +519,18 @@ func GetUserBaseInfo(userId uint) (user vo.UserInfoResp) {
 	return
 }
 
+// GetAuthorPublic 视频区等场景使用的作者公开信息（仅 uid、昵称、头像）。
+func GetAuthorPublic(userId uint) (a vo.AuthorPublicResp) {
+	u := GetUserBaseInfo(userId)
+	if u.ID == 0 {
+		return
+	}
+	a.UID = u.ID
+	a.Name = u.Username
+	a.Avatar = u.Avatar
+	return
+}
+
 // 通过用户ID查询用户
 func FindUserById(id uint) (user model.User, err error) {
 	err = global.Mysql.Where("`id` = ?", id).First(&user).Error

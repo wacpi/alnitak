@@ -102,6 +102,7 @@ func CollectRoutes(r *gin.Engine) *gin.Engine {
 		CollectMenuRoutes(v1)
 		// 视频相关路由
 		CollectVideoRoutes(v1)
+		CollectPlayRoutes(v1)
 		// 资源相关路由
 		CollectResourceRoutes(v1)
 		// 分区相关路由

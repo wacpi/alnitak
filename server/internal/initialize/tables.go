@@ -5,6 +5,7 @@ import (
 
 	"interastral-peace.com/alnitak/internal/domain/model"
 	"interastral-peace.com/alnitak/internal/global"
+	"interastral-peace.com/alnitak/internal/service"
 	"interastral-peace.com/alnitak/utils"
 )
 
@@ -20,6 +21,8 @@ func InitTables() {
 	global.Mysql.AutoMigrate(&model.Video{})          // 视频表
 	global.Mysql.AutoMigrate(&model.VideoFile{})      // 视频文件表（全局去重）
 	global.Mysql.AutoMigrate(&model.VideoFileRef{})   // 视频文件引用表
+	global.Mysql.AutoMigrate(&model.Tag{})            // 标签
+	global.Mysql.AutoMigrate(&model.VideoTag{})       // 视频-标签关联
 	global.Mysql.AutoMigrate(&model.Resource{})       // 视频资源表
 	global.Mysql.AutoMigrate(&model.VideoIndexFile{}) // 视频播放索引文件表
 	global.Mysql.AutoMigrate(&model.Review{})         // 视频审核表
@@ -62,7 +65,32 @@ func backfillShortIDs() {
 		}
 		utils.InfoLog(fmt.Sprintf("【补填ShortID】%s 共%d条空记录", tableName, len(records)), "init")
 		for _, r := range records {
-			shortID := utils.EncodeUint64ToShortID(uint64(global.SnowflakeNode.Generate()))
+			var shortID string
+			switch tableName {
+			case "video":
+				sid, err := service.AllocateUniqueVideoShortID()
+				if err != nil {
+					utils.ErrorLog("补填ShortID失败 video", "init", err.Error())
+					continue
+				}
+				shortID = sid
+			case "resource":
+				sid, err := service.AllocateUniqueResourceShortID()
+				if err != nil {
+					utils.ErrorLog("补填ShortID失败 resource", "init", err.Error())
+					continue
+				}
+				shortID = sid
+			case "article":
+				sid, err := service.AllocateUniqueArticleShortID()
+				if err != nil {
+					utils.ErrorLog("补填ShortID失败 article", "init", err.Error())
+					continue
+				}
+				shortID = sid
+			default:
+				continue
+			}
 			global.Mysql.Table(tableName).Where("id = ?", r.ID).Update("short_id", shortID)
 		}
 		utils.InfoLog(fmt.Sprintf("【补填ShortID】%s 完成", tableName), "init")
