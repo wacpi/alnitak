@@ -89,6 +89,16 @@ export const getHotVideoAPI = (page: number, pageSize: number) => {
   return request.get(`v1/video/getHotVideo?page=${page}&pageSize=${pageSize}`);
 }
 
+// 获取最近上传的视频（SSR）
+export const asyncGetLatestVideoAPI = async (page: number, pageSize: number) => {
+  return await useAsyncData(() => $fetch(`${baseURL}/api/v1/video/getLatestVideo?page=${page}&pageSize=${pageSize}`));
+}
+
+// 获取最近上传的视频
+export const getLatestVideoAPI = (page: number, pageSize: number) => {
+  return request.get(`v1/video/getLatestVideo?page=${page}&pageSize=${pageSize}`);
+}
+
 // 获取分区视频
 export const asyncGetVideoByPartitionAPI = async (size: number, partitionId: number | string) => {
   return await useAsyncData(() => $fetch(`${baseURL}/api/v1/video/getVideoListByPartition?size=${size}&partitionId=${partitionId}`));

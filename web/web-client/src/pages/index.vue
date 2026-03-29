@@ -19,6 +19,10 @@
               <video-item v-for="item in videoList.slice(0, menuFold ? 6 : 4)" :info="item"></video-item>
             </div>
           </div>
+          <div class="tab-bar">
+            <span class="tab-item" :class="{ active: activeTab === 'hot' }" @click="switchTab('hot')">热门推荐</span>
+            <span class="tab-item" :class="{ active: activeTab === 'latest' }" @click="switchTab('latest')">最近投稿</span>
+          </div>
           <div class="recommended-grid" :class="menuFold ? 'grid-fold' : ''">
             <video-item v-for="item in videoList.slice(menuFold ? 6 : 4)" :info="item"></video-item>
           </div>
@@ -34,7 +38,7 @@ import VideoItem from '@/components/home-video-item/index.vue';
 import HomeSidebar from '@/components/home-sidebar/index.vue';
 import HomeHeader from "@/components/home-header/index.vue";
 import HomeCarousel from '@/components/alnitak-carousel/index.vue';
-import { asyncGetHotVideoAPI, getHotVideoAPI } from "@/api/video";
+import { asyncGetHotVideoAPI, getHotVideoAPI, getLatestVideoAPI } from "@/api/video";
 
 useHead({
   title: globalConfig.title
@@ -55,7 +59,8 @@ onMounted(() => {
   } catch {}
 });
 
-// 获取分区
+// 当前选项卡
+const activeTab = ref<'hot' | 'latest'>('hot');
 const page = ref(1);
 const pageSize = 16;
 const videoList = ref<VideoType[]>([])
@@ -66,18 +71,32 @@ if ((data.value as any).code === statusCode.OK) {
 
 const noMore = ref(false);
 const loading = ref(false);
-const getViedeoList = async () => {
+
+const fetchVideoList = async (append = true) => {
   loading.value = true;
-  const res = await getHotVideoAPI(page.value, pageSize);
+  const res = activeTab.value === 'hot'
+    ? await getHotVideoAPI(page.value, pageSize)
+    : await getLatestVideoAPI(page.value, pageSize);
   if (res.data.code === statusCode.OK) {
     if (res.data.data.videos) {
-      videoList.value = videoList.value.concat(res.data.data.videos);
+      videoList.value = append ? videoList.value.concat(res.data.data.videos) : res.data.data.videos;
     } else {
       noMore.value = true;
     }
   }
   loading.value = false;
 }
+
+const switchTab = async (tab: 'hot' | 'latest') => {
+  if (activeTab.value === tab) return;
+  activeTab.value = tab;
+  page.value = 1;
+  noMore.value = false;
+  videoList.value = [];
+  await fetchVideoList(false);
+}
+
+const getViedeoList = () => fetchVideoList(true);
 
 const lazyLoading = (e: Event) => {
   const scrollTop = document.documentElement.scrollTop || document.body.scrollTop;
@@ -188,6 +207,34 @@ onBeforeUnmount(() => {
   .side-fold {
     flex: 3;
     grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.tab-bar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  margin-top: 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-color);
+
+  .tab-item {
+    font-size: 15px;
+    color: var(--font-primary-3);
+    cursor: pointer;
+    padding-bottom: 8px;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+
+    &:hover {
+      color: var(--font-primary-1);
+    }
+
+    &.active {
+      color: var(--primary-color);
+      font-weight: 600;
+      border-bottom-color: var(--primary-color);
+    }
   }
 }
 

@@ -92,6 +92,9 @@ import { createUUID } from "@/utils/uuid";
 import { getDanmakuAPI } from "@/api/danmaku";
 import { getHistoryProgressAPI, addHistoryAPI } from "@/api/history";
 import { globalConfig } from '@/utils/global-config';
+import { updateTokenAPI } from '@/api/auth';
+import { storageData } from '@/utils/storage-data';
+import { useAuthStore, saveCredentials } from '@/stores/auth-store';
 
 const route = useRoute();
 const router = useRouter();
@@ -453,15 +456,36 @@ const startHeartbeat = () => {
   }, 25000);
 }
 
-const handleVisibilityChange = () => {
+const handleVisibilityChange = async () => {
   if (document.hidden) {
     console.log('[WebSocket] 页面进入后台');
   } else {
     console.log('[WebSocket] 页面回到前台');
+    // 重连 WebSocket
     if (!websocket || websocket.readyState !== WebSocket.OPEN) {
       console.log('[WebSocket] 页面恢复时检测到连接断开,尝试重连');
       reconnectAttempts = 0;
       initWebSocket();
+    }
+    // 同步登录状态：watch 页的 request interceptor 跳过了 token 自动刷新，
+    // 所以在页面回到前台时手动尝试续签并同步 auth 状态
+    try {
+      const localRefreshToken = storageData.get('refreshToken');
+      const token = storageData.get('token');
+      if (!token && localRefreshToken) {
+        const res = await updateTokenAPI(localRefreshToken);
+        if (res.data.code === statusCode.OK) {
+          saveCredentials({
+            token: res.data.data.token,
+            refreshToken: res.data.data.refreshToken,
+            userId: res.data.data.userId,
+          });
+        }
+      }
+      const auth = useAuthStore();
+      await auth.fetchMe(true);
+    } catch {
+      // 不阻塞其他逻辑
     }
   }
 }

@@ -19,3 +19,8 @@ export const checkReplaceResourceAPI = (resourceId: number, hash: string) => {
 export const replaceResourceAPI = (resourceId: number, hash: string) => {
   return request.post('v1/resource/replaceResource', { resourceId, hash });
 }
+
+//资源排序
+export const reorderResourceAPI = (vid: number, resourceIds: number[]) => {
+  return request.put('v1/resource/reorder', { vid, resourceIds });
+}
