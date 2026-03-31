@@ -809,7 +809,8 @@ func GetVideoSliceDir(key string) string {
 func GetUploadVideoList(ctx *gin.Context, page, pageSize int, category string) (total int64, videos []vo.UploadVideoResp) {
 	userId := ctx.GetUint("userId")
 
-	db := global.Mysql.Model(&model.Video{}).Where("uid = ?", userId)
+	// 个人投稿列表仅展示 UGC 视频，排除已绑定 PGC 剧集的视频
+	db := global.Mysql.Model(&model.Video{}).Where("uid = ? AND pgc_attached = ?", userId, false)
 	db = applyVideoCategoryFilter(db, category)
 	db.Count(&total)
 	db.Select(vo.UPLOAD_VIDEO_FIELD).
@@ -1048,6 +1049,44 @@ func deleteVideoAndRelatedData(id, ownerUid uint, video *model.Video) error {
 		utils.ErrorLog("删除视频关联AT消息失败", "video", err.Error())
 	}
 
+	// 清理 PGC 关联：删除引用该视频的剧集记录，并同步回写对应 PGC 的当前集数
+	// 防止后台/脚本直接删视频后，pgc_episode 残留脏数据。
+	var pgcEpisodeRows []struct {
+		PGCID uint64 `gorm:"column:pgc_id"`
+	}
+	if err := global.Mysql.Model(&model.PGCEpisode{}).
+		Select("pgc_id").
+		Where("vid = ?", id).
+		Scan(&pgcEpisodeRows).Error; err != nil {
+		utils.ErrorLog("查询视频关联PGC剧集失败", "video", err.Error())
+	}
+	if len(pgcEpisodeRows) > 0 {
+		if err := global.Mysql.Where("vid = ?", id).Delete(&model.PGCEpisode{}).Error; err != nil {
+			utils.ErrorLog("删除视频关联PGC剧集失败", "video", err.Error())
+		} else {
+			pgcSet := make(map[uint64]struct{}, len(pgcEpisodeRows))
+			for _, row := range pgcEpisodeRows {
+				if row.PGCID > 0 {
+					pgcSet[row.PGCID] = struct{}{}
+				}
+			}
+			for pgcID := range pgcSet {
+				var currEp int64
+				if err := global.Mysql.Model(&model.PGCEpisode{}).
+					Where("pgc_id = ?", pgcID).
+					Count(&currEp).Error; err != nil {
+					utils.ErrorLog("统计PGC当前集数失败", "video", err.Error())
+					continue
+				}
+				if err := global.Mysql.Model(&model.PGCContent{}).
+					Where("pgc_id = ?", pgcID).
+					Update("current_episodes", int(currEp)).Error; err != nil {
+					utils.ErrorLog("回写PGC当前集数失败", "video", err.Error())
+				}
+			}
+		}
+	}
+
 	if err := global.Mysql.Where("id = ?", id).Delete(&model.Video{}).Error; err != nil {
 		utils.ErrorLog("删除视频失败", "video", err.Error())
 		return errors.New("删除视频失败")
@@ -1094,9 +1133,9 @@ func GetAllVideoList(ctx *gin.Context) (videos []vo.AllVideoResp) {
 // 获取用户视频
 func GetVideoByUser(ctx *gin.Context, userId uint, page, pageSize int) (total int64, videos []vo.UploadVideoResp) {
 	global.Mysql.Model(&model.Video{}).
-		Where("uid = ? and status = ?", userId, global.AUDIT_APPROVED).Count(&total)
+		Where("uid = ? and status = ? and pgc_attached = ?", userId, global.AUDIT_APPROVED, false).Count(&total)
 	global.Mysql.Model(&model.Video{}).Select(vo.UPLOAD_VIDEO_FIELD).
-		Where("uid = ? and status = ?", userId, global.AUDIT_APPROVED).
+		Where("uid = ? and status = ? and pgc_attached = ?", userId, global.AUDIT_APPROVED, false).
 		Order("created_at DESC").
 		Limit(pageSize).Offset((page - 1) * pageSize).Scan(&videos)
 
@@ -1181,10 +1220,17 @@ func DeleteVideoManage(ctx *gin.Context, id uint) error {
 
 // 获取待审核视频列表
 func GetReviewList(reviewListReq dto.ReviewListReq) (total int64, videos []vo.ReviewListResp) {
-	global.Mysql.Model(&model.Video{}).Where("status = ?", global.WAITING_REVIEW).Count(&total)
-	global.Mysql.Model(&model.Video{}).Where("status = ?", global.WAITING_REVIEW).
+	// 审核链路隔离：视频审核列表仅展示 UGC 待审视频，排除已绑定 PGC 的视频
+	baseQuery := global.Mysql.Model(&model.Video{}).
+		Where("status = ?", global.WAITING_REVIEW).
+		Where("pgc_attached = ?", false)
+
+	baseQuery.Count(&total)
+	baseQuery.
 		Order("created_at DESC").
-		Limit(reviewListReq.PageSize).Offset((reviewListReq.Page - 1) * reviewListReq.PageSize).Scan(&videos)
+		Limit(reviewListReq.PageSize).
+		Offset((reviewListReq.Page - 1) * reviewListReq.PageSize).
+		Scan(&videos)
 
 	// 更新播放量和作者数据
 	for i := 0; i < len(videos); i++ {
