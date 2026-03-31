@@ -21,9 +21,21 @@ export const searchVideoAPI = (data: SearchVideoType) => {
   return request.post("v1/video/searchVideo", data);
 }
 
-// 获取视频信息
+// 获取视频信息（vid 可为数字 id 或 shortId）
 export const getVideoInfoAPI = async (videoId: number | string) => {
-  return request.get(`v1/video/getVideoById?vid=${videoId}`);
+  const v = encodeURIComponent(String(videoId).trim())
+  return request.get(`v1/video/getVideoById?vid=${v}`)
+}
+
+/** 播放授权（与 Web 对齐，后续播放器可接入 signed URL） */
+export const postPlayGrantAPI = (resourceShortId: string) => {
+  return request.post('v1/play/grant', { resourceShortId })
+}
+
+export const getPlayUrlsAPI = (resourceShortId: string, token: string, quality?: string) => {
+  return request.get(`v1/play/${encodeURIComponent(resourceShortId)}`, {
+    params: { token, ...(quality ? { quality } : {}) },
+  })
 }
 
 // 获取视频支持的分辨率
