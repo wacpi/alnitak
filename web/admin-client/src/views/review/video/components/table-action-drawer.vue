@@ -7,7 +7,8 @@
           <n-form-item-grid-item :span="12" label="用户名">{{ data.author.name }}</n-form-item-grid-item>
           <n-form-item-grid-item :span="12" label="上传时间">{{ formatTime(data.createdAt) }}</n-form-item-grid-item>
           <n-form-item-grid-item :span="24" label="视频标签">
-            <n-tag class="tag" v-for="(item, index) in data.tags.split(',')" :key="`${item}-${index}`">{{ item }}</n-tag>
+            <n-tag v-if="tagList.length === 0" class="tag" size="small">无</n-tag>
+            <n-tag class="tag" v-for="(item, index) in tagList" :key="`${item}-${index}`">{{ item }}</n-tag>
           </n-form-item-grid-item>
         </n-grid>
       </n-form>
@@ -81,6 +82,14 @@ const props = withDefaults(defineProps<{
 }>(), {
   visible: false,
 })
+
+const tagList = computed(() => {
+  const raw: any = (props.data as any)?.tags;
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw.map(String).filter(Boolean);
+  if (typeof raw === 'string') return raw.split(',').map(s => s.trim()).filter(Boolean);
+  return [String(raw)].filter(Boolean);
+});
 
 const drawerVisible = computed({
   get() {

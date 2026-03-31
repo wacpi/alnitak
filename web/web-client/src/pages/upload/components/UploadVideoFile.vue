@@ -117,7 +117,7 @@ const deleteResource = async (id: number, index: number) => {
 
 //修改资源名
 const modifyIndex = ref(-1);
-const titleInput = ref<Array<InstanceType<typeof ElInput>>>();
+const titleInput = ref<Array<InstanceType<typeof ElInput>>>([]);
 const modifyForm = reactive<BaseResourceType>({
   id: 0,
   title: '',
@@ -129,10 +129,10 @@ const titleClick = (resource: ResourceType | UploadResourceType, index: number) 
   modifyForm.title = resource.title;
   modifyIndex.value = index;
   nextTick(() => {
-    if (titleInput.value) {
-      titleInput.value[0].focus();
-    }
-  })
+    const inst = titleInput.value?.[index];
+    // element-plus ElInput 实例有 focus 方法，但在渲染/拖拽重排时可能短暂为 undefined
+    inst?.focus?.();
+  });
 }
 
 //修改标题

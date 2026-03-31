@@ -1,5 +1,7 @@
 interface BaseVideoType {
   vid: number;
+  /** 对外 opaque 短 ID，与路由 / 接口 vid 参数二选一 */
+  shortId?: string;
   title: string;
   cover: string;
   desc: string;

@@ -6,6 +6,7 @@ import { getUserInfoAPI  } from "@/api/user";
 import { getRoleInfoAPI } from "@/api/role";
 import { logoutAPI } from "@/api/auth";
 import { storageData } from "@/utils/storage-data";
+import { globalConfig } from "@/utils/global-config";
 
 const useUserStore = defineStore("login", () => {
   const token = ref("");
@@ -21,6 +22,15 @@ const useUserStore = defineStore("login", () => {
     await getUserInfo();
     window.$message.success("登陆成功，正在跳转...");
     const redirectUrl = decodeURIComponent(redirect as string);
+    const basePath = `/${globalConfig.baseUrl}`;
+    if (
+      (redirectUrl === "/" || redirectUrl === basePath) &&
+      homePage.value &&
+      router.hasRoute(homePage.value)
+    ) {
+      router.push({ name: homePage.value });
+      return;
+    }
     router.push(redirectUrl);
   }
 
