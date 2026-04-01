@@ -268,6 +268,10 @@ const loadPart = async (part: number) => {
   const el = document.getElementById('dplayer');
   if (el) {
     await loadResource(part);
+    if (!options.video.quality.length) {
+      console.error('[video-player] 无可用清晰度，无法播放');
+      return;
+    }
     /* === 播放器销毁与重建实例化片段 start === */
     if (player) player.destroy();
     options.container = el;

@@ -273,6 +273,8 @@ const addEp = ref<AddPgcEpisodeReq>({
 })
 const addEpFile = ref<File | null>(null)
 const addEpUploading = ref(false)
+const addEpUploadPercent = ref(0)
+const addEpUploadStage = ref<'idle' | 'checking' | 'uploading' | 'merging' | 'creating'>('idle')
 
 function getFileBaseName(name: string) {
   const idx = name.lastIndexOf('.')
@@ -324,6 +326,8 @@ async function uploadEpisodeFileAndFill() {
     return
   }
   addEpUploading.value = true
+  addEpUploadPercent.value = 0
+  addEpUploadStage.value = 'checking'
   addEpError.value = ''
   try {
     const file = addEpFile.value
@@ -340,23 +344,32 @@ async function uploadEpisodeFileAndFill() {
     const isInstant = chunks.includes(-1)
 
     if (!isInstant) {
+      addEpUploadStage.value = 'uploading'
       const up = await uploadVideoChunkApi(auth.token, {
         file,
         hash,
         chunkIndex: 0,
         totalChunks: 1,
+        onProgress: (percent) => {
+          addEpUploadPercent.value = percent
+        },
       })
       if (up.code !== 200) {
         addEpError.value = up.msg || '上传视频失败'
         return
       }
+      addEpUploadPercent.value = 100
+      addEpUploadStage.value = 'merging'
       const merge = await mergeVideoUploadApi(auth.token, { hash, size, fileID })
       if (merge.code !== 200) {
         addEpError.value = merge.msg || '合并视频失败'
         return
       }
+    } else {
+      addEpUploadPercent.value = 100
     }
 
+    addEpUploadStage.value = 'creating'
     const create = await createVideoUploadApi(auth.token, { hash, size, fileID })
     if (create.code !== 200) {
       addEpError.value = create.msg || '创建视频资源失败'
@@ -372,6 +385,7 @@ async function uploadEpisodeFileAndFill() {
   } catch (e: any) {
     addEpError.value = e?.message || '上传失败'
   } finally {
+    addEpUploadStage.value = 'idle'
     addEpUploading.value = false
   }
 }
@@ -811,6 +825,28 @@ onBeforeUnmount(() => {
             </svg>
             {{ addEpUploading ? '上传中…' : '上传视频并自动填入' }}
           </button>
+        </div>
+        <div v-if="addEpUploading" class="mt-3">
+          <div class="flex items-center justify-between text-xs text-studio-muted">
+            <span>
+              {{
+                addEpUploadStage === 'checking'
+                  ? '校验文件中…'
+                  : addEpUploadStage === 'uploading'
+                  ? '上传中…'
+                  : addEpUploadStage === 'merging'
+                  ? '服务端合并中…'
+                  : '创建视频资源中…'
+              }}
+            </span>
+            <span>{{ addEpUploadPercent }}%</span>
+          </div>
+          <div class="mt-1 h-2 w-full overflow-hidden rounded bg-studio-input">
+            <div
+              class="h-full rounded bg-gradient-to-r from-cyan-500 to-cyan-400 transition-all duration-200"
+              :style="{ width: `${addEpUploadPercent}%` }"
+            ></div>
+          </div>
         </div>
         <div class="mt-3 flex justify-end">
           <button

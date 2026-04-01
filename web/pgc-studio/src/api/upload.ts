@@ -79,7 +79,13 @@ export async function createVideoUploadApi(
 
 export async function uploadVideoChunkApi(
   token: string,
-  args: { file: File; hash: string; chunkIndex: number; totalChunks: number },
+  args: {
+    file: File
+    hash: string
+    chunkIndex: number
+    totalChunks: number
+    onProgress?: (percent: number) => void
+  },
 ): Promise<ApiResponse<unknown>> {
   const form = new FormData()
   form.append('video', args.file)
@@ -88,6 +94,42 @@ export async function uploadVideoChunkApi(
   form.append('size', String(args.file.size))
   form.append('chunkIndex', String(args.chunkIndex))
   form.append('totalChunks', String(args.totalChunks))
+
+  // 需要上传进度时使用 XHR（fetch 无法稳定拿到 upload progress）。
+  if (typeof args.onProgress === 'function') {
+    return new Promise<ApiResponse<unknown>>((resolve) => {
+      const xhr = new XMLHttpRequest()
+      xhr.open('POST', getApiUrl('/api/v1/upload/chunkVideo'), true)
+      xhr.withCredentials = true
+      xhr.setRequestHeader('Authorization', token)
+
+      xhr.upload.onprogress = (evt) => {
+        if (!evt.lengthComputable) return
+        const percent = Math.max(0, Math.min(100, Math.round((evt.loaded / evt.total) * 100)))
+        args.onProgress?.(percent)
+      }
+
+      xhr.onload = () => {
+        let json: any = null
+        try {
+          json = xhr.responseText ? JSON.parse(xhr.responseText) : null
+        } catch {
+          json = null
+        }
+        if (!json || typeof json !== 'object' || !('code' in json)) {
+          resolve({ code: xhr.status || 500, data: null as any, msg: '响应解析失败' })
+          return
+        }
+        resolve(json as ApiResponse<unknown>)
+      }
+
+      xhr.onerror = () => {
+        resolve({ code: xhr.status || 500, data: null as any, msg: '上传失败，请检查网络' })
+      }
+
+      xhr.send(form)
+    })
+  }
 
   const res = await fetch(getApiUrl('/api/v1/upload/chunkVideo'), {
     method: 'POST',

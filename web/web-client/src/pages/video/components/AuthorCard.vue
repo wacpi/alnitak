@@ -96,7 +96,8 @@ watch(
   box-sizing: border-box;
   height: 104px;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
+  padding-top: 12px;
 }
 
 .up-info-left {

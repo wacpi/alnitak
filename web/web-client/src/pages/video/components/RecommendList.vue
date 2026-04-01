@@ -166,6 +166,11 @@ defineExpose({
         cursor: pointer;
         background-color: var(--fill-1, #c9ccd0);
 
+        &.disabled {
+          pointer-events: none;
+          opacity: .6;
+        }
+
         img {
           width: 100%;
           height: 100%;
@@ -206,6 +211,11 @@ defineExpose({
           line-clamp: 2;
           -webkit-line-clamp: 2;
           -webkit-box-orient: vertical;
+
+          &.disabled {
+            pointer-events: none;
+            opacity: .6;
+          }
         }
 
         .up-name {

@@ -13,7 +13,7 @@
           </div>
           <!-- 标题和版权信息 -->
           <div class="video-title-box">
-            <p class="video-title">{{ videoInfo?.title }}</p>
+            <p class="video-title">{{ pgcInfo?.title || videoInfo?.title }}</p>
             <p v-show="videoInfo?.copyright" class="copyright">
               <el-icon class="icon" color='#fd6d6f'>
                 <forbid-icon></forbid-icon>
@@ -23,18 +23,30 @@
           </div>
           <!-- 点赞收藏等数据 -->
           <div class="video-toolbar">
-            <div class="toolbar-left">
+            <div class="toolbar-left" v-if="!isPGCPage">
               <archive-info v-if="videoInfo" :vid="videoInfo.vid" :short-id="videoInfo.shortId"></archive-info>
             </div>
             <div class="toolbar-right">
               <span>{{ onlineCount }} 人在看</span>
               <span>{{ videoInfo?.clicks }} 播放</span>
-              <span v-if="videoInfo?.fans != null && videoInfo.fans > 0">{{ videoInfo.fans }} 粉丝</span>
               <span>{{ videoInfo ? formatTime(videoInfo.createdAt) : '' }}</span>
             </div>
           </div>
+          <div class="pgc-info-card" v-if="isPGCPage && pgcInfo">
+            <img class="pgc-cover" :src="getResourceUrl(pgcInfo.cover)" alt="封面" />
+            <div class="pgc-meta">
+              <div class="pgc-name">{{ pgcInfo.title }}</div>
+              <div class="pgc-sub">
+                <span v-if="pgcInfo.year">{{ pgcInfo.year }}</span>
+                <span v-if="pgcInfo.area"> · {{ formatAreaName(pgcInfo.area) }}</span>
+                <span v-if="pgcInfo.current_episodes"> · 全{{ pgcInfo.current_episodes }}话</span>
+              </div>
+              <div class="pgc-rating" v-if="pgcInfo.rating">评分 {{ pgcInfo.rating }}</div>
+              <div class="pgc-desc">{{ pgcInfo.desc || '暂无简介' }}</div>
+            </div>
+          </div>
           <!-- 简介部分 -->
-          <div class="video-desc-container">
+          <div class="video-desc-container" v-if="!isPGCPage">
             <div ref="descRef" class="basic-desc-info" :style="`height: ${foldDesc ? foldDescHeight : 'auto'};`">
               <span class="desc-info-text">{{ videoInfo?.desc }}</span>
             </div>
@@ -49,25 +61,42 @@
           <!-- 评论区 -->
           <comment-list v-if="videoInfo" :vid="videoInfo.vid" @seek-time="handleSeekTime"></comment-list>
         </div>
-        <div class="right-column">
+        <div class="right-column" :class="{ 'pgc-mode': isPGCPage }">
           <!-- 作者信息 -->
-          <author-card v-if="videoInfo" :info="videoInfo.author"></author-card>
+          <author-card v-if="videoInfo && !isPGCPage" :info="videoInfo.author"></author-card>
           <!-- 添加弹幕列表 -->
           <div class="danmaku-list-container">
             <danmaku-list ref="danmakuListRef" :height="danmakuListHeight"></danmaku-list>
           </div>
-          <!-- 合并的分P和合集列表 -->
+          <!-- 合并的分P和合集列表 / PGC正片列表 -->
+          <PGCSeasonPanel
+            ref="collectionRef"
+            v-if="videoInfo && isPGCPage"
+            :vid="videoInfo.vid"
+            :initial-seasons="pgcPanel.seasons"
+            :initial-episodes="pgcPanel.episodes"
+            :initial-active-season-id="pgcPanel.activeSeasonId"
+          ></PGCSeasonPanel>
           <video-collection 
             ref="collectionRef" 
-            v-if="videoInfo" 
+            v-else-if="videoInfo" 
             :vid="videoInfo.vid"
             :resources="videoInfo.resources"
             :current-part="currentPart"
             @change-part="changePart"
           ></video-collection>
           <!-- 相关推荐 -->
-          <recommend-list ref="recommendListRef" v-if="videoInfo" :vid="videoInfo.vid"
-            :show-autoplay-control="!videoInfo || (videoInfo.resources.length <= 1 && !hasCollection)"></recommend-list>
+          <PGCRecommendList
+            ref="recommendListRef"
+            v-if="videoInfo && isPGCPage"
+            :vid="videoInfo.vid"
+          ></PGCRecommendList>
+          <recommend-list
+            ref="recommendListRef"
+            v-else-if="videoInfo"
+            :vid="videoInfo.vid"
+            :show-autoplay-control="!videoInfo || (videoInfo.resources.length <= 1 && !hasCollection)"
+          ></recommend-list>
         </div>
       </div>
     </div>
@@ -83,13 +112,18 @@ import PartList from "./video/components/PartList.vue";
 import AuthorCard from './video/components/AuthorCard.vue';
 import ArchiveInfo from './video/components/ArchiveInfo.vue';
 import VideoCollection from "./video/components/VideoCollection.vue";
+import PGCSeasonPanel from "./video/components/PGCSeasonPanel.vue";
 import CommentList from "./video/components/CommentList.vue";
 import DanmakuList from "./video/components/DanmakuList.vue";
 import HeaderBar from "@/components/header-bar/index.vue";
 import VideoPlayer from "@/components/video-player/index.vue";
 import RecommendList from "./video/components/RecommendList.vue";
+import PGCRecommendList from "./video/components/PGCRecommendList.vue";
 import { asyncGetVideoInfoAPI } from "@/api/video";
+import { getPGCPlayPanelByVideoAPI } from "@/api/pgc";
+import { resolveWatchVideoIdForInitialLoad, resolveWatchVideoIdOnQueryChange } from "@/utils/watch-route";
 import { normalizeVideoTags } from "@/utils/video-tags";
+import { getResourceUrl } from "@/utils/resource";
 import { createUUID } from "@/utils/uuid";
 import { getDanmakuAPI } from "@/api/danmaku";
 import { getHistoryProgressAPI, addHistoryAPI } from "@/api/history";
@@ -102,17 +136,42 @@ import { statusCode } from '@/utils/status-code';
 const route = useRoute();
 const router = useRouter();
 
-// 从 query 取视频标识 v（shortId 或 vid）
-const v = route.query.v;
-if (!v || typeof v !== 'string') {
-  await navigateTo('/404');
-  throw new Error('missing v');
-}
-const videoId = v;
+// 路由兼容：/watch?ep= 或 /watch?v=（逻辑见 utils/watch-route）
+const videoId = await resolveWatchVideoIdForInitialLoad(route.query);
 
 // 获取视频信息
 const videoInfo = ref<VideoType>();
 const videoTagList = computed(() => normalizeVideoTags(videoInfo.value?.tags));
+const pgcInfo = ref<any>(null);
+const pgcPanel = ref<{ seasons: any[]; episodes: any[]; activeSeasonId: string }>({
+  seasons: [],
+  episodes: [],
+  activeSeasonId: '',
+});
+const areaCodeMap: Record<string, string> = {
+  CN: '中国大陆',
+  JP: '日本',
+  HK: '中国香港',
+  TW: '中国台湾',
+  KR: '韩国',
+  US: '美国',
+};
+const formatAreaName = (raw: unknown) => {
+  const code = String(raw ?? '').trim().toUpperCase();
+  return areaCodeMap[code] || String(raw ?? '').trim();
+};
+const isPGCBound = ref(false);
+const routePGCMode = computed(() => {
+  const raw = route.query.mode;
+  const mode = Array.isArray(raw) ? raw[0] : raw;
+  return String(mode || '').trim().toLowerCase() === 'pgc';
+});
+const isPGCPage = computed(() => routePGCMode.value);
+const currentWatchVQuery = computed(() => {
+  const fromRoute = Array.isArray(route.query.v) ? route.query.v[0] : route.query.v;
+  if (fromRoute && String(fromRoute).trim() !== '') return String(fromRoute);
+  return String(videoInfo.value?.shortId || videoInfo.value?.vid || '');
+});
 
 const { data } = await asyncGetVideoInfoAPI(videoId);
 if ((data.value as any).code === statusCode.OK) {
@@ -120,6 +179,32 @@ if ((data.value as any).code === statusCode.OK) {
 } else {
   await navigateTo('/404');
   throw new Error('video not found');
+}
+
+const loadPGCBinding = async (vid: number) => {
+  try {
+    const res = await getPGCPlayPanelByVideoAPI(vid);
+    if (res?.data?.code === statusCode.OK && res?.data?.data?.current) {
+      isPGCBound.value = true;
+      pgcInfo.value = res.data.data.current;
+      pgcPanel.value = {
+        seasons: res.data.data.seasons || [],
+        episodes: res.data.data.episodes || [],
+        activeSeasonId: String(res.data.data.active_season_id || ''),
+      };
+    } else {
+      isPGCBound.value = false;
+      pgcInfo.value = null;
+      pgcPanel.value = { seasons: [], episodes: [], activeSeasonId: '' };
+    }
+  } catch {
+    isPGCBound.value = false;
+    pgcInfo.value = null;
+    pgcPanel.value = { seasons: [], episodes: [], activeSeasonId: '' };
+  }
+};
+if (videoInfo.value?.vid) {
+  await loadPGCBinding(videoInfo.value.vid);
 }
 
 const playerContainerRef = ref<HTMLElement | null>(null)
@@ -140,15 +225,23 @@ const handelResize = () => {
 
 // 视频分集：校验 p 参数有效性，无效则重定向到 p1
 if (route.query.p && Number(route.query.p) > videoInfo.value!.resources.length) {
-  router.replace({ path: '/watch', query: { v: route.query.v as string, p: 1 } });
+  router.replace({ path: '/watch', query: { ...route.query, v: currentWatchVQuery.value, p: 1 } });
 }
 const currentPart = ref(Number(route.query.p) || 1);
 const pendingProgress = ref<number | null>(null);
 
 // 获取组件引用
-const recommendListRef = ref<InstanceType<typeof RecommendList> | null>(null);
+const recommendListRef = ref<ComponentPublicInstance<{
+  autonext?: boolean;
+  getNextVideo?: () => any;
+  resetPlayIndex?: (vid: number) => void;
+}> | null>(null);
 const partListRef = ref<InstanceType<typeof PartList> | null>(null);
-const collectionRef = ref<InstanceType<typeof VideoCollection> | null>(null);
+const collectionRef = ref<ComponentPublicInstance<{
+  autonext?: boolean;
+  getNextVideo?: () => any;
+  hasPlaylist?: boolean;
+}> | null>(null);
 const hasCollection = computed(() => !!collectionRef.value?.hasPlaylist);
 
 // 视频播放结束时的自动连播逻辑
@@ -178,11 +271,17 @@ const onVideoEnded = () => {
     console.log('合集下一个视频:', nextVideo)
     if (nextVideo) {
       setTimeout(() => {
+        const nextEp = Number((nextVideo as any).epId || 0);
+        if (isPGCPage.value && Number.isFinite(nextEp) && nextEp > 0) {
+          navigateTo(`/watch?ep=${Math.floor(nextEp)}&mode=pgc`);
+          return;
+        }
         const nextV = (nextVideo as any).shortId || String((nextVideo as any).vid);
+        const pgcMode = isPGCPage.value ? '&mode=pgc' : '';
         if (nextVideo.resourceId) {
-          navigateTo(`/watch?v=${nextV}&resourceId=${nextVideo.resourceId}`)
+          navigateTo(`/watch?v=${nextV}&resourceId=${nextVideo.resourceId}${pgcMode}`)
         } else {
-          navigateTo(`/watch?v=${nextV}`)
+          navigateTo(`/watch?v=${nextV}${pgcMode}`)
         }
       }, 1000)
       return
@@ -204,7 +303,14 @@ const checkRecommendAutoplay = () => {
 
     if (nextVideo) {
       setTimeout(() => {
-        navigateTo(`/watch?v=${nextVideo.shortId || String(nextVideo.vid)}`);
+        const nextEp = Number((nextVideo as any).epId || 0);
+        if (isPGCPage.value && Number.isFinite(nextEp) && nextEp > 0) {
+          navigateTo(`/watch?ep=${Math.floor(nextEp)}&mode=pgc`);
+          return;
+        }
+        const nextV = nextVideo.shortId || String(nextVideo.vid);
+        const pgcMode = isPGCPage.value ? '&mode=pgc' : '';
+        navigateTo(`/watch?v=${nextV}${pgcMode}`);
       }, 3000);
     } else {
       console.log('没有更多推荐视频了');
@@ -248,7 +354,7 @@ const changePart = async (target: number) => {
   if (videoInfo.value?.resources[target - 1]) {
     currentPart.value = target;
   }
-  router.replace({ path: '/watch', query: { v: route.query.v as string, p: currentPart.value } });
+  router.replace({ path: '/watch', query: { ...route.query, v: currentWatchVQuery.value, p: currentPart.value } });
 
   // 主动请求新分集进度
   if (videoInfo.value) {
@@ -274,7 +380,7 @@ watch(() => route.query.p, async (newP) => {
     }
     getDanmakuList(videoInfo.value.vid, partNum);
   } else {
-    router.replace({ path: '/watch', query: { v: route.query.v as string, p: 1 } });
+    router.replace({ path: '/watch', query: { ...route.query, v: currentWatchVQuery.value, p: 1 } });
   }
 });
 
@@ -315,7 +421,7 @@ onMounted(async () => {
         const { part, progress } = res.data.data;
         if (part && part !== currentPart.value && videoInfo.value.resources[part - 1]) {
           currentPart.value = part;
-          router.replace({ path: '/watch', query: { v: route.query.v as string, p: part } });
+          router.replace({ path: '/watch', query: { ...route.query, v: currentWatchVQuery.value, p: part } });
           await nextTick();
         }
         getDanmakuList(videoInfo.value.vid, part || currentPart.value);
@@ -522,13 +628,21 @@ onBeforeUnmount(() => {
   descRef.value = undefined;
 })
 
-// 监听 route.query.v 变化，重新拉取视频信息和重置状态
-watch(() => route.query.v, async (newV, oldV) => {
-  if (newV !== oldV && newV) {
-    const newVideoId = newV as string;
+// 监听 v/ep 变化，重新拉取视频信息和重置状态
+watch(
+  () => [route.query.v, route.query.ep],
+  async ([newV, newEp], [oldV, oldEp]) => {
+    if (newV === oldV && newEp === oldEp) return;
+    const resolved = await resolveWatchVideoIdOnQueryChange(route.query);
+    if (!resolved.ok) {
+      if (resolved.reason === 'no_identifier') return;
+      return;
+    }
+    const newVideoId = resolved.videoId;
     const { data } = await asyncGetVideoInfoAPI(newVideoId);
     if ((data.value as any).code === statusCode.OK) {
       videoInfo.value = (data.value as any).data.video as VideoType;
+      await loadPGCBinding(videoInfo.value.vid);
       currentPart.value = Number(route.query.p) || 1;
       getDanmakuList(videoInfo.value.vid, currentPart.value);
       const res = await getHistoryProgressAPI(videoInfo.value.vid, currentPart.value);
@@ -544,10 +658,13 @@ watch(() => route.query.v, async (newV, oldV) => {
       navigateTo('/404');
     }
   }
-});
+);
 
 useHead({
-  title: () => videoInfo.value?.title ? `${videoInfo.value.title} - ${globalConfig.title}` : globalConfig.title
+  title: () => {
+    const pageTitle = (isPGCPage.value ? (pgcInfo.value?.title || '') : '') || videoInfo.value?.title || ''
+    return pageTitle ? `${pageTitle} - ${globalConfig.title}` : globalConfig.title
+  }
 })
 </script>
 
@@ -711,6 +828,53 @@ useHead({
       }
     }
   }
+
+  .pgc-info-card {
+    margin: 16px 0;
+    padding: 14px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-elev-1);
+    display: flex;
+    gap: 12px;
+
+    .pgc-cover {
+      width: 120px;
+      height: 160px;
+      border-radius: 6px;
+      object-fit: cover;
+      flex-shrink: 0;
+    }
+
+    .pgc-meta {
+      min-width: 0;
+
+      .pgc-name {
+        font-size: 18px;
+        color: var(--font-primary-1);
+        margin-bottom: 6px;
+      }
+
+      .pgc-sub {
+        font-size: 13px;
+        color: var(--font-primary-3);
+        margin-bottom: 8px;
+      }
+
+      .pgc-rating {
+        color: #f5a623;
+        font-size: 16px;
+        margin-bottom: 8px;
+      }
+
+      .pgc-desc {
+        color: var(--font-primary-2);
+        font-size: 14px;
+        line-height: 22px;
+        white-space: pre-line;
+      }
+    }
+  }
 }
 
 @keyframes skeleton-shimmer {
@@ -730,6 +894,10 @@ useHead({
 
   .danmaku-list-container {
     margin-bottom: 18px;
+  }
+
+  &.pgc-mode {
+    margin-top: 20px;
   }
 }
 </style>

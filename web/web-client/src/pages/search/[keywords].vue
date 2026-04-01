@@ -59,6 +59,27 @@
 
     <el-tabs v-model="activeTab" class="search-tabs" @tab-change="onTabChange">
       <el-tab-pane label="视频" name="video">
+        <div class="pgc-top-block" v-if="pgcList.length > 0">
+          <div class="section-title">相关影视</div>
+          <ul class="pgc-search-list">
+            <li v-for="item in pgcList.slice(0, 3)" :key="item.pgc_id" class="pgc-search-item">
+              <div class="pgc-link" @click="openPGC(item)">
+                <img v-if="item.cover" class="cover" :src="getResourceUrl(item.cover)" alt="封面">
+                <div class="meta">
+                  <div class="title-row">{{ item.title }}</div>
+                  <div class="desc">{{ item.desc || '暂无简介' }}</div>
+                  <div class="entry-footer">
+                    <span v-if="item.rating">评分 {{ item.rating }}</span>
+                    <span v-if="item.current_episodes">更新至 {{ item.current_episodes }} 集</span>
+                    <span v-if="item.area">{{ formatAreaName(item.area) }}</span>
+                    <span v-if="item.year">{{ item.year }}</span>
+                  </div>
+                </div>
+              </div>
+            </li>
+          </ul>
+        </div>
+        <div class="section-title">相关视频</div>
         <div class="card-list">
           <video-item
             v-for="item in videoList"
@@ -67,7 +88,7 @@
             :keywords="routeKeywords"
           />
         </div>
-        <p v-if="!videoLoading && videoList.length === 0 && didSearch" class="empty-hint">暂无相关视频</p>
+        <p v-if="hydrated && !videoLoading && videoList.length === 0 && didSearch" class="empty-hint">暂无相关视频</p>
       </el-tab-pane>
       <el-tab-pane label="专栏" name="article">
         <ul class="article-search-list">
@@ -85,7 +106,7 @@
             </nuxt-link>
           </li>
         </ul>
-        <p v-if="!articleLoading && articleList.length === 0 && didSearch" class="empty-hint">暂无相关专栏</p>
+        <p v-if="hydrated && !articleLoading && articleList.length === 0 && didSearch" class="empty-hint">暂无相关专栏</p>
       </el-tab-pane>
       <el-tab-pane label="UP主" name="user">
         <ul class="user-search-list">
@@ -100,20 +121,41 @@
             </nuxt-link>
           </li>
         </ul>
-        <p v-if="!userLoading && userList.length === 0 && didSearch" class="empty-hint">暂无相关用户</p>
+        <p v-if="hydrated && !userLoading && userList.length === 0 && didSearch" class="empty-hint">暂无相关用户</p>
+      </el-tab-pane>
+      <el-tab-pane label="影视" name="pgc">
+        <ul class="pgc-search-list">
+          <li v-for="item in pgcList" :key="item.pgc_id" class="pgc-search-item">
+            <div class="pgc-link" @click="openPGC(item)">
+              <img v-if="item.cover" class="cover" :src="getResourceUrl(item.cover)" alt="封面">
+              <div class="meta">
+                <div class="title-row">{{ item.title }}</div>
+                <div class="desc">{{ item.desc || '暂无简介' }}</div>
+                <div class="entry-footer">
+                  <span v-if="item.rating">评分 {{ item.rating }}</span>
+                  <span v-if="item.current_episodes">更新至 {{ item.current_episodes }} 集</span>
+                  <span v-if="item.area">{{ formatAreaName(item.area) }}</span>
+                  <span v-if="item.year">{{ item.year }}</span>
+                </div>
+              </div>
+            </div>
+          </li>
+        </ul>
+        <p v-if="hydrated && !pgcLoading && pgcList.length === 0 && didSearch" class="empty-hint">暂无相关影视</p>
       </el-tab-pane>
     </el-tabs>
 
-    <p v-if="footerLoading" class="loading-more">加载中...</p>
-    <p v-else-if="currentNoMore && currentListNonEmpty" class="loading-more muted">没有更多了</p>
+    <p v-if="hydrated && footerLoading" class="loading-more">加载中...</p>
+    <p v-else-if="hydrated && currentNoMore && currentListNonEmpty" class="loading-more muted">没有更多了</p>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onBeforeMount, onBeforeUnmount, ref, watch, computed } from 'vue';
-import { searchVideoAPI } from '@/api/video';
+import { onBeforeUnmount, onMounted, ref, watch, computed } from 'vue';
+import { getVideoInfoAPI, searchVideoAPI } from '@/api/video';
 import { searchArticleAPI } from '@/api/article';
 import { searchUserAPI } from '@/api/user';
+import { getPGCDetailWithEpisodesAPI, searchPGCAPI } from '@/api/pgc';
 import HeaderBar from '@/components/header-bar/index.vue';
 import VideoItem from './components/VideoItem.vue';
 import CommonAvatar from '@/components/common-avatar/index.vue';
@@ -127,8 +169,9 @@ const router = useRouter();
 const pageSize = 15;
 const searchKeywords = ref('');
 const routeKeywords = ref('');
-const activeTab = ref<'video' | 'article' | 'user'>('video');
+const activeTab = ref<'video' | 'article' | 'user' | 'pgc'>('video');
 const didSearch = ref(false);
+const hydrated = ref(false);
 
 const filterOpen = ref(false);
 const sort = ref<'relevance' | 'newest' | 'most_viewed'>('relevance');
@@ -148,6 +191,23 @@ const userList = ref<UserInfoType[]>([]);
 const userPage = ref(1);
 const userNoMore = ref(false);
 const userLoading = ref(false);
+
+const pgcList = ref<PGCRecommendItem[]>([]);
+const pgcPage = ref(1);
+const pgcNoMore = ref(false);
+const pgcLoading = ref(false);
+const areaCodeMap: Record<string, string> = {
+  CN: '中国大陆',
+  JP: '日本',
+  HK: '中国香港',
+  TW: '中国台湾',
+  KR: '韩国',
+  US: '美国',
+};
+const formatAreaName = (raw: unknown) => {
+  const code = String(raw ?? '').trim().toUpperCase();
+  return areaCodeMap[code] || String(raw ?? '').trim();
+};
 
 const sortLabel = computed(() => {
   switch (sort.value) {
@@ -211,6 +271,9 @@ const resetAllLists = () => {
   userList.value = [];
   userPage.value = 1;
   userNoMore.value = false;
+  pgcList.value = [];
+  pgcPage.value = 1;
+  pgcNoMore.value = false;
   didSearch.value = false;
 };
 
@@ -258,6 +321,9 @@ const loadVideos = async (init: boolean) => {
   }
   videoLoading.value = false;
   didSearch.value = true;
+  if (init) {
+    await loadPGC(true);
+  }
 };
 
 const loadArticles = async (init: boolean) => {
@@ -314,10 +380,37 @@ const loadUsers = async (init: boolean) => {
   didSearch.value = true;
 };
 
+const loadPGC = async (init: boolean) => {
+  if (pgcLoading.value) return;
+  pgcLoading.value = true;
+  if (init) {
+    pgcPage.value = 1;
+    pgcList.value = [];
+    pgcNoMore.value = false;
+  }
+  const res = await searchPGCAPI({
+    page: pgcPage.value,
+    pageSize,
+    keyword: routeKeywords.value,
+    pgcType: 0,
+  });
+  if (res.data.code === statusCode.OK && res.data.data.list) {
+    const chunk = res.data.data.list;
+    pgcList.value.push(...chunk);
+    if (chunk.length < pageSize) pgcNoMore.value = true;
+  } else {
+    pgcNoMore.value = true;
+    if (init) ElMessage.error(res.data.msg || '获取失败');
+  }
+  pgcLoading.value = false;
+  didSearch.value = true;
+};
+
 const loadCurrentTab = (init: boolean) => {
   if (activeTab.value === 'video') return loadVideos(init);
   if (activeTab.value === 'article') return loadArticles(init);
-  return loadUsers(init);
+  if (activeTab.value === 'user') return loadUsers(init);
+  return loadPGC(init);
 };
 
 const submitSearch = () => {
@@ -339,6 +432,7 @@ const onTabChange = (name: string) => {
   if (!routeKeywords.value.trim()) return;
   if (name === 'article' && articleList.value.length === 0) loadArticles(true);
   if (name === 'user' && userList.value.length === 0) loadUsers(true);
+  if (name === 'pgc' && pgcList.value.length === 0) loadPGC(true);
 };
 
 const applyFilters = async () => {
@@ -357,19 +451,22 @@ const applyFilters = async () => {
 const footerLoading = computed(() => {
   if (activeTab.value === 'video') return videoLoading.value;
   if (activeTab.value === 'article') return articleLoading.value;
-  return userLoading.value;
+  if (activeTab.value === 'user') return userLoading.value;
+  return pgcLoading.value;
 });
 
 const currentNoMore = computed(() => {
   if (activeTab.value === 'video') return videoNoMore.value;
   if (activeTab.value === 'article') return articleNoMore.value;
-  return userNoMore.value;
+  if (activeTab.value === 'user') return userNoMore.value;
+  return pgcNoMore.value;
 });
 
 const currentListNonEmpty = computed(() => {
   if (activeTab.value === 'video') return videoList.value.length > 0;
   if (activeTab.value === 'article') return articleList.value.length > 0;
-  return userList.value.length > 0;
+  if (activeTab.value === 'user') return userList.value.length > 0;
+  return pgcList.value.length > 0;
 });
 
 const lazyLoading = () => {
@@ -386,9 +483,60 @@ const lazyLoading = () => {
     articlePage.value++;
     loadArticles(false);
   } else {
-    userPage.value++;
-    loadUsers(false);
+    if (activeTab.value === 'user') {
+      userPage.value++;
+      loadUsers(false);
+    } else {
+      pgcPage.value++;
+      loadPGC(false);
+    }
   }
+};
+
+const openPGC = async (item: PGCRecommendItem) => {
+  const toCleanVid = (raw: unknown): number => {
+    const n = Number(String(raw ?? '').trim());
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  };
+
+  const latestEpId = Number(item.latest_ep_id || 0);
+  if (Number.isFinite(latestEpId) && latestEpId > 0) {
+    await navigateTo(`/watch?ep=${Math.floor(latestEpId)}&mode=pgc`);
+    return;
+  }
+
+  const candidates: number[] = [];
+  const latestVid = toCleanVid(item.latest_vid);
+  if (latestVid > 0) candidates.push(latestVid);
+
+  // 兜底：无 latest_vid 或 latest_vid 不可播时，查剧集详情并依次尝试
+  try {
+    const res = await getPGCDetailWithEpisodesAPI(item.pgc_id);
+    const eps = res?.data?.data?.episodes || [];
+    for (const ep of eps) {
+      const epId = Number(ep?.ep_id || ep?.id || 0);
+      if (Number.isFinite(epId) && epId > 0) {
+        await navigateTo(`/watch?ep=${Math.floor(epId)}&mode=pgc`);
+        return;
+      }
+      const vid = toCleanVid(ep?.vid);
+      if (vid > 0 && !candidates.includes(vid)) {
+        candidates.push(vid);
+      }
+    }
+  } catch {}
+
+  for (const vid of candidates) {
+    try {
+      const infoRes = await getVideoInfoAPI(vid);
+      if (infoRes?.data?.code === statusCode.OK) {
+        await navigateTo(`/watch?v=${vid}&mode=pgc`);
+        return;
+      }
+    } catch {}
+  }
+
+  ElMessage.warning('该影视暂不可播放');
 };
 
 watch(
@@ -402,10 +550,11 @@ watch(
   },
 );
 
-onBeforeMount(async () => {
+onMounted(() => {
+  hydrated.value = true;
   syncKeywordsFromRoute();
   readFiltersFromRoute();
-  await loadVideos(true);
+  loadVideos(true);
   window.addEventListener('scroll', lazyLoading, true);
 });
 
@@ -472,6 +621,18 @@ onBeforeUnmount(() => {
 .search-tabs {
   width: 90%;
   margin: 0 auto;
+}
+
+.section-title {
+  margin-top: 12px;
+  margin-bottom: 10px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--font-primary-1);
+}
+
+.pgc-top-block {
+  margin-top: 8px;
 }
 
 .filter-bar {
@@ -627,6 +788,68 @@ onBeforeUnmount(() => {
     font-size: 12px;
     color: var(--font-primary-5);
     margin-top: 4px;
+  }
+}
+
+.pgc-search-list {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0 0;
+}
+
+.pgc-search-item {
+  margin-bottom: 12px;
+
+  .pgc-link {
+    display: flex;
+    gap: 14px;
+    padding: 12px 14px;
+    background: var(--bg-elev-1);
+    border-radius: 8px;
+    text-decoration: none;
+    color: inherit;
+    cursor: pointer;
+  }
+
+  .cover {
+    width: 180px;
+    height: 102px;
+    object-fit: cover;
+    border-radius: 6px;
+    flex-shrink: 0;
+    background: rgba(0, 0, 0, .15);
+  }
+
+  .meta {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .title-row {
+    font-size: 16px;
+    font-weight: 500;
+    color: var(--font-primary-1);
+  }
+
+  .desc {
+    margin-top: 8px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--font-primary-3);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .entry-footer {
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--font-primary-5);
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
   }
 }
 
