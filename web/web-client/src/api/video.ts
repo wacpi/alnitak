@@ -47,6 +47,11 @@ export const asyncGetVideoByUser = async (userId: number, page: number, pageSize
 }
 
 // 获取视频信息
+export const getVideoInfoAPI = (videoId: number | string) => {
+  return request.get(`v1/video/getVideoById?vid=${videoId}`);
+}
+
+// 获取视频信息（SSR）
 export const asyncGetVideoInfoAPI = async (videoId: number | string) => {
   return await useAsyncData(() => $fetch(`${baseURL}/api/v1/video/getVideoById?vid=${videoId}`));
 }

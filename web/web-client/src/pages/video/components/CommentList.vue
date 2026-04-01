@@ -9,13 +9,13 @@
   </div>
   <!-- 评论输入框 -->
   <div class="comment-box">
-    <common-avatar v-if="isLoggedIn" class="avatar" :url="userInfo?.avatar" :size="40"></common-avatar>
+    <common-avatar v-if="uiLoggedIn" class="avatar" :url="userInfo?.avatar" :size="40"></common-avatar>
     <div v-else class="avatar">
       <div class="login-btn" @click="requireLogin('发表评论')">登录</div>
     </div>
     <el-input class="comment-input" v-model="commentContent" resize="none" :rows="3" type="textarea"
       placeholder="善语结善缘，恶言伤人心" id="video-comment-input" name="videoComment" />
-    <button class="comment-submit" :class="isLoggedIn ? '' : 'submit-disabled'" @click="submitComment">发表评论</button>
+    <button class="comment-submit" :class="uiLoggedIn ? '' : 'submit-disabled'" @click="submitComment">发表评论</button>
   </div>
   <!-- 评论列表 -->
   <div class="comment-container" v-for="(item, i) in commentList">
@@ -35,8 +35,8 @@
       </div>
       <div class="comment-info">
         <span class="comment-time">{{ formatRelativeTime(item.createdAt) }}</span>
-        <span class="reply-btn" :class="isLoggedIn ? '' : 'btn-disabled'" @click="showReplyBox(item)">回复</span>
-        <client-only v-if="isLoggedIn">
+        <span class="reply-btn" :class="uiLoggedIn ? '' : 'btn-disabled'" @click="showReplyBox(item)">回复</span>
+        <client-only v-if="uiLoggedIn">
           <el-popconfirm title="是否删除该条评论？" confirm-button-text="确认" cancel-button-text="取消"
             @confirm="deleteComment(i, item)">
             <template #reference>
@@ -68,8 +68,8 @@
         </span>
         <div class="reply-info">
           <span class="reply-time">{{ formatRelativeTime(reply.createdAt) }}</span>
-          <span class="reply-btn" :class="isLoggedIn ? '' : 'btn-disabled'" @click="showReplyBox(item, reply)">回复</span>
-          <client-only v-if="isLoggedIn">
+          <span class="reply-btn" :class="uiLoggedIn ? '' : 'btn-disabled'" @click="showReplyBox(item, reply)">回复</span>
+          <client-only v-if="uiLoggedIn">
             <el-popconfirm title="是否删除该条回复？" confirm-button-text="确认" cancel-button-text="取消"
               @confirm="deleteComment(j, item, reply)">
               <template #reference>
@@ -111,6 +111,7 @@ import CommonAvatar from "@/components/common-avatar/index.vue";
 import { addVideoCommentAPI, getVideoCommentAPI, getVideoReplyAPI, deleteVideoCommentAPI } from "@/api/comment";
 import { scrollToViewCenter } from "@/utils/scroll";
 import { requireLogin } from "@/utils/require-login";
+import { useClientHydrated } from '@/composables/use-client-hydrated';
 import { useAuthStore } from "@/stores/auth-store";
 
 const props = defineProps<{
@@ -187,6 +188,8 @@ const handleMentionAndTime = (content: string, atUserIds: string, atUsernames: s
 const auth = useAuthStore();
 const isLoggedIn = computed(() => auth.isLoggedIn);
 const userInfo = computed(() => auth.user);
+const { hydrated } = useClientHydrated();
+const uiLoggedIn = computed(() => hydrated.value && isLoggedIn.value);
 
 const pagination = reactive({
   page: 1,
