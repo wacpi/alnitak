@@ -4,7 +4,9 @@ import "gorm.io/gorm"
 
 type PGCContent struct {
 	gorm.Model
-	PGCID           uint    `gorm:"column:pgc_id;comment:PGC内容ID;not null;uniqueIndex:uk_pgc_id"`
+	// Snowflake ID 可能超过 JS Number 安全整数范围；JSON 输出用 string 保真
+	PGCID           uint64  `gorm:"column:pgc_id;comment:PGC内容ID;not null;uniqueIndex:uk_pgc_id" json:"pgc_id,string"`
+	MediaID         uint64  `gorm:"column:media_id;comment:媒体ID;not null;index:idx_media_id" json:"media_id,string"`
 	PGCType         int     `gorm:"column:pgc_type;comment:PGC类型;not null;index:idx_type_status,priority:1"`
 	Title           string  `gorm:"type:varchar(255);comment:标题;not null"`
 	Cover           string  `gorm:"type:varchar(255);comment:封面;not null"`

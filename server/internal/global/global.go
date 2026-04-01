@@ -17,7 +17,6 @@ var (
 	Storage           oss.Storage
 	SnowflakeNode     *snowflake.Node
 	VideoPartitionMap map[uint]uint
-	SyncApi           bool
 )
 
 // GetOssUrl 获取 OSS 访问 URL

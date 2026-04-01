@@ -20,10 +20,9 @@ import (
 func main() {
 	env := flag.String("env", "prod", "dev/prod")
 	clearCache := flag.Bool("clear-cache", false, "是否清空所有Redis缓存")
-	syncApi := flag.Bool("api", false, "同步API路由到数据库")
+	// 保留 -api 仅兼容旧命令行；API 与 Casbin 规则已在 InitDefaultData→SyncApiData 中每次启动自动同步
+	_ = flag.Bool("api", false, "兼容旧参数（无额外效果）")
 	flag.Parse()
-
-	global.SyncApi = *syncApi
 
 	// 初始化配置文件
 	initialize.InitConfig(*env)

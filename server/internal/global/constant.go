@@ -42,14 +42,16 @@ const (
 const (
 	// PGCTypeNone 非PGC
 	PGCTypeNone = 0
-	// PGCTypeBangumi 番剧
-	PGCTypeBangumi = 1
-	// PGCTypeDocument 纪录片
-	PGCTypeDocument = 2
+	// PGCTypeCN 国创（番剧 CN/国漫）
+	PGCTypeCN = 1
+	// PGCTypeJP 日创（番剧 JP/日漫）
+	PGCTypeJP = 2
+	// PGCTypeDocumentary 纪录片
+	PGCTypeDocumentary = 3
 	// PGCTypeMovie 电影
-	PGCTypeMovie = 3
+	PGCTypeMovie = 4
 	// PGCTypeTVSeries 电视剧
-	PGCTypeTVSeries = 4
+	PGCTypeTVSeries = 5
 )
 
 // ========== PGC审核状态 ==========
@@ -64,6 +66,8 @@ const (
 	PGCAuditApproved = 300
 	// PGCAuditRejected 审核驳回
 	PGCAuditRejected = 400
+	// PGCAuditOffline 下架（管理侧操作）
+	PGCAuditOffline = -1
 )
 
 // ========== PGC剧集状态 ==========

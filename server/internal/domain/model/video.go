@@ -11,6 +11,7 @@ type Video struct {
 	Copyright   bool    `gorm:"comment:是否为原创;not null"`
 	Clicks      int64   `gorm:"comment:点击量;default:0"`
 	Status      int     `gorm:"comment:审核状态;not null;index"`
+	PGCAttached bool    `gorm:"column:pgc_attached;comment:是否被PGC剧集绑定;not null;default:0;index"`
 	PartitionId uint    `gorm:"comment:分区ID"`
 	Tags        string  `gorm:"type:varchar(100);comment:标签冗余(CSV,便于搜索);"`
 	Duration    int     `gorm:"comment:视频时长秒;default:0"`

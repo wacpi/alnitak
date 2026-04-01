@@ -4,8 +4,8 @@ import "gorm.io/gorm"
 
 type PGCEpisode struct {
 	gorm.Model
-	PGCID         uint    `gorm:"column:pgc_id;comment:PGC内容ID;not null;index:idx_pgc"`
-	EpisodeNumber int     `gorm:"column:episode_number;comment:集数;not null"`
+	PGCID         uint64  `gorm:"column:pgc_id;comment:PGC内容ID;not null;uniqueIndex:uk_pgc_episode_no,priority:1" json:"pgc_id,string"`
+	EpisodeNumber int     `gorm:"column:episode_number;comment:集数;not null;uniqueIndex:uk_pgc_episode_no,priority:2"`
 	Title         string  `gorm:"type:varchar(255);comment:剧集标题"`
 	VID           uint    `gorm:"column:vid;comment:关联视频ID;not null;index:idx_vid"`
 	Duration      float64 `gorm:"comment:时长;default:0"`

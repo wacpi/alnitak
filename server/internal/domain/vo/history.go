@@ -3,7 +3,7 @@ package vo
 import "time"
 
 const (
-	HISTORY_VIDEO_FIELD    = "`video`.`id`,`video`.`uid`,`title`,`cover`,`desc`,`history`.`updated_at`,`history`.`time`,`history`.`duration`,`part`"
+	HISTORY_VIDEO_FIELD    = "`video`.`id`,`video`.`uid`,`video`.`title`,`video`.`cover`,`video`.`desc`,`history`.`updated_at`,`history`.`time`,`history`.`duration`,`history`.`part`,`video`.`pgc_attached`,`video`.`short_id`"
 	HISTORY_SUBQUERY_FIELD = "vid, MAX(updated_at) as latest_updated_at"
 )
 
@@ -17,4 +17,13 @@ type HistoryVideoResp struct {
 	Duration  float64   `json:"duration"` // 分P总时长
 	UpdatedAt time.Time `json:"updatedAt"`
 	Part      uint      `json:"part"` // 分P序号
+
+	ShortID string `json:"shortId,omitempty"` // 用于 UGC 跳转
+
+	// PGC：存储仍是 vid+part；列表展示与续播跳转按剧集维度区分
+	PGCAttached   bool   `json:"pgcAttached"`
+	PGCTitle      string `json:"pgcTitle,omitempty"`
+	EpisodeTitle  string `json:"episodeTitle,omitempty"`
+	EpisodeNumber int    `json:"episodeNumber,omitempty"`
+	EpID          uint   `json:"epId,omitempty"`
 }

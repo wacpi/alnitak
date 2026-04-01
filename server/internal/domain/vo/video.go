@@ -18,7 +18,7 @@ type VideoResp struct {
 	Desc         string         `json:"desc"`
 	CreatedAt    time.Time      `json:"createdAt"`
 	Copyright    bool           `json:"copyright"`
-	Tags         []string       `json:"tags"`
+	Tags         []string       `json:"tags" gorm:"-"` // 非表字段，避免 Scan 时 GORM 将 []string 误判为关联
 	Duration     int            `json:"duration"` // 秒，整数
 	Clicks       int64          `json:"clicks"`
 	PartitionId  uint           `json:"partitionId"`
@@ -37,7 +37,7 @@ type VideoStatusResp struct {
 	Copyright   bool           `json:"copyright"`
 	Status      int            `json:"status"`
 	PartitionId uint           `json:"partitionId"`
-	Tags        []string       `json:"tags"`
+	Tags        []string       `json:"tags" gorm:"-"`
 	Clicks      int64          `json:"clicks"`
 	Duration    int            `json:"duration"`
 	Resources   []ResourceResp `json:"resources" gorm:"-"`
@@ -74,7 +74,7 @@ type VideoInfoManageResp struct {
 	Desc                string                    `json:"desc"`
 	CreatedAt           time.Time                 `json:"createdAt"`
 	Copyright           bool                      `json:"copyright"`
-	Tags                []string                  `json:"tags"`
+	Tags                []string                  `json:"tags" gorm:"-"`
 	Clicks              int64                     `json:"clicks"`
 	Duration            int                       `json:"duration"`
 	PartitionId         uint                      `json:"partitionId"`
@@ -100,7 +100,7 @@ type ReviewListResp struct {
 	Desc        string       `json:"desc"`
 	CreatedAt   time.Time    `json:"createdAt"`
 	Copyright   bool         `json:"copyright"`
-	Tags        []string     `json:"tags"`
+	Tags        []string     `json:"tags" gorm:"-"`
 	Duration    int          `json:"duration"`
 	PartitionId uint         `json:"partitionId"`
 	Author      UserInfoResp `json:"author" gorm:"-"`

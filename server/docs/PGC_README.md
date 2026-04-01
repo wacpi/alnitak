@@ -60,7 +60,7 @@ PGC (Professional Generated Content) 系统是一个专业视频内容管理模�
 
 **主要字段**:
 - `pgc_id` - PGC内容ID (雪花ID，唯一)
-- `pgc_type` - PGC类型 (番剧/纪录片/电影/电视剧)
+- `pgc_type` - PGC类型 (国创/日创/纪录片/电影/电视剧)
 - `title` - 标题
 - `cover` - 封面URL
 - `desc` - 简介
@@ -137,11 +137,12 @@ PGC (Professional Generated Content) 系统是一个专业视频内容管理模�
 ### PGC类型 (PGCType)
 ```go
 const (
-    PGCTypeNone     = 0  // 非PGC
-    PGCTypeBangumi  = 1  // 番剧
-    PGCTypeDocument = 2  // 纪录片
-    PGCTypeMovie    = 3  // 电影
-    PGCTypeTVSeries = 4  // 电视剧
+    PGCTypeNone        = 0  // 非PGC
+    PGCTypeCN          = 1  // 国创（番剧 CN）
+    PGCTypeJP          = 2  // 日创（番剧 JP）
+    PGCTypeDocumentary = 3 // 纪录片
+    PGCTypeMovie       = 4 // 电影
+    PGCTypeTVSeries    = 5 // 电视剧
 )
 ```
 

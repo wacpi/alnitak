@@ -620,8 +620,11 @@ func CompleteUploadVideo(vid, userId, fileID uint, videoName, title string, skip
 				return vo.ResourceResp{}, errors.New("保存视频失败")
 			}
 
-			utils.InfoLog(fmt.Sprintf("【秒传成功】vid=%d, fileID=%d, uid=%d, 等待审核", vid, fileID, userId), "upload")
-			return vo.ResourceToResourceResp(resource), nil
+			// 复制已有资源的 video_index_file 记录到新资源
+		copyVideoIndexFiles(existingResource.ID, resource.ID)
+
+		utils.InfoLog(fmt.Sprintf("【秒传成功】vid=%d, fileID=%d, uid=%d, 等待审核", vid, fileID, userId), "upload")
+		return vo.ResourceToResourceResp(resource), nil
 		}
 		// 如果没找到已有资源，说明秒传判断有误，走正常转码流程
 		utils.InfoLog(fmt.Sprintf("【秒传异常】fileID=%d 无已有资源记录，转为正常转码", fileID), "upload")
@@ -668,6 +671,23 @@ func CompleteUploadVideo(vid, userId, fileID uint, videoName, title string, skip
 	go VideoTransCoding(transcodingInfo)
 
 	return vo.ResourceToResourceResp(resource), nil
+}
+
+// copyVideoIndexFiles 将 srcResourceID 的 video_index_file 记录复制给 dstResourceID（秒传场景）
+func copyVideoIndexFiles(srcResourceID, dstResourceID uint) {
+	var origFiles []model.VideoIndexFile
+	if err := global.Mysql.Where("resource_id = ?", srcResourceID).Find(&origFiles).Error; err != nil {
+		utils.ErrorLog("复制video_index_file失败", "upload", fmt.Sprintf("src=%d dst=%d err=%s", srcResourceID, dstResourceID, err.Error()))
+		return
+	}
+	for _, f := range origFiles {
+		newFile := f
+		newFile.Model = gorm.Model{} // 清除 ID/时间，让 GORM 插入新行
+		newFile.ResourceID = dstResourceID
+		if err := global.Mysql.Create(&newFile).Error; err != nil {
+			utils.ErrorLog("复制video_index_file记录失败", "upload", fmt.Sprintf("src=%d dst=%d quality=%s err=%s", srcResourceID, dstResourceID, f.Quality, err.Error()))
+		}
+	}
 }
 
 // 生成文件url（存库用，必须短且不过期）

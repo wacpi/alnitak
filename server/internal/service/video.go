@@ -1253,6 +1253,9 @@ func GetHotVideo(ctx *gin.Context, page, pageSize int) []vo.VideoResp {
 			continue
 		}
 		v := GetVideoInfo(id)
+		if v.ID == 0 {
+			continue
+		}
 		v.Clicks += GetVideoClicks(id)
 		v.DanmakuCount = GetDanmakuCount(id)
 		videos = append(videos, v)
@@ -1265,7 +1268,7 @@ func GetHotVideo(ctx *gin.Context, page, pageSize int) []vo.VideoResp {
 func GetLatestVideo(ctx *gin.Context, page, pageSize int) []vo.VideoResp {
 	var videoIds []uint
 	global.Mysql.Model(&model.Video{}).
-		Where("status = ?", global.AUDIT_APPROVED).
+		Where("status = ? AND pgc_attached = ?", global.AUDIT_APPROVED, false).
 		Order("created_at DESC").
 		Limit(pageSize).Offset((page - 1) * pageSize).
 		Pluck("id", &videoIds)
@@ -1295,6 +1298,9 @@ func GetVideoListByPartition(ctx *gin.Context, size int, partitionId uint) []vo.
 			continue
 		}
 		v := GetVideoInfo(id)
+		if v.ID == 0 {
+			continue
+		}
 		v.Clicks += GetVideoClicks(id)
 		v.DanmakuCount = GetDanmakuCount(id)
 		videos = append(videos, v)
@@ -1311,7 +1317,7 @@ func GetRelatedVideoList(ctx *gin.Context, videoId uint) []vo.VideoResp {
 	// 查询同作者的2个视频
 	var authorVideoIds []uint
 	global.Mysql.Model(&model.Video{}).
-		Where("uid = ? and id != ? and `status` = ?", video.Uid, videoId, global.AUDIT_APPROVED).
+		Where("uid = ? and id != ? and `status` = ? and pgc_attached = ?", video.Uid, videoId, global.AUDIT_APPROVED, false).
 		Limit(2).Pluck("id", &authorVideoIds)
 	videoIds = append(videoIds, authorVideoIds...)
 
@@ -1332,6 +1338,9 @@ func GetRelatedVideoList(ctx *gin.Context, videoId uint) []vo.VideoResp {
 	videos := make([]vo.VideoResp, 0, len(videoIds))
 	for _, id := range videoIds {
 		v := GetVideoInfo(id)
+		if v.ID == 0 {
+			continue
+		}
 		v.Clicks += GetVideoClicks(id)
 		v.DanmakuCount = GetDanmakuCount(id)
 		videos = append(videos, v)
@@ -1353,7 +1362,7 @@ func SearchVideo(ctx *gin.Context, searchVideoReq dto.SearchVideoReq) []vo.Video
 		ps = 15
 	}
 
-	q := global.Mysql.Model(&model.Video{}).Where("`status` = ?", global.AUDIT_APPROVED)
+	q := global.Mysql.Model(&model.Video{}).Where("`status` = ? AND pgc_attached = ?", global.AUDIT_APPROVED, false)
 
 	tr := normalizeTimeRange(searchVideoReq.TimeRange)
 	if start := parseTimeRangeStart(tr); start != nil {
@@ -1386,6 +1395,7 @@ func SearchVideo(ctx *gin.Context, searchVideoReq dto.SearchVideoReq) []vo.Video
 
 	return videos
 }
+
 
 func CreateVideo(video *model.Video) (uint, error) {
 	if video.ShortID == "" {

@@ -57,7 +57,7 @@ Authorization: Bearer <token>
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| pgc_type | int | 是 | PGC类型 (1:番剧, 2:纪录片, 3:电影, 4:电视剧) |
+| pgc_type | int | 是 | PGC类型 (1:国创(CN), 2:日创(JP), 3:纪录片, 4:电影, 5:电视剧) |
 | title | string | 是 | 标题，最大255字符 |
 | cover | string | 是 | 封面图片URL |
 | desc | string | 否 | 简介，最大1000字符 |
@@ -330,7 +330,7 @@ GET /api/v1/pgc/search?keyword=巨人&pgc_type=1&page=1&page_size=20
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| type | int | 是 | PGC类型 (1:番剧, 2:纪录片, 3:电影, 4:电视剧) |
+| type | int | 是 | PGC类型 (1:国创(CN), 2:日创(JP), 3:纪录片, 4:电影, 5:电视剧) |
 
 **查询参数**:
 

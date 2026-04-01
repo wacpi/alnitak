@@ -12,10 +12,12 @@ func InitDefaultData() {
 	initApiData()        // 初始化API数据
 	initCasbinRuleData() // 初始化CasbinRule数据
 	initMenuData()       // 初始化菜单数据
-	syncMenuData()       // 增量补全菜单
+	syncMenuData()       // 增量补全菜单（含菜单表、role_menu）
 	initPartitionData()  // 初始化分区数据
 	initRoleData()       // 初始化角色数据
 	initUserData()       // 初始化用户数据
+	// 每次启动将 authApiDesc 中尚未入库的接口写入 API 表，并补全 001/002 的 Casbin 规则（须在 InitCasbin 之前执行）
+	SyncApiData()
 }
 
 // 初始化API数据
@@ -148,6 +150,9 @@ func initApiData() {
 		{Method: "POST", Path: "/api/v1/video/uploadVideoInfo", Category: "视频", Desc: "上传视频信息"},
 		{Method: "GET", Path: "/api/v1/video/getResourceQualityManage", Category: "视频", Desc: "获取视频资源支持的分辨率信息（后台管理）"},
 		{Method: "GET", Path: "/api/v1/video/getVideoFileManage", Category: "视频", Desc: "获取视频文件URL（后台管理）"},
+		{Method: "POST", Path: "/api/v1/pgc/getReviewList", Category: "PGC", Desc: "获取PGC待审列表（后台管理）"},
+		{Method: "POST", Path: "/api/v1/pgc/reviewApproved", Category: "PGC", Desc: "PGC审核通过（后台管理）"},
+		{Method: "POST", Path: "/api/v1/pgc/reviewFailed", Category: "PGC", Desc: "PGC审核驳回（后台管理）"},
 		{Method: "GET", Path: "/api/v1/config/getEmailConfig", Category: "配置", Desc: "获取邮箱配置（后台管理）"},
 		{Method: "POST", Path: "/api/v1/config/setEmailConfig", Category: "配置", Desc: "编辑邮箱配置（后台管理）"},
 		{Method: "GET", Path: "/api/v1/config/getStorageConfig", Category: "配置", Desc: "获取存储配置（后台管理）"},
@@ -331,6 +336,9 @@ func initCasbinRuleData() {
 		{Ptype: "p", V0: "002", V1: "/api/v1/review/reviewArticleFailed", V2: "POST"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/review/reviewVideoApproved", V2: "POST"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/review/reviewVideoFailed", V2: "POST"},
+		{Ptype: "p", V0: "002", V1: "/api/v1/pgc/getReviewList", V2: "POST"},
+		{Ptype: "p", V0: "002", V1: "/api/v1/pgc/reviewApproved", V2: "POST"},
+		{Ptype: "p", V0: "002", V1: "/api/v1/pgc/reviewFailed", V2: "POST"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/role/addRole", V2: "POST"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/role/deleteRole/:id", V2: "DELETE"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/role/editRole", V2: "PUT"},
@@ -391,6 +399,7 @@ func initMenuData() {
 		{Name: "ReviewVideo", Path: "review/video", Component: "views/review/video/index.vue", Desc: "", Sort: 1, ParentId: reviewMenu.ID, Title: "视频审核", Icon: "FileTrayOutline", Hidden: false, KeepAlive: false},
 		{Name: "ReviewArticle", Path: "review/article", Component: "views/review/article/index.vue", Desc: "", Sort: 2, ParentId: reviewMenu.ID, Title: "专栏审核", Icon: "AlbumsOutline", Hidden: false, KeepAlive: false},
 		{Name: "ReviewPlaylist", Path: "review/playlist", Component: "views/review/playlist/index.vue", Desc: "", Sort: 3, ParentId: reviewMenu.ID, Title: "合集审核", Icon: "ListOutline", Hidden: false, KeepAlive: false},
+		{Name: "ReviewPGC", Path: "review/pgc", Component: "views/review/pgc/index.vue", Desc: "", Sort: 4, ParentId: reviewMenu.ID, Title: "PGC审核", Icon: "FilmOutline", Hidden: false, KeepAlive: false},
 	}
 	if err := global.Mysql.Create(&reviewMenuEntities).Error; err != nil {
 		zap.L().Error("菜单数据初始化失败", zap.String("err", err.Error()), zap.String("module", "initialize"))
@@ -494,6 +503,11 @@ func syncMenuData() {
 		Desc: "", Sort: 3, Title: "合集审核", Icon: "ListOutline", Hidden: false, KeepAlive: false,
 	})
 
+	ensureMenuExists("review", "ReviewVideo", model.Menu{
+		Name: "ReviewPGC", Path: "review/pgc", Component: "views/review/pgc/index.vue",
+		Desc: "", Sort: 4, Title: "PGC审核", Icon: "FilmOutline", Hidden: false, KeepAlive: false,
+	})
+
 	// 合集管理（内容管理下）
 	ensureMenuExists("Content", "ContentVideo", model.Menu{
 		Name: "ContentPlaylist", Path: "content/playlist", Component: "views/content/playlist/index.vue",
@@ -542,7 +556,7 @@ func initRoleData() {
 		zap.L().Error("角色数据初始化失败", zap.String("err", err.Error()), zap.String("module", "initialize"))
 	}
 
-	admin := model.Role{Name: "超级管理员", Code: "002", Desc: "", HomePage: ""}
+	admin := model.Role{Name: "超级管理员", Code: "002", Desc: "", HomePage: "ReviewPGC"}
 	if err := global.Mysql.Create(&admin).Error; err != nil {
 		zap.L().Error("角色数据初始化失败", zap.String("err", err.Error()), zap.String("module", "initialize"))
 	}
@@ -743,6 +757,9 @@ var authApiDesc = map[string]string{
 	"DELETE|/api/v1/pgc/:pgc_id":              "删除PGC内容",
 	"POST|/api/v1/pgc/:pgc_id/episodes/add":   "添加PGC剧集",
 	"DELETE|/api/v1/pgc/:pgc_id/episodes/:id": "删除PGC剧集",
+	"POST|/api/v1/pgc/getReviewList":          "获取PGC待审列表（后台管理）",
+	"POST|/api/v1/pgc/reviewApproved":         "PGC审核通过（后台管理）",
+	"POST|/api/v1/pgc/reviewFailed":           "PGC审核驳回（后台管理）",
 }
 
 // SyncApiData 自动同步需要登录权限的路由到API表

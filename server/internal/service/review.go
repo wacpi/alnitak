@@ -62,8 +62,10 @@ func ReviewVideoApproved(ctx *gin.Context, reviewVideoReq dto.ReviewVideoReq) er
 	video, _ := FindVideoById(reviewVideoReq.Vid)
 	// 先清除视频信息缓存（让下次查询时重新从数据库加载最新数据）
 	cache.DelVideoInfo(reviewVideoReq.Vid)
-	// 再添加视频ID到redis分区列表
-	cache.SetVideoId(global.VideoPartitionMap[video.PartitionId], video.ID)
+	// 再添加视频ID到redis分区列表（PGC 绑定视频不进入 UGC 分区流）
+	if !video.PGCAttached {
+		cache.SetVideoId(global.VideoPartitionMap[video.PartitionId], video.ID)
+	}
 
 	return nil
 }

@@ -46,11 +46,58 @@ func InitTables() {
 	global.Mysql.AutoMigrate(&model.ImageFile{})      // 图片文件表
 	global.Mysql.AutoMigrate(&model.Playlist{})       // 合集表
 	global.Mysql.AutoMigrate(&model.PlaylistVideo{})  // 合集视频关联表
+	global.Mysql.AutoMigrate(&model.PGCMedia{})       // PGC媒体表（media层）
 	global.Mysql.AutoMigrate(&model.PGCContent{})     // PGC内容表
 	global.Mysql.AutoMigrate(&model.PGCEpisode{})     // PGC剧集表
 
+	// 历史数据补齐：为旧的 season 记录回填 media_id
+	backfillPGCMedia()
+
 	// 补填已有记录的空 ShortID
 	backfillShortIDs()
+}
+
+// backfillPGCMedia 为历史 pgc_content（media_id=0）补齐 pgc_media 记录
+func backfillPGCMedia() {
+	var rows []model.PGCContent
+	if err := global.Mysql.Where("media_id = 0").Find(&rows).Error; err != nil {
+		utils.ErrorLog("查询待回填PGC media失败", "init", err.Error())
+		return
+	}
+	if len(rows) == 0 {
+		return
+	}
+
+	utils.InfoLog(fmt.Sprintf("【补齐PGC media】共%d条", len(rows)), "init")
+	for _, r := range rows {
+		mediaID := uint64(global.SnowflakeNode.Generate())
+		media := model.PGCMedia{
+			MediaID: mediaID,
+			PGCType: r.PGCType,
+			Title:   r.Title,
+			Cover:   r.Cover,
+			Desc:    r.Desc,
+			Year:    r.Year,
+			Area:    r.Area,
+			Rating:  r.Rating,
+			Status:  r.Status,
+		}
+		tx := global.Mysql.Begin()
+		if err := tx.Create(&media).Error; err != nil {
+			tx.Rollback()
+			utils.ErrorLog("创建PGC media回填记录失败", "init", err.Error())
+			continue
+		}
+		if err := tx.Model(&model.PGCContent{}).Where("id = ? AND media_id = 0", r.ID).Update("media_id", mediaID).Error; err != nil {
+			tx.Rollback()
+			utils.ErrorLog("更新PGC content media_id失败", "init", err.Error())
+			continue
+		}
+		if err := tx.Commit().Error; err != nil {
+			utils.ErrorLog("提交PGC media回填事务失败", "init", err.Error())
+			continue
+		}
+	}
 }
 
 // backfillShortIDs 为已有的空 short_id 记录补填短ID

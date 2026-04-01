@@ -7,7 +7,6 @@ import (
 	"go.uber.org/zap"
 	"interastral-peace.com/alnitak/internal/api/v1"
 	"interastral-peace.com/alnitak/internal/global"
-	"interastral-peace.com/alnitak/internal/initialize"
 	"interastral-peace.com/alnitak/internal/middleware"
 )
 
@@ -31,10 +30,7 @@ func InitRouter() {
 	// 收集添加路由
 	CollectRoutes(r)
 
-	// 自动同步路由到API表（启动时加 -api 参数触发）
-	if global.Config != nil && global.SyncApi {
-		initialize.SyncApiData()
-	}
+	// API / Casbin 增量同步已在 initialize.InitDefaultData() -> SyncApiData() 中执行
 
 	// 获取HTTP端口
 	httpPort := global.Config.Server.Port

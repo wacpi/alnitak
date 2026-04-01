@@ -5,18 +5,41 @@ import (
 	"sort"
 	"strconv"
 
+	"gorm.io/gorm"
 	"interastral-peace.com/alnitak/internal/domain/dto"
 	"interastral-peace.com/alnitak/internal/domain/model"
 	"interastral-peace.com/alnitak/internal/global"
 )
 
 type pgcLatestEpisode struct {
-	PGCID         uint64 `gorm:"column:pgc_id"`
-	EpisodeNumber int    `gorm:"column:episode_number"`
-	Title         string `gorm:"column:title"`
-	VID           uint   `gorm:"column:vid"`
-	PublishTime   string `gorm:"column:publish_time"`
+	ID            uint    `gorm:"column:id"`
+	PGCID         uint64  `gorm:"column:pgc_id"`
+	EpisodeNumber int     `gorm:"column:episode_number"`
+	Title         string  `gorm:"column:title"`
+	VID           uint    `gorm:"column:vid"`
+	PublishTime   string  `gorm:"column:publish_time"`
 	Duration      float64 `gorm:"column:duration"`
+}
+
+// playablePGCSub 构建「可播 PGC」候选子查询（每次调用一条新链，避免复用 *gorm.DB 被 Count 污染导致 Pluck 空结果）。
+//
+// 注意：Table + 手写 JOIN 不会自动套用 Model 的软删 Scope，而下方 Find(&[]PGCContent) 会带 deleted_at IS NULL。
+// 若不在此显式排除软删行，会出现 total/pluck 命中已删数据、Find 为空 → list 始终为 []。
+func playablePGCSub(pgcType int, seed uint64) *gorm.DB {
+	q := global.Mysql.Table("pgc_content pc").
+		Select("pc.pgc_id").
+		Where("pc.deleted_at IS NULL").
+		Joins("JOIN pgc_episode pe ON pe.pgc_id = pc.pgc_id AND pe.deleted_at IS NULL AND pe.status = ?", global.PGCEpisodeNormal).
+		Joins("JOIN video v ON v.id = pe.vid AND v.deleted_at IS NULL AND v.status = ?", global.AUDIT_APPROVED).
+		Where("pc.status = ?", global.PGCAuditApproved).
+		Group("pc.pgc_id")
+	if pgcType > 0 {
+		q = q.Where("pc.pgc_type = ?", pgcType)
+	}
+	if seed > 0 {
+		q = q.Where("pc.pgc_id <> ?", seed)
+	}
+	return q
 }
 
 // RecommendPGC 参考 B 站思路：PGC 独立召回 + 可播过滤（剧集正常且关联视频审核通过）。
@@ -61,22 +84,12 @@ func RecommendPGC(req dto.PGCRecommendReq) (total int64, list []model.PGCContent
 	// - PGC 审核通过
 	// - 至少存在 1 个剧集（pgc_episode.status=normal）
 	// - 且该剧集关联的视频审核通过（video.status=AUDIT_APPROVED）
-	sub := global.Mysql.Table("pgc_content pc").
-		Select("pc.pgc_id").
-		Joins("JOIN pgc_episode pe ON pe.pgc_id = pc.pgc_id AND pe.status = ?", global.PGCEpisodeNormal).
-		Joins("JOIN video v ON v.id = pe.vid AND v.status = ?", global.AUDIT_APPROVED).
-		Where("pc.status = ?", global.PGCAuditApproved).
-		Group("pc.pgc_id")
-
-	if pgcType > 0 {
-		sub = sub.Where("pc.pgc_type = ?", pgcType)
-	}
-	if seed > 0 {
-		sub = sub.Where("pc.pgc_id <> ?", seed)
-	}
+	//
+	// 注意：Count 与 Pluck 必须各用独立子查询链；同一 *gorm.DB 先作为 Table("(?) as t", sub) 子查询再链式 Order/Pluck
+	// 会污染 Statement，出现 total>0 但 Pluck 为空（与线上现象一致）。
 
 	// total（distinct pgc_id）
-	if e := global.Mysql.Table("(?) as t", sub).Count(&total).Error; e != nil {
+	if e := global.Mysql.Table("(?) as t", playablePGCSub(pgcType, seed)).Count(&total).Error; e != nil {
 		return 0, nil, nil, errors.New("查询失败")
 	}
 	if total == 0 {
@@ -86,7 +99,7 @@ func RecommendPGC(req dto.PGCRecommendReq) (total int64, list []model.PGCContent
 	// ========== 分页取 pgc_id，再回表取内容（避免 only_full_group_by 问题） ==========
 	start := (req.Page - 1) * req.PageSize
 	var pgcIDs []uint64
-	if e := sub.
+	if e := playablePGCSub(pgcType, seed).
 		Order("pc.is_ongoing DESC, pc.rating DESC, pc.created_at DESC").
 		Limit(req.PageSize).
 		Offset(start).
@@ -116,7 +129,7 @@ func RecommendPGC(req dto.PGCRecommendReq) (total int64, list []model.PGCContent
 	// ========== 批量取“最新可播剧集”（用于卡片展示 index_show/new_ep） ==========
 	var eps []pgcLatestEpisode
 	if e := global.Mysql.Table("pgc_episode pe").
-		Select("pe.pgc_id, pe.episode_number, pe.title, pe.vid, pe.publish_time, pe.duration").
+		Select("pe.id, pe.pgc_id, pe.episode_number, pe.title, pe.vid, pe.publish_time, pe.duration").
 		Joins("JOIN video v ON v.id = pe.vid AND v.status = ?", global.AUDIT_APPROVED).
 		Where("pe.pgc_id IN ?", pgcIDs).
 		Where("pe.status = ?", global.PGCEpisodeNormal).
@@ -140,3 +153,27 @@ func RecommendPGC(req dto.PGCRecommendReq) (total int64, list []model.PGCContent
 	return total, list, latestEpisode, nil
 }
 
+// RecommendPGCByVideo 按当前播放视频关联的 PGC 做同类推荐。
+// 规则：先由 vid 找到其所在 pgc_id，再按该 season 作为 seed 召回推荐列表。
+func RecommendPGCByVideo(vid uint, page, pageSize int) (total int64, list []model.PGCContent, latestEpisode map[uint64]pgcLatestEpisode, err error) {
+	if vid == 0 {
+		return 0, []model.PGCContent{}, map[uint64]pgcLatestEpisode{}, nil
+	}
+
+	var ep model.PGCEpisode
+	if e := global.Mysql.Select("pgc_id").
+		Where("vid = ? AND status = ?", vid, global.PGCEpisodeNormal).
+		Order("id DESC").
+		First(&ep).Error; e != nil || ep.PGCID == 0 {
+		// 当前视频未绑定 PGC，返回空结果，前端可按需兜底
+		return 0, []model.PGCContent{}, map[uint64]pgcLatestEpisode{}, nil
+	}
+
+	req := dto.PGCRecommendReq{
+		Page:      page,
+		PageSize:  pageSize,
+		SeedPGCID: strconv.FormatUint(ep.PGCID, 10),
+		Scene:     "watch",
+	}
+	return RecommendPGC(req)
+}

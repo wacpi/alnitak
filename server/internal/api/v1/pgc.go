@@ -310,9 +310,14 @@ func SearchPGC(ctx *gin.Context) {
 		return
 	}
 
+	formatted := make([]gin.H, 0, len(list))
+	for _, item := range list {
+		formatted = append(formatted, formatPGCContent(item))
+	}
+
 	resp.OkWithData(ctx, gin.H{
 		"total":     total,
-		"list":      list,
+		"list":      formatted,
 		"page":      pageInt,
 		"page_size": pageSizeInt,
 	})
@@ -411,6 +416,7 @@ func RecommendPGC(ctx *gin.Context) {
 	for _, item := range list {
 		card := formatPGCContent(item)
 		if ep, ok := latest[item.PGCID]; ok {
+			card["latest_ep_id"] = ep.ID
 			card["latest_ep_number"] = ep.EpisodeNumber
 			card["latest_ep_title"] = ep.Title
 			card["latest_vid"] = ep.VID
@@ -440,6 +446,58 @@ func RecommendPGC(ctx *gin.Context) {
 	})
 }
 
+// RecommendPGCByVideo 播放页推荐：给定 vid，返回同类 PGC 推荐列表。
+func RecommendPGCByVideo(ctx *gin.Context) {
+	vidStr := ctx.Query("vid")
+	pageStr := ctx.DefaultQuery("page", "1")
+	pageSizeStr := ctx.DefaultQuery("page_size", "10")
+
+	vidInt, err1 := convertToInt(vidStr)
+	pageInt, err2 := convertToInt(pageStr)
+	pageSizeInt, err3 := convertToInt(pageSizeStr)
+	if err1 != nil || err2 != nil || err3 != nil || vidInt <= 0 {
+		resp.FailWithMessage(ctx, "无效的参数")
+		return
+	}
+
+	total, list, latest, err := service.RecommendPGCByVideo(uint(vidInt), pageInt, pageSizeInt)
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+
+	formatted := make([]gin.H, 0, len(list))
+	for _, item := range list {
+		card := formatPGCContent(item)
+		if ep, ok := latest[item.PGCID]; ok {
+			card["latest_ep_id"] = ep.ID
+			card["latest_ep_number"] = ep.EpisodeNumber
+			card["latest_ep_title"] = ep.Title
+			card["latest_vid"] = ep.VID
+			card["latest_publish_time"] = ep.PublishTime
+			if ep.EpisodeNumber > 0 {
+				card["new_ep"] = gin.H{
+					"index_show": fmt.Sprintf("第%d话", ep.EpisodeNumber),
+					"title":      ep.Title,
+				}
+			}
+		}
+		if item.IsOngoing {
+			card["badge"] = "连载中"
+		} else if item.Rating > 0 {
+			card["badge"] = fmt.Sprintf("%.1f分", item.Rating)
+		}
+		formatted = append(formatted, card)
+	}
+
+	resp.OkWithData(ctx, gin.H{
+		"total":     total,
+		"list":      formatted,
+		"page":      pageInt,
+		"page_size": pageSizeInt,
+	})
+}
+
 func GetPGCDetailWithEpisodes(ctx *gin.Context) {
 	pgcID := ctx.Query("pgc_id")
 
@@ -464,6 +522,56 @@ func GetPGCDetailWithEpisodes(ctx *gin.Context) {
 		"pgc":      formatPGCContent(*pgc),
 		"episodes": formattedEpisodes,
 	})
+}
+
+// GetPGCPlayPanelByVideo 播放页：按 vid 获取“季度 + 剧集”面板数据
+func GetPGCPlayPanelByVideo(ctx *gin.Context) {
+	vidStr := ctx.Query("vid")
+	seasonStr := ctx.DefaultQuery("season_id", "0")
+
+	vidInt, err1 := convertToInt(vidStr)
+	seasonUint, err2 := convertToUint(seasonStr)
+	if err1 != nil || err2 != nil || vidInt <= 0 {
+		resp.FailWithMessage(ctx, "无效的参数")
+		return
+	}
+
+	current, seasons, episodes, activeSeasonID, err := service.GetPGCPlayPanelByVideo(uint(vidInt), seasonUint)
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+
+	formattedSeasons := make([]gin.H, 0, len(seasons))
+	for _, item := range seasons {
+		formattedSeasons = append(formattedSeasons, formatPGCContent(item))
+	}
+	formattedEpisodes := make([]gin.H, 0, len(episodes))
+	for _, item := range episodes {
+		formattedEpisodes = append(formattedEpisodes, formatPGCEpisode(item))
+	}
+
+	resp.OkWithData(ctx, gin.H{
+		"current":          formatPGCContent(*current),
+		"seasons":          formattedSeasons,
+		"episodes":         formattedEpisodes,
+		"active_season_id": strconv.FormatUint(activeSeasonID, 10),
+	})
+}
+
+func GetPGCEpisodeDetail(ctx *gin.Context) {
+	epID := ctx.Query("ep_id")
+	epIDUint, err := convertToUint(epID)
+	if err != nil {
+		resp.FailWithMessage(ctx, "无效的剧集ID")
+		return
+	}
+	ep, err := service.GetPGCEpisodeDetail(epIDUint)
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+	resp.OkWithData(ctx, gin.H{"episode": formatPGCEpisode(*ep)})
 }
 
 func convertToUint(s string) (uint64, error) {

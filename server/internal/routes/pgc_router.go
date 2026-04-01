@@ -18,7 +18,11 @@ func CollectPGCRoutes(r *gin.RouterGroup) {
 		pgcGroup.GET("recommended", api.GetRecommendedPGC)
 		// 参考 B 站：PGC 推荐（按 seed/type 召回 + 可播过滤）
 		pgcGroup.GET("recommend", api.RecommendPGC)
+		// 播放页：按当前 vid 推荐同类 PGC
+		pgcGroup.GET("recommend-by-video", api.RecommendPGCByVideo)
 		pgcGroup.GET("detail-with-episodes", api.GetPGCDetailWithEpisodes)
+		pgcGroup.GET("play-panel-by-video", api.GetPGCPlayPanelByVideo)
+		pgcGroup.GET("episode-detail", api.GetPGCEpisodeDetail)
 
 		// 后台审核（仅需登录 + Casbin，勿放在 :pgc_id 动态路由之后）
 		pgcAdmin := pgcGroup.Group("")
