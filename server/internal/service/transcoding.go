@@ -134,14 +134,20 @@ var (
 // 初始化转码并发控制（根据CPU核心数或配置）
 func initTranscodingSemaphore() {
 	semaphoreOnce.Do(func() {
-		// 默认允许2个转码任务并发（可根据实际服务器配置调整）
-		maxConcurrentTranscoding := maxCPUConcurrentTranscoding
+		var maxConcurrent int
 		if global.Config.Transcoding.UseGpu {
-			// GPU模式下可以稍微增加并发数
-			maxConcurrentTranscoding = maxGPUConcurrentTranscoding
+			maxConcurrent = global.Config.Transcoding.MaxGpuConcurrency
+			if maxConcurrent <= 0 {
+				maxConcurrent = maxGPUConcurrentTranscoding
+			}
+		} else {
+			maxConcurrent = global.Config.Transcoding.MaxCpuConcurrency
+			if maxConcurrent <= 0 {
+				maxConcurrent = maxCPUConcurrentTranscoding
+			}
 		}
-		transcodingSemaphore = make(chan struct{}, maxConcurrentTranscoding)
-		utils.InfoLog(fmt.Sprintf("【转码并发控制初始化】最大并发数=%d", maxConcurrentTranscoding), "transcoding")
+		transcodingSemaphore = make(chan struct{}, maxConcurrent)
+		utils.InfoLog(fmt.Sprintf("【转码并发控制初始化】最大并发数=%d (GPU=%v)", maxConcurrent, global.Config.Transcoding.UseGpu), "transcoding")
 	})
 }
 
