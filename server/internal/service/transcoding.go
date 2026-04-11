@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"interastral-peace.com/alnitak/internal/cache"
 	"interastral-peace.com/alnitak/internal/domain/dto"
 	"interastral-peace.com/alnitak/internal/domain/model"
@@ -432,6 +433,8 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 	var audioEncoded bool
 	var audioFailed bool
 	var audioMu sync.Mutex
+	audioDone := make(chan struct{}) // 音频编码完成信号（成功或失败都会关闭）
+	var audioDoneOnce sync.Once
 
 	// 初始化并发控制
 	initTranscodingSemaphore()
@@ -457,13 +460,17 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 			defer func() {
 				if r := recover(); r != nil {
 					markTranscodingQualityFailed(transcodingInfo.ResourceID, fileName)
-					if needEncodeAudio {
+					utils.ErrorLog(fmt.Sprintf("【Goroutine panic】%s: %v", fileName, r), "transcoding", "")
+				}
+				// 如果本 goroutine 负责音频编码，确保异常退出时（panic/cancel）通知所有等待者
+				if needEncodeAudio {
+					audioDoneOnce.Do(func() {
 						audioMu.Lock()
 						audioFailed = true
 						audioMu.Unlock()
+						close(audioDone)
 						markAllTranscodingQualitiesFailed(transcodingInfo.ResourceID)
-					}
-					utils.ErrorLog(fmt.Sprintf("【Goroutine panic】%s: %v", fileName, r), "transcoding", "")
+					})
 				}
 			}()
 
@@ -552,25 +559,18 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 					audioMu.Lock()
 					audioFailed = true
 					audioMu.Unlock()
+					audioDoneOnce.Do(func() { close(audioDone) })
 					markAllTranscodingQualitiesFailed(transcodingInfo.ResourceID)
 					return
 				}
+				// 音频编码成功，通知所有等待者
+				audioDoneOnce.Do(func() { close(audioDone) })
 			}
 
-			// 检查context是否被取消（等待音频前）
-			if ctx.Err() != nil {
-				utils.InfoLog(fmt.Sprintf("【转码取消】%s，context已取消", fileName), "transcoding")
-				return
-			}
-
-			// 只有执行了音频编码的 goroutine 才能保存数据库
-			// 等待音频编码完成（通过检查 audio.m4s 文件存在且大小大于0）
+			// 等待音频编码完成
 			if !needEncodeAudio {
-				// 等待其他 goroutine 完成音频编码
-				waitCount := 0
-				maxWaitCount := audioWaitMaxPollCount // 最多等待5分钟
-				for {
-					// 检查音频编码是否已失败
+				select {
+				case <-audioDone:
 					audioMu.Lock()
 					failed := audioFailed
 					audioMu.Unlock()
@@ -579,27 +579,9 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 						utils.ErrorLog(fmt.Sprintf("【音频编码已失败】%s 放弃等待", fileName), "transcoding", "")
 						return
 					}
-
-					audioPath := transcodingInfo.OutputDir + "audio.m4s"
-					info, err := os.Stat(audioPath)
-					if err == nil && info.Size() > 0 {
-						break
-					}
-					waitCount++
-					if waitCount%audioWaitLogEveryPollCount == 0 {
-						var fileSize int64
-						if info != nil {
-							fileSize = info.Size()
-						}
-						utils.InfoLog(fmt.Sprintf("【等待音频】%s 已等待 %d 次, 文件存在=%v, 大小=%d",
-							fileName, waitCount, err == nil, fileSize), "transcoding")
-					}
-					if waitCount >= maxWaitCount {
-						markTranscodingQualityFailed(transcodingInfo.ResourceID, fileName)
-						utils.ErrorLog(fmt.Sprintf("【等待音频超时】%s 放弃等待", fileName), "transcoding", "")
-						return
-					}
-					time.Sleep(audioWaitPollInterval)
+				case <-ctx.Done():
+					utils.InfoLog(fmt.Sprintf("【转码取消】%s，等待音频时context已取消", fileName), "transcoding")
+					return
 				}
 			}
 
@@ -610,8 +592,18 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 			videoFilePath := transcodingInfo.OutputDir + fileName + "_video.m4s"
 			audioFilePath := transcodingInfo.OutputDir + "audio.m4s"
 
-			videoInitRange, videoIndexRange, _ := getMP4InitRange(videoFilePath)
-			audioInitRange, audioIndexRange, _ := getMP4InitRange(audioFilePath)
+			videoInitRange, videoIndexRange, err := getMP4InitRange(videoFilePath)
+			if err != nil {
+				markTranscodingQualityFailed(transcodingInfo.ResourceID, fileName)
+				utils.ErrorLog(fmt.Sprintf("【视频InitRange提取失败】%s", fileName), "transcoding", err.Error())
+				return
+			}
+			audioInitRange, audioIndexRange, err := getMP4InitRange(audioFilePath)
+			if err != nil {
+				markTranscodingQualityFailed(transcodingInfo.ResourceID, fileName)
+				utils.ErrorLog(fmt.Sprintf("【音频InitRange提取失败】%s", fileName), "transcoding", err.Error())
+				return
+			}
 
 			videoCodec := "avc1.640028" // 兜底：保证可播放性
 			if c, err := probeH264Avc1CodecString(videoFilePath); err != nil {
@@ -702,6 +694,12 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 		// 并发上传文件
 		uploadCount := uploadFilesToOSS(transcodingInfo.DirName, transcodingInfo.OutputDir, transcodingInfo.Suffix, files)
 		utils.InfoLog(fmt.Sprintf("【OSS上传完成】成功上传=%d/%d个文件", uploadCount, len(files)), "transcoding")
+
+		if uploadCount == 0 {
+			utils.ErrorLog("【OSS上传全部失败】无文件上传成功", "transcoding", "")
+			completeTransCoding(transcodingInfo.VideoID, transcodingInfo.ResourceID, global.PROCESSING_FAIL, transcodingInfo.OriginalVideoStatus)
+			return
+		}
 	} else {
 		utils.InfoLog("【跳过OSS上传】使用本地存储", "transcoding")
 	}
@@ -1449,14 +1447,22 @@ func completeTransCoding(videoId, resourceId uint, status int, originalVideoStat
 
 	tx := global.Mysql.Begin()
 
-	// 查询当前视频状态（需要提前查询,以便决定资源的最终状态）
+	// 查询当前视频状态（加行锁，避免多资源同时完成时的竞态）
 	var currentVideo model.Video
-	tx.Model(&model.Video{}).Where("id = ?", videoId).First(&currentVideo)
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Model(&model.Video{}).Where("id = ?", videoId).First(&currentVideo).Error; err != nil {
+		tx.Rollback()
+		utils.ErrorLog(fmt.Sprintf("【事务失败】查询视频失败或视频已删除，VideoID=%d", videoId), "transcoding", err.Error())
+		return err
+	}
 	utils.InfoLog(fmt.Sprintf("【事务查询】VideoID=%d 当前status=%d", videoId, currentVideo.Status), "transcoding")
 
 	// 查询当前资源状态
 	var currentResource model.Resource
-	tx.Model(&model.Resource{}).Where("id = ?", resourceId).First(&currentResource)
+	if err := tx.Where("id = ?", resourceId).First(&currentResource).Error; err != nil {
+		tx.Rollback()
+		utils.ErrorLog(fmt.Sprintf("【事务失败】查询资源失败或资源已删除，ResourceID=%d", resourceId), "transcoding", err.Error())
+		return err
+	}
 	utils.InfoLog(fmt.Sprintf("【事务查询】ResourceID=%d 当前status=%d", resourceId, currentResource.Status), "transcoding")
 
 	// 先检查是否所有资源都转码完成（包括当前这个资源）
