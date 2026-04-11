@@ -155,7 +155,7 @@ func (m *MinIOStorage) GetObjectUrl(objectKey string) string {
 	presignedURL, err := signer.PresignGetObject(context.Background(), &s3.GetObjectInput{
 		Bucket: aws.String(m.bucket),
 		Key:    aws.String(objectKey),
-	}, s3.WithPresignExpires(time.Hour*24))
+	}, s3.WithPresignExpires(time.Hour*5))
 	if err != nil {
 		utils.ErrorLog("MinIO 生成文件URL失败", "transcoding", fmt.Sprintf("Error: %v, ObjectKey: %s", err, objectKey))
 		return ""

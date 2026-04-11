@@ -31,6 +31,9 @@ func CollectMessageRoutes(r *gin.RouterGroup) {
 		messageAuth.POST("sendWhisper", middleware.Ban(), api.SendWhisper)
 		// 已读私信
 		messageAuth.POST("readWhisper", api.ReadWhisper)
+		// 公告/点赞/回复/@ 已读进度
+		messageAuth.GET("readStatus", api.GetReadStatus)
+		messageAuth.POST("readStatus", api.SaveReadStatus)
 	}
 
 	// 获取公告

@@ -28,7 +28,16 @@ func CollectVideo(ctx *gin.Context) {
 
 // 是否收藏
 func HasCollectVideo(ctx *gin.Context) {
-	videoId := utils.StringToUint(ctx.Query("vid"))
+	raw := ctx.Query("vid")
+	videoId, err := service.ParseVideoID(raw)
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+	if videoId == 0 {
+		resp.FailWithMessage(ctx, "参数有误")
+		return
+	}
 	collect, err := service.HasCollect(ctx, videoId)
 	if err != nil {
 		resp.FailWithMessage(ctx, err.Error())
@@ -41,7 +50,16 @@ func HasCollectVideo(ctx *gin.Context) {
 
 // 获取已收藏的收藏夹
 func GetVideoCollectedInfo(ctx *gin.Context) {
-	videoId := utils.StringToUint(ctx.Query("vid"))
+	raw := ctx.Query("vid")
+	videoId, err := service.ParseVideoID(raw)
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+	if videoId == 0 {
+		resp.FailWithMessage(ctx, "参数有误")
+		return
+	}
 
 	collectionIds := service.GetCollectedInfo(ctx, videoId)
 

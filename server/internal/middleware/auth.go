@@ -71,6 +71,22 @@ func Auth() gin.HandlerFunc {
 	}
 }
 
+// OptionalAuth 可选认证中间件，有token则解析设置userId，无token则跳过
+func OptionalAuth() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		tokenString := ctx.GetHeader("Authorization")
+		if tokenString == "" {
+			ctx.Next()
+			return
+		}
+		_, claims, err := jwt_parse.ParseToken(tokenString)
+		if err == nil && claims.TokenType == 0 {
+			ctx.Set("userId", claims.UserId)
+		}
+		ctx.Next()
+	}
+}
+
 func WsAuth() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		// 读取验证token

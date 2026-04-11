@@ -1,8 +1,8 @@
 package dto
 
 type HistoryReq struct {
-	Vid      uint
-	Part     uint
-	Time     float64 // 当前播放进度
-	Duration float64 // 当前分P总时长
+	Vid      uint    `json:"vid" form:"vid"`
+	Part     uint    `json:"part" form:"part"`
+	Time     float64 `json:"time" form:"time"`
+	Duration float64 `json:"duration" form:"duration"`
 }

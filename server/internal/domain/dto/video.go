@@ -6,7 +6,14 @@ type VideoListReq struct {
 }
 
 type VideoFileReq struct {
-	Hash string
+	Hash   string `json:"hash"`
+	FileID uint   `json:"fileID"`
+	Size   int64  `json:"size"`
+}
+
+type VideoCheckResp struct {
+	Chunks []int `json:"chunks"`
+	FileID uint  `json:"fileID"`
 }
 
 type ReviewListReq struct {
@@ -33,7 +40,9 @@ type EditVideoReq struct {
 }
 
 type SearchVideoReq struct {
-	Page     int
-	PageSize int
-	KeyWords string
+	Page      int    `json:"page"`
+	PageSize  int    `json:"pageSize"`
+	KeyWords  string `json:"keywords"`
+	Sort      string `json:"sort"`
+	TimeRange string `json:"timeRange"`
 }

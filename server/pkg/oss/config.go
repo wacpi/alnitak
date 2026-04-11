@@ -13,4 +13,5 @@ type Config struct {
 	Domain string //域名
 
 	Private bool //是否私有 (仅七牛云)
+	UseSSL  bool //是否使用HTTPS连接OSS
 }

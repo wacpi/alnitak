@@ -11,8 +11,8 @@ import (
 )
 
 var (
-	videoOnlineClient  = make(map[interface{}]map[interface{}]*websocket.Conn)  // 消息通道
-	videoOnlineChannel = make(map[interface{}]map[interface{}]chan interface{}) // websocket客户端链接池
+	videoOnlineClient  = make(map[interface{}]map[interface{}]*websocket.Conn)  // websocket客户端连接池
+	videoOnlineChannel = make(map[interface{}]map[interface{}]chan interface{}) // 消息通道
 	videoOnlineMux     sync.Mutex                                               // 互斥锁
 )
 
@@ -27,10 +27,10 @@ func GetVideoOnlineConnect(ctx *gin.Context, videoId uint, clientId string) {
 	// 把与客户端的链接添加到客户端链接池中
 	addVideoOnlineClient(clientId, videoId, conn)
 
-	// 获取该客户端的消息通道
+	// 获取该客户端的消息通道（带缓冲，避免发送阻塞）
 	m, exist := getVideoOnlineMsgChannel(clientId, videoId)
 	if !exist {
-		m = make(chan interface{})
+		m = make(chan interface{}, 10)
 		addVideoOnlineMsgChannel(clientId, videoId, m)
 	}
 
@@ -76,22 +76,45 @@ func addVideoOnlineMsgChannel(id, groupId interface{}, m chan interface{}) {
 // 移除客户端和管道
 func deleteVideoOnlineClient(id, groupId interface{}) {
 	videoOnlineMux.Lock()
+	// 关闭并删除 channel，防止 goroutine 泄漏
+	if ch, exists := videoOnlineChannel[groupId][id]; exists {
+		close(ch)
+		delete(videoOnlineChannel[groupId], id)
+	}
 	delete(videoOnlineClient[groupId], id)
-	delete(videoOnlineChannel[groupId], id)
 	videoOnlineMux.Unlock()
 	BroadcastNumber(groupId) //广播房间人数
+}
+
+// 安全发送消息到 channel，防止向已关闭的 channel 发送导致 panic
+func safeSend(ch chan interface{}, content interface{}) (ok bool) {
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	select {
+	case ch <- content:
+		return true
+	default:
+		return false
+	}
 }
 
 // 设置消息到房间内所有客户端
 func setMessageAllClient(groupId, content interface{}) {
 	videoOnlineMux.Lock()
-	all := videoOnlineChannel[groupId]
+	// 复制一份 channel 列表，避免在锁外遍历时出现竞态
+	channels := make([]chan interface{}, 0, len(videoOnlineChannel[groupId]))
+	for _, ch := range videoOnlineChannel[groupId] {
+		channels = append(channels, ch)
+	}
 	videoOnlineMux.Unlock()
-	go func() {
-		for _, m := range all {
-			m <- content
-		}
-	}()
+
+	// 发送消息到所有客户端
+	for _, ch := range channels {
+		safeSend(ch, content)
+	}
 }
 
 // 广播房间人数

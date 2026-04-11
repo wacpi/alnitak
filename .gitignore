@@ -1,9 +1,30 @@
 node_modules
 .vscode
 .idea
+.cursor
 .DS_Store
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+
+# Non-project / runtime artifacts
+*.log
+*.exe
+*.dll
+*.so
+*.dylib
+*.bin
+*.key
+*.pem
+*.crt
+*.p12
+*.jks
+*.bak
+
+# Server runtime data and temp files
+server/data/
+server/**/.minio.sys/
+server/**/tmp*/
+server/**/.trash/

@@ -39,6 +39,11 @@ func CollectArchiveRoutes(r *gin.RouterGroup) {
 		archiveAuth.POST("article/cancelCollect", api.CancelCollectArticle)
 		// 文章是否收藏
 		archiveAuth.GET("article/hasCollect", api.HasCollectArticle)
+
+		// 视频分享计数
+		archiveAuth.POST("video/share", api.ShareVideo)
+		// 文章分享计数
+		archiveAuth.POST("article/share", api.ShareArticle)
 	}
 
 	// 获取视频点赞收藏数据

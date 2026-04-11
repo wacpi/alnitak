@@ -8,6 +8,7 @@ type Config struct {
 	Mysql       Mysql       `mapstructure:"mysql" json:"mysql" yaml:"mysql"`
 	Redis       Redis       `mapstructure:"redis" json:"redis" yaml:"redis"`
 	Security    Security    `mapstructure:"security" json:"security" yaml:"security"`
+	Server      Server      `mapstructure:"server" json:"server" yaml:"server"`
 	Storage     Storage     `mapstructure:"storage" json:"storage" yaml:"storage"`
 	Transcoding Transcoding `mapstructure:"transcoding" json:"transcoding" yaml:"transcoding"`
 	User        User        `mapstructure:"user" json:"user" yaml:"user"`

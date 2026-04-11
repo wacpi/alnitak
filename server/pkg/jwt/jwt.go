@@ -1,6 +1,7 @@
 package jwt
 
 import (
+	"errors"
 	"time"
 
 	"github.com/golang-jwt/jwt/v4"
@@ -11,7 +12,7 @@ import (
 
 type Claims struct {
 	UserId    uint
-	TokenType uint // 0:accessToken,1:refreshtToken
+	TokenType uint // 0:accessToken, 1:refreshToken
 	jwt.RegisteredClaims
 }
 
@@ -23,7 +24,7 @@ type Claims struct {
 func GenerateAccessToken(id uint) (string, error) {
 	accessJwtKey := []byte(global.Config.Security.AccessJwtSecret)
 	// token过期时间
-	expirationTime := time.Now().Add(cache.ACCESS_TOKEN_EXPRIRATION_TIME) // 10分钟有效
+	expirationTime := time.Now().Add(cache.ACCESS_TOKEN_EXPIRATION_TIME) // 60分钟有效
 	accessClaims := &Claims{
 		UserId:    id,
 		TokenType: 0,
@@ -45,7 +46,7 @@ func GenerateAccessToken(id uint) (string, error) {
 func GenerateRefreshToken(id uint) (string, error) {
 	refreshJwtKey := []byte(global.Config.Security.RefreshJwtSecret)
 	// token过期时间
-	expirationTime := time.Now().Add(cache.REFRESH_TOKEN_EXPRIRATION_TIME) // 14天有效
+	expirationTime := time.Now().Add(cache.REFRESH_TOKEN_EXPIRATION_TIME) // 7天有效
 
 	refreshClaims := &Claims{
 		UserId:    id,
@@ -84,13 +85,18 @@ func ParseToken(tokenString string) (*jwt.Token, *Claims, error) {
 	claims, err := GetTokenClaims(tokenString)
 	if err != nil {
 		utils.ErrorLog("token荷载解析失败", "jwt", err.Error())
+		return nil, claims, err
 	}
+
 	// 判断类型 选择不同的密钥
 	var secret []byte
-	if claims.TokenType == 0 { // accessToken
+	switch claims.TokenType {
+	case 0: // accessToken
 		secret = []byte(global.Config.Security.AccessJwtSecret)
-	} else if claims.TokenType == 1 { // refreshToken
+	case 1: // refreshToken
 		secret = []byte(global.Config.Security.RefreshJwtSecret)
+	default:
+		return nil, claims, errors.New("未知的token类型")
 	}
 
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (i interface{}, e error) {

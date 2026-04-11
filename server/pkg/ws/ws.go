@@ -90,6 +90,11 @@ func WsHandler(conn *websocket.Conn, id, groupId interface{}, m chan interface{}
 	for {
 		select {
 		case content, ok := <-m:
+			if !ok {
+				// channel 已关闭，正常退出
+				conn.Close()
+				return
+			}
 			// 从消息通道接收消息，然后推送给前端
 			conn.SetWriteDeadline(time.Now().Add(time.Second * 10))
 			if err := conn.WriteJSON(content); err != nil {
@@ -97,12 +102,6 @@ func WsHandler(conn *websocket.Conn, id, groupId interface{}, m chan interface{}
 				if !isNormalCloseError(err) {
 					utils.ErrorLog("发送消息错误", "ws", err.Error())
 				}
-				if ok {
-					go func() {
-						m <- content
-					}()
-				}
-
 				conn.Close()
 				removeConn(id, groupId)
 				return

@@ -55,6 +55,27 @@ func GetUserBaseInfo(ctx *gin.Context) {
 	resp.OkWithData(ctx, gin.H{"userInfo": user})
 }
 
+// SearchUser 搜索用户 / UP（公开）
+func SearchUser(ctx *gin.Context) {
+	var req dto.SearchKeywordPageReq
+	if err := ctx.Bind(&req); err != nil {
+		resp.FailWithMessage(ctx, "请求参数有误")
+		return
+	}
+	if req.PageSize > 30 {
+		resp.FailWithMessage(ctx, "请求数量过多")
+		return
+	}
+	if req.Page < 1 {
+		req.Page = 1
+	}
+	if req.PageSize < 1 {
+		req.PageSize = 15
+	}
+	users := service.SearchUser(ctx, req)
+	resp.OkWithData(ctx, gin.H{"users": users})
+}
+
 // 获取用户列表(后台管理)
 func GetUserListManage(ctx *gin.Context) {
 

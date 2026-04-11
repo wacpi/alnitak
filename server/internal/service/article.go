@@ -2,9 +2,11 @@ package service
 
 import (
 	"errors"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 	"interastral-peace.com/alnitak/internal/cache"
 	"interastral-peace.com/alnitak/internal/domain/dto"
 	"interastral-peace.com/alnitak/internal/domain/model"
@@ -71,12 +73,14 @@ func EditArticleInfo(ctx *gin.Context, editArticleReq dto.EditArticleReq) error 
 }
 
 // 获取自己上传的文章
-func GetUploadArticleList(ctx *gin.Context, page, pageSize int) (total int64, articles []vo.UploadArticleResp) {
+// category: all | published(0) | pending(500) | rejected(2000)
+func GetUploadArticleList(ctx *gin.Context, page, pageSize int, category string) (total int64, articles []vo.UploadArticleResp) {
 	userId := ctx.GetUint("userId")
 
-	global.Mysql.Model(&model.Article{}).Where("uid = ?", userId).Count(&total)
-	global.Mysql.Model(&model.Article{}).Select(vo.UPLOAD_ARTICLE_FIELD).
-		Where("uid = ?", userId).Limit(pageSize).Offset((page - 1) * pageSize).Scan(&articles)
+	db := global.Mysql.Model(&model.Article{}).Where("uid = ?", userId)
+	db = applyArticleCategoryFilter(db, category)
+	db.Count(&total)
+	db.Select(vo.UPLOAD_ARTICLE_FIELD).Limit(pageSize).Offset((page - 1) * pageSize).Scan(&articles)
 
 	// 更新点击量数据
 	for i := 0; i < len(articles); i++ {
@@ -84,6 +88,19 @@ func GetUploadArticleList(ctx *gin.Context, page, pageSize int) (total int64, ar
 	}
 
 	return
+}
+
+func applyArticleCategoryFilter(db *gorm.DB, category string) *gorm.DB {
+	switch category {
+	case "published":
+		return db.Where("status = ?", global.AUDIT_APPROVED)
+	case "pending":
+		return db.Where("status = ?", global.WAITING_REVIEW)
+	case "rejected":
+		return db.Where("status = ?", global.REVIEW_FAILED)
+	default:
+		return db
+	}
 }
 
 func GetArticleStatus(ctx *gin.Context, aid uint) (article vo.ArticleStatusResp, err error) {
@@ -94,6 +111,28 @@ func GetArticleStatus(ctx *gin.Context, aid uint) (article vo.ArticleStatusResp,
 	}
 
 	return article, nil
+}
+
+// ParseArticleID 兼容对外 shortId 与数字自增 id。
+func ParseArticleID(raw string) (uint, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, errors.New("文章ID不能为空")
+	}
+
+	if utils.IsAllASCIIDigits(raw) {
+		id := utils.StringToUint(raw)
+		if id == 0 {
+			return 0, errors.New("文章不存在")
+		}
+		return id, nil
+	}
+
+	var article model.Article
+	if err := global.Mysql.Where("short_id = ?", raw).First(&article).Error; err != nil || article.ID == 0 {
+		return 0, errors.New("文章不存在")
+	}
+	return article.ID, nil
 }
 
 // 获文章信息
@@ -279,6 +318,56 @@ func DeleteArticleManage(ctx *gin.Context, id uint) error {
 func FindArticleById(id uint) (article model.Article, err error) {
 	err = global.Mysql.Where("`id` = ?", id).First(&article).Error
 	return
+}
+
+// SearchArticle 搜索已过审专栏（标题/标签/内容简介模糊匹配，不对正文长文本 LIKE）
+func SearchArticle(ctx *gin.Context, req dto.SearchKeywordPageReq) []vo.ArticleResp {
+	var articleIds []uint
+	page := req.Page
+	if page < 1 {
+		page = 1
+	}
+	ps := req.PageSize
+	if ps < 1 {
+		ps = 15
+	}
+	kw := strings.TrimSpace(req.KeyWords)
+	if utf8.RuneCountInString(kw) > 100 {
+		kw = string([]rune(kw)[:100])
+	}
+
+	q := global.Mysql.Model(&model.Article{}).Where("status = ?", global.AUDIT_APPROVED)
+
+	tr := normalizeTimeRange(req.TimeRange)
+	if start := parseTimeRangeStart(tr); start != nil {
+		q = q.Where("created_at >= ?", *start)
+	}
+
+	if len(kw) > 0 {
+		pattern := "%" + escapeLikeKeyword(kw) + "%"
+		q = q.Where("(title LIKE ? ESCAPE '\\\\' OR tags LIKE ? ESCAPE '\\\\' OR content_desc LIKE ? ESCAPE '\\\\')",
+			pattern, pattern, pattern)
+	}
+
+	switch normalizeSort(req.Sort) {
+	case "most_viewed":
+		q = q.Order("clicks desc").Order("id desc")
+	default:
+		q = q.Order("created_at desc").Order("id desc")
+	}
+
+	q.Limit(ps).Offset((page - 1) * ps).Pluck("id", &articleIds)
+
+	articles := make([]vo.ArticleResp, 0, len(articleIds))
+	for _, id := range articleIds {
+		a := GetArticleItemInfo(id)
+		if a.ID == 0 {
+			continue
+		}
+		a.Clicks += GetArticleClicks(id)
+		articles = append(articles, a)
+	}
+	return articles
 }
 
 func getContentDsec(c string) string {

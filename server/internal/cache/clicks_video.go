@@ -17,7 +17,7 @@ func GetVideoClicksLimit(videoId uint, ip string) string {
 
 func SetVideoClicksLimit(videoId uint, ip string) {
 	global.Redis.Set(VIDEO_CLICKS_LIMIT_KEY+utils.UintToString(videoId)+":"+ip, 1,
-		VIDEO_CLICKS_LIMIT_EXPRIRATION_TIME)
+		VIDEO_CLICKS_LIMIT_EXPIRATION_TIME)
 }
 
 func GetVideoClicks(videoId uint) (int64, error) {
@@ -36,7 +36,7 @@ func GetVideoClicks(videoId uint) (int64, error) {
 }
 
 func SetVideoClicks(videoId uint, count int64) {
-	global.Redis.Set(VIDEO_CLICKS_KEY+utils.UintToString(videoId), count, VIDEO_CLICKS_EXPRIRATION_TIME)
+	global.Redis.Set(VIDEO_CLICKS_KEY+utils.UintToString(videoId), count, VIDEO_CLICKS_EXPIRATION_TIME)
 }
 
 // 删除播放量

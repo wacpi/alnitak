@@ -48,7 +48,7 @@ func RefreshPopular() {
 	zap.L().Info("开始同步视频ID", zap.String("module", "cron"))
 
 	for {
-		if err := global.Mysql.Model(&model.Video{}).Where("status = ?", global.AUDIT_APPROVED).
+		if err := global.Mysql.Model(&model.Video{}).Where("status = ? AND pgc_attached = ?", global.AUDIT_APPROVED, false).
 			Offset(offset).Limit(limit).Scan(&videos).Error; err != nil {
 			break
 		}

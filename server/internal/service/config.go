@@ -66,6 +66,7 @@ func GetStorageConfig() vo.StorageConfigResp {
 		Region:   global.Config.Storage.Region,
 		Domain:   global.Config.Storage.Domain,
 		Private:  global.Config.Storage.Private,
+		UseSSL:   global.Config.Storage.UseSSL,
 
 		UploadMp4File: global.Config.Storage.UploadMp4File,
 	}
@@ -89,6 +90,7 @@ func SetStorageConfig(storageConfigReq dto.StorageConfigReq) error {
 		Region:        storageConfigReq.Region,
 		Domain:        storageConfigReq.Domain,
 		Private:       storageConfigReq.Private,
+		UseSSL:        storageConfigReq.UseSSL,
 		UploadMp4File: storageConfigReq.UploadMp4File,
 	}
 
@@ -102,6 +104,7 @@ func SetStorageConfig(storageConfigReq dto.StorageConfigReq) error {
 	viper.Set("storage.region", storageConfigReq.Region)
 	viper.Set("storage.domain", storageConfigReq.Domain)
 	viper.Set("storage.private", storageConfigReq.Private)
+	viper.Set("storage.use_ssl", storageConfigReq.UseSSL)
 	viper.Set("storage.upload_mp4_file", storageConfigReq.UploadMp4File)
 
 	if len(storageConfigReq.KeySecret) != 0 {
@@ -130,6 +133,12 @@ func GetOtherConfig() vo.OtherConfigResp {
 		Prefix:          global.Config.User.Prefix,
 		Generate1080p60: global.Config.Transcoding.Generate1080p60,
 		UseGpu:          global.Config.Transcoding.UseGpu,
+
+		ServerPort:  global.Config.Server.Port,
+		SslEnabled:  global.Config.Server.Ssl.Enabled,
+		SslPort:     global.Config.Server.Ssl.Port,
+		SslCertFile: global.Config.Server.Ssl.CertFile,
+		SslKeyFile:  global.Config.Server.Ssl.KeyFile,
 	}
 }
 
@@ -137,6 +146,7 @@ func SetOtherConfig(otherConfigReq dto.OtherConfigReq) error {
 	oldCorsConfig := global.Config.Cors
 	oldUserConfig := global.Config.User
 	oldTranscodingConfig := global.Config.Transcoding
+	oldServerConfig := global.Config.Server
 
 	global.Config.Cors = config.Cors{
 		AllowOrigin: otherConfigReq.AllowOrigin,
@@ -148,17 +158,32 @@ func SetOtherConfig(otherConfigReq dto.OtherConfigReq) error {
 		Generate1080p60: otherConfigReq.Generate1080p60,
 		UseGpu:          otherConfigReq.UseGpu,
 	}
+	global.Config.Server = config.Server{
+		Port: otherConfigReq.ServerPort,
+		Ssl: config.Ssl{
+			Enabled:  otherConfigReq.SslEnabled,
+			Port:     otherConfigReq.SslPort,
+			CertFile: otherConfigReq.SslCertFile,
+			KeyFile:  otherConfigReq.SslKeyFile,
+		},
+	}
 
 	viper.Set("cors.allow_origin", otherConfigReq.AllowOrigin)
 	viper.Set("user.prefix", otherConfigReq.Prefix)
 	viper.Set("transcoding.use_gpu", otherConfigReq.UseGpu)
 	viper.Set("transcoding.generate_1080p60", otherConfigReq.Generate1080p60)
+	viper.Set("server.port", otherConfigReq.ServerPort)
+	viper.Set("server.ssl.enabled", otherConfigReq.SslEnabled)
+	viper.Set("server.ssl.port", otherConfigReq.SslPort)
+	viper.Set("server.ssl.cert_file", otherConfigReq.SslCertFile)
+	viper.Set("server.ssl.key_file", otherConfigReq.SslKeyFile)
 
 	if err := viper.WriteConfig(); err != nil {
 		global.Config.Cors = oldCorsConfig
 		global.Config.User = oldUserConfig
 		global.Config.Transcoding = oldTranscodingConfig
-		utils.ErrorLog("写入存其他置失败", "config", err.Error())
+		global.Config.Server = oldServerConfig
+		utils.ErrorLog("写入其他配置失败", "config", err.Error())
 		return errors.New("更新失败")
 	}
 

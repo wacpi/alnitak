@@ -1,13 +1,16 @@
 package routes
 
 import (
+	"net/http"
+
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 	"interastral-peace.com/alnitak/internal/api/v1"
 	"interastral-peace.com/alnitak/internal/global"
 	"interastral-peace.com/alnitak/internal/middleware"
 )
 
-const port = "9000"
+const defaultPort = "9000"
 
 func InitRouter() {
 	// gin 模式
@@ -27,14 +30,60 @@ func InitRouter() {
 	// 收集添加路由
 	CollectRoutes(r)
 
-	// 运行
-	r.Run(":" + port)
+	// API / Casbin 增量同步已在 initialize.InitDefaultData() -> SyncApiData() 中执行
+
+	// 获取HTTP端口
+	httpPort := global.Config.Server.Port
+	if httpPort == "" {
+		httpPort = defaultPort
+	}
+
+	// 检查是否启用HTTPS
+	sslConfig := global.Config.Server.Ssl
+	if sslConfig.Enabled {
+		httpsPort := sslConfig.Port
+		if httpsPort == "" {
+			httpsPort = "443"
+		}
+
+		// HTTPS 与 HTTP 需不同端口，默认 HTTP 9000、HTTPS 9001
+		if httpsPort == httpPort {
+			httpsPort = "9001"
+		}
+
+		zap.L().Info("启动HTTPS+HTTP双模式",
+			zap.String("https_port", httpsPort),
+			zap.String("http_port", httpPort),
+			zap.String("cert", sslConfig.CertFile))
+
+		// 启动 HTTPS（goroutine）
+		go func() {
+			zap.L().Info("HTTPS服务器已启动", zap.String("port", httpsPort))
+			if err := r.RunTLS(":"+httpsPort, sslConfig.CertFile, sslConfig.KeyFile); err != nil && err != http.ErrServerClosed {
+				zap.L().Error("HTTPS服务器异常退出", zap.Error(err))
+			}
+		}()
+
+		// 启动 HTTP（主协程，保持 9000 便于 Admin 等 HTTP 客户端）
+		zap.L().Info("HTTP服务器已启动", zap.String("port", httpPort))
+		if err := r.Run(":" + httpPort); err != nil {
+			zap.L().Fatal("HTTP服务器启动失败", zap.Error(err))
+		}
+	} else {
+		// 仅 HTTP 模式
+		zap.L().Info("启动HTTP服务器", zap.String("port", httpPort))
+		r.Run(":" + httpPort)
+	}
 }
 
 func CollectRoutes(r *gin.Engine) *gin.Engine {
 
 	v1 := r.Group("/api/v1")
 	{
+		// 客户端日志上报（需登录，避免被滥用）
+		clientGroup := v1.Group("client")
+		clientGroup.Use(middleware.Auth())
+		clientGroup.POST("log", api.ClientLog)
 		// 登录注册相关路由路由
 		CollectAuthRoutes(v1)
 		// 用户相关路由
@@ -49,6 +98,7 @@ func CollectRoutes(r *gin.Engine) *gin.Engine {
 		CollectMenuRoutes(v1)
 		// 视频相关路由
 		CollectVideoRoutes(v1)
+		CollectPlayRoutes(v1)
 		// 资源相关路由
 		CollectResourceRoutes(v1)
 		// 分区相关路由
@@ -75,14 +125,20 @@ func CollectRoutes(r *gin.Engine) *gin.Engine {
 		CollectCarouselRoutes(v1)
 		// 文章相关接口
 		CollectArticleRoutes(v1)
+		// 合集相关接口
+		CollectPlaylistRoutes(v1)
 		// 实时在线
 		CollectOnlineRoutes(v1)
 		// 配置相关接口
 		CollectConfigRoutes(v1)
+		// PGC相关接口
+		CollectPGCRoutes(v1)
 	}
 
-	//获取静态文件
+	// 获取静态文件
 	r.GET("/api/image/:file", api.GetImgFile)
+	// 后台静态页（如 PGC 管理）
+	r.Static("/admin", "./static/admin")
 
 	return r
 }

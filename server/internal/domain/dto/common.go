@@ -6,5 +6,5 @@ type EmailReq struct {
 }
 
 type IdReq struct {
-	ID uint
+	ID uint `json:"id"`
 }

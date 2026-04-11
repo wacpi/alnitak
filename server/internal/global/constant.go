@@ -33,6 +33,47 @@ const (
 )
 
 const (
-	CONTENT_TYPE_VIDEO   = 0
-	CONTENT_TYPE_ARTICLE = 1
+	CONTENT_TYPE_VIDEO    = 0
+	CONTENT_TYPE_ARTICLE  = 1
+	CONTENT_TYPE_PLAYLIST = 2
+)
+
+// ========== PGC内容类型 ==========
+const (
+	// PGCTypeNone 非PGC
+	PGCTypeNone = 0
+	// PGCTypeCN 国创（番剧 CN/国漫）
+	PGCTypeCN = 1
+	// PGCTypeJP 日创（番剧 JP/日漫）
+	PGCTypeJP = 2
+	// PGCTypeDocumentary 纪录片
+	PGCTypeDocumentary = 3
+	// PGCTypeMovie 电影
+	PGCTypeMovie = 4
+	// PGCTypeTVSeries 电视剧
+	PGCTypeTVSeries = 5
+)
+
+// ========== PGC审核状态 ==========
+const (
+	// PGCAuditDraft 草稿
+	PGCAuditDraft = 0
+	// PGCAuditSubmitted 已提交
+	PGCAuditSubmitted = 100
+	// PGCAuditProcessing 审核中
+	PGCAuditProcessing = 200
+	// PGCAuditApproved 审核通过
+	PGCAuditApproved = 300
+	// PGCAuditRejected 审核驳回
+	PGCAuditRejected = 400
+	// PGCAuditOffline 下架（管理侧操作）
+	PGCAuditOffline = -1
+)
+
+// ========== PGC剧集状态 ==========
+const (
+	// PGCEpisodeNormal 正常
+	PGCEpisodeNormal = 0
+	// PGCEpisodeOffline 下架
+	PGCEpisodeOffline = -1
 )

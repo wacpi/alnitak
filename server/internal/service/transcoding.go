@@ -1,23 +1,97 @@
 package service
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
+	"math"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"gorm.io/gorm"
 	"interastral-peace.com/alnitak/internal/cache"
 	"interastral-peace.com/alnitak/internal/domain/dto"
 	"interastral-peace.com/alnitak/internal/domain/model"
+	"interastral-peace.com/alnitak/internal/domain/vo"
 	"interastral-peace.com/alnitak/internal/global"
 	"interastral-peace.com/alnitak/utils"
 )
+
+// getMP4InitRange 从 fMP4 文件中提取初始化范围
+// 返回: initRange (0 到 moov 结束), indexRange (sidx 范围，如果没有 sidx 则用整个文件)
+// 用于 DASH SegmentBase 模式
+func getMP4InitRange(filePath string) (initRange, indexRange string, err error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", "", err
+	}
+	defer file.Close()
+
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return "", "", err
+	}
+	fileSize := fileInfo.Size()
+
+	// 遍历 MP4 box 结构，找到 ftyp, moov, sidx
+	var moovEnd int64 = 0
+	var sidxStart int64 = 0
+	var sidxEnd int64 = 0
+
+	offset := int64(0)
+
+parseLoop:
+	for offset < fileSize {
+		boxSize, boxType, err := readMP4BoxSizeAndType(file, offset, fileSize)
+		if err != nil || boxSize <= 0 {
+			break
+		}
+
+		switch boxType {
+		case "moov":
+			moovEnd = offset + boxSize
+		case "sidx":
+			sidxStart = offset
+			sidxEnd = offset + boxSize
+		case "moof":
+			// 遇到 moof 就停止，后面都是媒体数据
+			break parseLoop
+		}
+
+		offset += boxSize
+
+		// 如果找到了 sidx，可以停止了
+		if sidxEnd > 0 {
+			break
+		}
+	}
+
+	if moovEnd == 0 {
+		return "", "", fmt.Errorf("moov box not found in %s", filePath)
+	}
+
+	// initRange: 从文件开头到 moov 结束（ftyp + moov）
+	initRange = fmt.Sprintf("0-%d", moovEnd-1)
+
+	// indexRange: 优先使用 sidx，否则使用整个文件范围
+	if sidxEnd > 0 {
+		// 有 sidx box，使用 sidx 的范围
+		indexRange = fmt.Sprintf("%d-%d", sidxStart, sidxEnd-1)
+	} else {
+		// 没有 sidx，使用整个文件作为索引范围（从 moov 结束后开始）
+		// 对于 fMP4 音视频分离，播放器需要能够请求任意位置的数据
+		indexRange = fmt.Sprintf("%d-%d", moovEnd, fileSize-1)
+	}
+
+	return initRange, indexRange, nil
+}
 
 type TranscodingTarget struct {
 	Resolution  string // 分辨率
@@ -30,9 +104,16 @@ type TranscodingTarget struct {
 type TranscodingProcess struct {
 	VideoID    uint
 	ResourceID uint
+	PID        int
 	Cmd        *exec.Cmd
 	CancelFunc context.CancelFunc
 	OutputDir  string
+}
+
+type resourceTranscodingProgress struct {
+	VideoID    uint
+	ResourceID uint
+	Details    map[string]vo.TranscodingProgressItem // key: quality
 }
 
 // 全局转码并发控制
@@ -42,19 +123,21 @@ var (
 	gpuAvailable         = true                                // GPU是否可用
 	gpuCheckMutex        sync.RWMutex                          // 保护GPU状态的读写锁
 	gpuFailCount         = 0                                   // GPU连续失败次数
-	maxGpuFailCount      = 3                                   // 最大允许GPU失败次数
+	maxGpuFailCount      = maxGpuFailCountThreshold             // 最大允许GPU失败次数
 	transcodingProcesses = make(map[uint][]TranscodingProcess) // key: videoID, value: 该视频的所有转码进程
 	processMapMutex      sync.RWMutex                          // 保护进程映射的读写锁
+	transcodingProgress  = make(map[uint]*resourceTranscodingProgress)
+	progressMutex        sync.RWMutex
 )
 
 // 初始化转码并发控制（根据CPU核心数或配置）
 func initTranscodingSemaphore() {
 	semaphoreOnce.Do(func() {
 		// 默认允许2个转码任务并发（可根据实际服务器配置调整）
-		maxConcurrentTranscoding := 2
+		maxConcurrentTranscoding := maxCPUConcurrentTranscoding
 		if global.Config.Transcoding.UseGpu {
 			// GPU模式下可以稍微增加并发数
-			maxConcurrentTranscoding = 3
+			maxConcurrentTranscoding = maxGPUConcurrentTranscoding
 		}
 		transcodingSemaphore = make(chan struct{}, maxConcurrentTranscoding)
 		utils.InfoLog(fmt.Sprintf("【转码并发控制初始化】最大并发数=%d", maxConcurrentTranscoding), "transcoding")
@@ -82,6 +165,144 @@ func handleGPUFailure() {
 	}
 }
 
+// ResetGPUState 重置GPU状态，用于重新转码时恢复GPU
+func ResetGPUState() {
+	gpuCheckMutex.Lock()
+	defer gpuCheckMutex.Unlock()
+
+	if gpuFailCount > 0 || !gpuAvailable {
+		oldFailCount := gpuFailCount
+		oldAvailable := gpuAvailable
+		gpuFailCount = 0
+		gpuAvailable = true
+		utils.InfoLog(fmt.Sprintf("【GPU重置】失败次数: %d→0, 可用状态: %v→true", oldFailCount, oldAvailable), "transcoding")
+	}
+}
+
+func initResourceTranscodingProgress(videoID, resourceID uint, targets []TranscodingTarget) {
+	progressMutex.Lock()
+	defer progressMutex.Unlock()
+
+	state := &resourceTranscodingProgress{
+		VideoID:    videoID,
+		ResourceID: resourceID,
+		Details:    make(map[string]vo.TranscodingProgressItem, len(targets)),
+	}
+	for _, target := range targets {
+		quality := target.Resolution + "_" + target.BitrateRate + "_" + target.FpsName
+		state.Details[quality] = vo.TranscodingProgressItem{
+			ResourceID: resourceID,
+			Quality:    quality,
+			Progress:   0,
+			Status:     "waiting",
+		}
+	}
+	transcodingProgress[resourceID] = state
+}
+
+func updateTranscodingQualityProgress(resourceID uint, quality string, progress float64, status string) {
+	progressMutex.Lock()
+	defer progressMutex.Unlock()
+
+	state, ok := transcodingProgress[resourceID]
+	if !ok {
+		return
+	}
+	item, exists := state.Details[quality]
+	if !exists {
+		item = vo.TranscodingProgressItem{
+			ResourceID: resourceID,
+			Quality:    quality,
+			Status:     "processing",
+		}
+	}
+	if progress < 0 {
+		progress = 0
+	}
+	if progress > 100 {
+		progress = 100
+	}
+	item.Progress = progress
+	if status != "" {
+		item.Status = status
+	}
+	state.Details[quality] = item
+}
+
+func markTranscodingQualityFailed(resourceID uint, quality string) {
+	updateTranscodingQualityProgress(resourceID, quality, 0, "fail")
+}
+
+func clearResourceTranscodingProgress(resourceID uint) {
+	progressMutex.Lock()
+	defer progressMutex.Unlock()
+	delete(transcodingProgress, resourceID)
+}
+
+func GetVideoTranscodingProgress(videoID uint) (float64, []vo.TranscodingProgressItem) {
+	progressMutex.RLock()
+	defer progressMutex.RUnlock()
+
+	details := make([]vo.TranscodingProgressItem, 0)
+	totalProgress := 0.0
+	totalCount := 0
+
+	for _, state := range transcodingProgress {
+		if state.VideoID != videoID {
+			continue
+		}
+		for _, item := range state.Details {
+			details = append(details, item)
+			totalProgress += item.Progress
+			totalCount++
+		}
+	}
+
+	if totalCount == 0 {
+		return 0, details
+	}
+
+	sort.Slice(details, func(i, j int) bool {
+		iw, ih, ifps, ik := parseProgressQualitySortKey(details[i].Quality)
+		jw, jh, jfps, jk := parseProgressQualitySortKey(details[j].Quality)
+
+		if ih != jh {
+			return ih > jh
+		}
+		if iw != jw {
+			return iw > jw
+		}
+		if ifps != jfps {
+			return ifps > jfps
+		}
+		if ik != jk {
+			return ik > jk
+		}
+		return details[i].Quality > details[j].Quality
+	})
+
+	return totalProgress / float64(totalCount), details
+}
+
+func parseProgressQualitySortKey(quality string) (width, height, fps, bitrateK int) {
+	// quality 形如: 1920x1080_8000k_60
+	parts := strings.Split(quality, "_")
+	if len(parts) >= 1 {
+		res := strings.Split(parts[0], "x")
+		if len(res) == 2 {
+			width, _ = strconv.Atoi(res[0])
+			height, _ = strconv.Atoi(res[1])
+		}
+	}
+	if len(parts) >= 2 {
+		bitrateK = parseBitrateKbps(parts[1])
+	}
+	if len(parts) >= 3 {
+		fps, _ = strconv.Atoi(parts[2])
+	}
+	return
+}
+
 // 生成封面
 func GenerateCover(inputFile, outputFile string) error {
 	command := []string{"-i", inputFile, "-vframes", "1", "-y", outputFile}
@@ -96,38 +317,132 @@ func GenerateCover(inputFile, outputFile string) error {
 
 // 获取视频信息
 func ProcessVideoInfo(input string) (*dto.TranscodingInfo, error) {
-	var transcodingInfo dto.TranscodingInfo
+	transcodingInfo := dto.TranscodingInfo{OriginalVideoStatus: -1}
 	videoData, err := getVideoInfo(input)
 	if err != nil {
 		utils.ErrorLog("读取视频信息失败", "transcoding", err.Error())
 		return &transcodingInfo, err
 	}
 
+	// 从流中分别找到视频流和音频流
+	var videoStream *global.Streams
+	var audioStream *global.Streams
+	for i := range videoData.Stream {
+		switch videoData.Stream[i].CodecType {
+		case "video":
+			if videoStream == nil {
+				videoStream = &videoData.Stream[i]
+			}
+		case "audio":
+			if audioStream == nil {
+				audioStream = &videoData.Stream[i]
+			}
+		}
+	}
+
+	// 兼容旧逻辑：如果按 codec_type 没找到视频流，回退到 Stream[0]
+	if videoStream == nil && len(videoData.Stream) > 0 {
+		videoStream = &videoData.Stream[0]
+	}
+
+	if videoStream == nil {
+		return &transcodingInfo, fmt.Errorf("未找到视频流: %s", input)
+	}
+
 	// 计算最大分辨率
-	transcodingInfo.Width = videoData.Stream[0].Width
-	transcodingInfo.Height = videoData.Stream[0].Height
-	transcodingInfo.CodecName = videoData.Stream[0].CodecName
+	transcodingInfo.Width = videoStream.Width
+	transcodingInfo.Height = videoStream.Height
+	transcodingInfo.CodecName = videoStream.CodecName
 
-	// 获取视频时长
-	transcodingInfo.Duration, _ = strconv.ParseFloat(videoData.Stream[0].Duration, 64)
+	// 获取视频时长（优先使用 stream.duration，若为空则使用 format.duration）
+	durationStr := videoStream.Duration
+	if durationStr == "" {
+		durationStr = videoData.Format.Duration
+	}
+	transcodingInfo.Duration, _ = strconv.ParseFloat(durationStr, 64)
 
-	// 获取帧率
-	transcodingInfo.FPS = videoData.Stream[0].AvgFrameRate
+	// 获取帧率（使用 AvgFrameRate，转码时会统一转换为标准30帧）
+	transcodingInfo.FPS = videoStream.AvgFrameRate
 	transcodingInfo.FPS30, transcodingInfo.FPS60 = getFpsInfo(transcodingInfo.FPS)
+
+	// 优先使用视频流码率（更准确）
+	if br, err := strconv.Atoi(videoStream.BitRate); err == nil && br > 0 {
+		transcodingInfo.VideoBitRate = br
+	}
+
+	// 提取音频流参数（动态探测，最大可能保持源文件音频特性）
+	if audioStream != nil {
+		// 采样率
+		if sr, err := strconv.Atoi(audioStream.SampleRate); err == nil && sr > 0 {
+			transcodingInfo.AudioSampleRate = sr
+		}
+		// 声道数
+		if audioStream.Channels > 0 {
+			transcodingInfo.AudioChannels = audioStream.Channels
+		}
+		// 码率（ffprobe 返回 bps 字符串，如 "320000"）
+		if br, err := strconv.Atoi(audioStream.BitRate); err == nil && br > 0 {
+			transcodingInfo.AudioBitRate = br
+		}
+		utils.InfoLog(fmt.Sprintf("【音频探测】采样率=%d, 声道数=%d, 码率=%d bps",
+			transcodingInfo.AudioSampleRate, transcodingInfo.AudioChannels, transcodingInfo.AudioBitRate), "transcoding")
+	}
+
+	// 设置默认值（源文件缺失音频信息时的兜底）
+	if transcodingInfo.AudioSampleRate == 0 {
+		transcodingInfo.AudioSampleRate = 48000
+	}
+	if transcodingInfo.AudioChannels == 0 {
+		transcodingInfo.AudioChannels = 2
+	}
+	if transcodingInfo.AudioBitRate == 0 {
+		transcodingInfo.AudioBitRate = 320000
+	}
+
+	// 音频码率上限限制：最高 320kbps，避免不合理的高码率
+	if transcodingInfo.AudioBitRate > 320000 {
+		transcodingInfo.AudioBitRate = 320000
+	}
+
+	// 回退：当视频流未提供码率时，使用 format.bit_rate - audioBitRate 估算视频码率
+	if transcodingInfo.VideoBitRate == 0 {
+		if totalBitRate, err := strconv.Atoi(videoData.Format.BitRate); err == nil && totalBitRate > 0 {
+			if totalBitRate > transcodingInfo.AudioBitRate {
+				transcodingInfo.VideoBitRate = totalBitRate - transcodingInfo.AudioBitRate
+			} else {
+				transcodingInfo.VideoBitRate = totalBitRate
+			}
+		}
+	}
+
+	// 兜底：仍获取不到源码率时，按最高分辨率档默认码率
+	if transcodingInfo.VideoBitRate == 0 {
+		maxLevel := getMaxQualityLevel(transcodingInfo.Width, transcodingInfo.Height)
+		transcodingInfo.VideoBitRate = getDefaultVideoBitRateByLevel(maxLevel, transcodingInfo.Width < transcodingInfo.Height)
+	}
+
+	utils.InfoLog(fmt.Sprintf("【视频探测】分辨率=%dx%d, 源视频码率=%d bps, 帧率=%s, 60fps可用=%v",
+		transcodingInfo.Width, transcodingInfo.Height, transcodingInfo.VideoBitRate, transcodingInfo.FPS, transcodingInfo.FPS60 != ""), "transcoding")
 
 	return &transcodingInfo, nil
 }
 
 func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
+	// 实例级音频编码状态（每次转码调用独立，避免多视频并发冲突）
+	var audioEncoded bool
+	var audioFailed bool
+	var audioMu sync.Mutex
+
 	// 初始化并发控制
 	initTranscodingSemaphore()
 
-	utils.InfoLog(fmt.Sprintf("【转码开始】VideoID=%d, ResourceID=%d, 目标数量=%d",
-		transcodingInfo.VideoID, transcodingInfo.ResourceID, len(getTranscodingTarget(transcodingInfo))), "transcoding")
-
 	var wg sync.WaitGroup
 	targets := getTranscodingTarget(transcodingInfo)
+	initResourceTranscodingProgress(transcodingInfo.VideoID, transcodingInfo.ResourceID, targets)
 	wg.Add(len(targets))
+
+	utils.InfoLog(fmt.Sprintf("【转码开始】VideoID=%d, ResourceID=%d, 目标数量=%d",
+		transcodingInfo.VideoID, transcodingInfo.ResourceID, len(targets)), "transcoding")
 
 	successCount := 0
 	var mu sync.Mutex // 保护successCount
@@ -135,36 +450,60 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 	for _, v := range targets {
 		c := v // 处理协程引用循环变量问题
 		go func() {
+			defer wg.Done()
+			fileName := c.Resolution + "_" + c.BitrateRate + "_" + c.FpsName
+			needEncodeAudio := false
+
+			defer func() {
+				if r := recover(); r != nil {
+					markTranscodingQualityFailed(transcodingInfo.ResourceID, fileName)
+					if needEncodeAudio {
+						audioMu.Lock()
+						audioFailed = true
+						audioMu.Unlock()
+						markAllTranscodingQualitiesFailed(transcodingInfo.ResourceID)
+					}
+					utils.ErrorLog(fmt.Sprintf("【Goroutine panic】%s: %v", fileName, r), "transcoding", "")
+				}
+			}()
+
 			// 获取转码资源锁（控制并发数）
 			transcodingSemaphore <- struct{}{}
 			defer func() { <-transcodingSemaphore }() // 释放资源锁
+
+			// 拿到锁后，将状态从 waiting 更新为 processing
+			updateTranscodingQualityProgress(transcodingInfo.ResourceID, fileName, 0, "processing")
 
 			// 创建可取消的context
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			fileName := c.Resolution + "_" + c.BitrateRate + "_" + c.FpsName
+			videoFile := transcodingInfo.OutputDir + fileName + "_video.m4s"
+			audioFile := transcodingInfo.OutputDir + "audio.m4s"
 
-			utils.InfoLog(fmt.Sprintf("【开始HLS一步式转码】%s", fileName), "transcoding")
+			utils.InfoLog(fmt.Sprintf("【开始SegmentBase转码】%s", fileName), "transcoding")
 
-			// 智能选择转码方式：GPU优先，失败时自动降级到CPU
-			var m3u8File string
-			var err error
+			// ========== 编码视频 ==========
+			var videoErr error
 			useGpu := global.Config.Transcoding.UseGpu && checkGPUAvailable()
 
+			utils.InfoLog(fmt.Sprintf("【编码决策】%s 使用GPU=%v", fileName, useGpu), "transcoding")
+
 			if useGpu {
-				utils.InfoLog(fmt.Sprintf("【使用GPU一步式转码】%s", fileName), "transcoding")
-				m3u8File, err = pressingVideoGPU(ctx, transcodingInfo.VideoID, transcodingInfo.ResourceID, transcodingInfo.InputFile, transcodingInfo.OutputDir, fileName, c.Resolution, c.BitrateRate, c.FPS, cancel)
+				utils.InfoLog(fmt.Sprintf("【GPU编码视频】%s", fileName), "transcoding")
+				videoErr = encodeVideoOnlyGPU(ctx, transcodingInfo.VideoID, transcodingInfo.ResourceID,
+					transcodingInfo.InputFile, videoFile, c.Resolution, c.BitrateRate, c.FPS, fileName, transcodingInfo.Duration, cancel)
 
-				if err != nil {
-					utils.ErrorLog(fmt.Sprintf("【GPU转码失败】%s，尝试切换到CPU", fileName), "transcoding", err.Error())
+				if videoErr != nil && strings.Contains(videoErr.Error(), "GPU error") {
 					handleGPUFailure()
-
-					// GPU失败后尝试使用CPU
-					utils.InfoLog(fmt.Sprintf("【降级到CPU一步式转码】%s", fileName), "transcoding")
-					m3u8File, err = pressingVideo(ctx, transcodingInfo.VideoID, transcodingInfo.ResourceID, transcodingInfo.InputFile, transcodingInfo.OutputDir, fileName, c.Resolution, c.BitrateRate, c.FPS, cancel)
-				} else {
-					// GPU转码成功，重置失败计数
+					if ctx.Err() != nil {
+						utils.InfoLog(fmt.Sprintf("【跳过CPU降级】%s，转码已取消", fileName), "transcoding")
+						return
+					}
+					utils.InfoLog(fmt.Sprintf("【降级CPU编码视频】%s", fileName), "transcoding")
+					videoErr = encodeVideoOnly(ctx, transcodingInfo.VideoID, transcodingInfo.ResourceID,
+						transcodingInfo.InputFile, videoFile, c.Resolution, c.BitrateRate, c.FPS, fileName, transcodingInfo.Duration, cancel)
+				} else if videoErr == nil {
 					gpuCheckMutex.Lock()
 					if gpuFailCount > 0 {
 						gpuFailCount = 0
@@ -173,40 +512,155 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 					gpuCheckMutex.Unlock()
 				}
 			} else {
-				if global.Config.Transcoding.UseGpu && !checkGPUAvailable() {
-					utils.InfoLog(fmt.Sprintf("【使用CPU一步式转码】%s（GPU已禁用）", fileName), "transcoding")
-				} else {
-					utils.InfoLog(fmt.Sprintf("【使用CPU一步式转码】%s", fileName), "transcoding")
+				utils.InfoLog(fmt.Sprintf("【CPU编码视频】%s", fileName), "transcoding")
+				videoErr = encodeVideoOnly(ctx, transcodingInfo.VideoID, transcodingInfo.ResourceID,
+					transcodingInfo.InputFile, videoFile, c.Resolution, c.BitrateRate, c.FPS, fileName, transcodingInfo.Duration, cancel)
+			}
+
+			if videoErr != nil {
+				markTranscodingQualityFailed(transcodingInfo.ResourceID, fileName)
+				utils.ErrorLog(fmt.Sprintf("【视频编码失败】%s", fileName), "transcoding", videoErr.Error())
+				return
+			}
+
+			// 检查context是否被取消（在视频编码后）
+			if ctx.Err() != nil {
+				utils.InfoLog(fmt.Sprintf("【转码取消】%s，context已取消", fileName), "transcoding")
+				return
+			}
+
+			// ========== 编码音频（只编码一次）==========
+			audioMu.Lock()
+			needEncodeAudio = !audioEncoded
+			if needEncodeAudio {
+				audioEncoded = true
+			}
+			audioMu.Unlock()
+
+			// 检查context是否被取消（音频编码前）
+			if ctx.Err() != nil {
+				utils.InfoLog(fmt.Sprintf("【转码取消】%s，context已取消", fileName), "transcoding")
+				return
+			}
+
+			if needEncodeAudio {
+				utils.InfoLog(fmt.Sprintf("【编码音频】audio.m4s (码率=%dk, 采样率=%d, 声道=%d)",
+					transcodingInfo.AudioBitRate/1000, transcodingInfo.AudioSampleRate, transcodingInfo.AudioChannels), "transcoding")
+				if err := encodeAudioOnly(ctx, transcodingInfo.InputFile, audioFile,
+					transcodingInfo.AudioBitRate, transcodingInfo.AudioSampleRate, transcodingInfo.AudioChannels); err != nil {
+					utils.ErrorLog("【音频编码失败】", "transcoding", err.Error())
+					audioMu.Lock()
+					audioFailed = true
+					audioMu.Unlock()
+					markAllTranscodingQualitiesFailed(transcodingInfo.ResourceID)
+					return
 				}
-				m3u8File, err = pressingVideo(ctx, transcodingInfo.VideoID, transcodingInfo.ResourceID, transcodingInfo.InputFile, transcodingInfo.OutputDir, fileName, c.Resolution, c.BitrateRate, c.FPS, cancel)
 			}
 
-			if err != nil {
-				utils.ErrorLog(fmt.Sprintf("【HLS转码失败】%s", fileName), "transcoding", err.Error())
-				wg.Done()
+			// 检查context是否被取消（等待音频前）
+			if ctx.Err() != nil {
+				utils.InfoLog(fmt.Sprintf("【转码取消】%s，context已取消", fileName), "transcoding")
 				return
 			}
 
-			utils.InfoLog(fmt.Sprintf("【HLS转码完成】%s，保存到数据库", fileName), "transcoding")
+			// 只有执行了音频编码的 goroutine 才能保存数据库
+			// 等待音频编码完成（通过检查 audio.m4s 文件存在且大小大于0）
+			if !needEncodeAudio {
+				// 等待其他 goroutine 完成音频编码
+				waitCount := 0
+				maxWaitCount := audioWaitMaxPollCount // 最多等待5分钟
+				for {
+					// 检查音频编码是否已失败
+					audioMu.Lock()
+					failed := audioFailed
+					audioMu.Unlock()
+					if failed {
+						markTranscodingQualityFailed(transcodingInfo.ResourceID, fileName)
+						utils.ErrorLog(fmt.Sprintf("【音频编码已失败】%s 放弃等待", fileName), "transcoding", "")
+						return
+					}
 
-			// 读取m3u8写入数据库
-			err = saveM3u8File(transcodingInfo, fileName, m3u8File)
-			if err != nil {
-				utils.ErrorLog(fmt.Sprintf("【保存m3u8失败】%s", fileName), "transcoding", err.Error())
-				wg.Done()
+					audioPath := transcodingInfo.OutputDir + "audio.m4s"
+					info, err := os.Stat(audioPath)
+					if err == nil && info.Size() > 0 {
+						break
+					}
+					waitCount++
+					if waitCount%audioWaitLogEveryPollCount == 0 {
+						var fileSize int64
+						if info != nil {
+							fileSize = info.Size()
+						}
+						utils.InfoLog(fmt.Sprintf("【等待音频】%s 已等待 %d 次, 文件存在=%v, 大小=%d",
+							fileName, waitCount, err == nil, fileSize), "transcoding")
+					}
+					if waitCount >= maxWaitCount {
+						markTranscodingQualityFailed(transcodingInfo.ResourceID, fileName)
+						utils.ErrorLog(fmt.Sprintf("【等待音频超时】%s 放弃等待", fileName), "transcoding", "")
+						return
+					}
+					time.Sleep(audioWaitPollInterval)
+				}
+			}
+
+			// ========== 保存到数据库 ==========
+			width, height, bandwidth, frameRate := parseQualityInfo(fileName)
+
+			// 从 fMP4 文件提取实际的 moov box 范围
+			videoFilePath := transcodingInfo.OutputDir + fileName + "_video.m4s"
+			audioFilePath := transcodingInfo.OutputDir + "audio.m4s"
+
+			videoInitRange, videoIndexRange, _ := getMP4InitRange(videoFilePath)
+			audioInitRange, audioIndexRange, _ := getMP4InitRange(audioFilePath)
+
+			videoCodec := "avc1.640028" // 兜底：保证可播放性
+			if c, err := probeH264Avc1CodecString(videoFilePath); err != nil {
+				utils.ErrorLog("探测 H264 codec 失败，使用默认值兜底", "transcoding", err.Error())
+			} else {
+				videoCodec = c
+			}
+
+			utils.InfoLog(fmt.Sprintf("【范围提取】%s video init=%s, index=%s; audio init=%s, index=%s",
+				fileName, videoInitRange, videoIndexRange, audioInitRange, audioIndexRange), "transcoding")
+
+			indexFile := &model.VideoIndexFile{
+				ResourceID:    transcodingInfo.ResourceID,
+				Quality:       fileName,
+				DirName:       transcodingInfo.DirName,
+				TotalDuration: transcodingInfo.Duration,
+
+				// 视频流信息
+				VideoFile:       fileName + "_video.m4s",
+				VideoBandwidth:  bandwidth,
+				VideoCodec:      videoCodec,
+				Width:           width,
+				Height:          height,
+				FrameRate:       frameRate,
+				VideoInitRange:  videoInitRange,
+				VideoIndexRange: videoIndexRange,
+
+				// 音频流信息（使用源文件探测的动态参数）
+				AudioFile:       "audio.m4s",
+				AudioBandwidth:  transcodingInfo.AudioBitRate,
+				AudioCodec:      "mp4a.40.2",
+				AudioSampleRate: transcodingInfo.AudioSampleRate,
+				AudioInitRange:  audioInitRange,
+				AudioIndexRange: audioIndexRange,
+			}
+
+			if err := global.Mysql.Create(indexFile).Error; err != nil {
+				markTranscodingQualityFailed(transcodingInfo.ResourceID, fileName)
+				utils.ErrorLog(fmt.Sprintf("【保存索引失败】%s", fileName), "transcoding", err.Error())
 				return
 			}
 
-			utils.InfoLog(fmt.Sprintf("【成功】%s 转码完成", fileName), "transcoding")
-
-			// 删除临时m3u8文件（TS分段文件保留在磁盘）
-			os.Remove(m3u8File)
+			updateTranscodingQualityProgress(transcodingInfo.ResourceID, fileName, 100, "success")
+			utils.InfoLog(fmt.Sprintf("【成功】%s 转码完成, video=%s, audio=%s",
+				fileName, indexFile.VideoFile, indexFile.AudioFile), "transcoding")
 
 			mu.Lock()
 			successCount++
 			mu.Unlock()
-
-			wg.Done()
 		}()
 	}
 
@@ -214,14 +668,25 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 
 	utils.InfoLog(fmt.Sprintf("【所有转码任务完成】成功=%d, 总数=%d", successCount, len(targets)), "transcoding")
 
+	// 【关键】检查是否所有任务都失败了（可能是被用户取消）
+	// 如果成功数为0，说明转码被取消或全部失败，此时也必须更新稿件/资源状态为失败，不能一直停留在转码中
+	if successCount == 0 {
+		utils.InfoLog(fmt.Sprintf("【所有转码失败】VideoID=%d, ResourceID=%d, 调用completeTransCoding标记为PROCESSING_FAIL",
+			transcodingInfo.VideoID, transcodingInfo.ResourceID), "transcoding")
+		completeTransCoding(transcodingInfo.VideoID, transcodingInfo.ResourceID, global.PROCESSING_FAIL, transcodingInfo.OriginalVideoStatus)
+		return
+	}
+
 	// 上传oss - 添加panic恢复
 	defer func() {
 		if r := recover(); r != nil {
 			utils.ErrorLog("【OSS上传panic】", "transcoding", fmt.Sprintf("%v", r))
 			utils.InfoLog("【调用completeTransCoding】status=PROCESSING_FAIL（OSS panic）", "transcoding")
-			completeTransCoding(transcodingInfo.VideoID, transcodingInfo.ResourceID, global.PROCESSING_FAIL)
+			completeTransCoding(transcodingInfo.VideoID, transcodingInfo.ResourceID, global.PROCESSING_FAIL, transcodingInfo.OriginalVideoStatus)
 		}
 	}()
+
+	utils.InfoLog(fmt.Sprintf("【开始后续处理】VideoID=%d, ResourceID=%d", transcodingInfo.VideoID, transcodingInfo.ResourceID), "transcoding")
 
 	if global.Config.Storage.OssType != "local" {
 		utils.InfoLog(fmt.Sprintf("【开始上传OSS】OssType=%s", global.Config.Storage.OssType), "transcoding")
@@ -230,12 +695,12 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 		if err != nil {
 			utils.ErrorLog("读取视频文件夹失败", "oss", err.Error())
 			utils.InfoLog("【调用completeTransCoding】status=PROCESSING_FAIL（OSS失败）", "transcoding")
-			completeTransCoding(transcodingInfo.VideoID, transcodingInfo.ResourceID, global.PROCESSING_FAIL)
+			completeTransCoding(transcodingInfo.VideoID, transcodingInfo.ResourceID, global.PROCESSING_FAIL, transcodingInfo.OriginalVideoStatus)
 			return
 		}
 
 		// 并发上传文件
-		uploadCount := uploadFilesToOSS(transcodingInfo.DirName, transcodingInfo.OutputDir, files)
+		uploadCount := uploadFilesToOSS(transcodingInfo.DirName, transcodingInfo.OutputDir, transcodingInfo.Suffix, files)
 		utils.InfoLog(fmt.Sprintf("【OSS上传完成】成功上传=%d/%d个文件", uploadCount, len(files)), "transcoding")
 	} else {
 		utils.InfoLog("【跳过OSS上传】使用本地存储", "transcoding")
@@ -244,38 +709,32 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 	// 更新状态
 	utils.InfoLog(fmt.Sprintf("【调用completeTransCoding】VideoID=%d, ResourceID=%d, status=WAITING_REVIEW",
 		transcodingInfo.VideoID, transcodingInfo.ResourceID), "transcoding")
-	completeTransCoding(transcodingInfo.VideoID, transcodingInfo.ResourceID, global.WAITING_REVIEW)
+	completeTransCoding(transcodingInfo.VideoID, transcodingInfo.ResourceID, global.WAITING_REVIEW, transcodingInfo.OriginalVideoStatus)
 }
 
-// 获取宽度支持的最大分辨率
-func getWidthRes(width int) int {
-	//1920*1080
-	if width >= 1920 {
-		return 1080
+// getMaxQualityLevel 根据源视频分辨率确定最高分辨率档位（YouTube风格，兼容接近1080p的非标准尺寸）
+// 1080p/720p/480p/360p 指的是短边像素数，但对于长边>=1920且短边>=1000的情况，也视为1080级别
+func getMaxQualityLevel(width, height int) int {
+	shortSide := width
+	longSide := height
+	if height < width {
+		shortSide = height
+		longSide = width
 	}
-	// 1280*720
-	if width >= 1280 {
-		return 720
-	}
-	// 720*480
-	if width >= 720 {
-		return 480
-	}
-	return 360
-}
 
-// 获取高度支持的最大分辨率
-func getHeigthRes(height int) int {
-	//1920*1080
-	if height >= 1080 {
+	// 兼容 1920x1038 等接近 1080p 的非标准分辨率：
+	// 只要长边达到 1920 且短边不低于 1000，就视为 1080 档
+	if longSide >= 1920 && shortSide >= 1000 {
 		return 1080
 	}
-	// 1280*720
-	if height >= 720 {
+
+	if shortSide >= 1080 {
+		return 1080
+	}
+	if shortSide >= 720 {
 		return 720
 	}
-	// 720*480
-	if height >= 480 {
+	if shortSide >= 480 {
 		return 480
 	}
 	return 360
@@ -288,42 +747,195 @@ func getFpsInfo(avgFrameRate string) (string, string) {
 		numerator := utils.StringToInt(parts[0])
 		denominator := utils.StringToInt(parts[1])
 		if denominator == 0 {
-			return "30000/1001", ""
+			return "30000/1000", "" // 统一使用30fps，时间基15360，与YouTube对齐
 		}
 
 		// 计算帧率
 		fps := float64(numerator) / float64(denominator)
+		// 低于30fps的视频使用原始帧率（中间格式转换后不再是AV1/VP9，可以直接使用）
+		// 高于60fps的限制为60fps或30fps
 		if fps < 30 {
 			return avgFrameRate, ""
 		}
-		if fps >= 60 {
-			return "30000/1001", "60000/1001"
+		if fps >= 59 {
+			// 59.94fps (60000/1001) 及以上，开启60帧率模式则用60，否则用30
+			if global.Config.Transcoding.Generate1080p60 {
+				return "30000/1000", "60000/1001" // FPS30始终为30fps，FPS60使用标准59.94时间基
+			}
+			return "30000/1000", "" // 没开60fps时，30fps用30
 		}
 	}
 
-	return "30000/1001", ""
+	// 30-60fps之间，统一使用30帧，时间基15360，与YouTube对齐
+	return "30000/1000", ""
 }
 
-// 获取转码目标
+// qualityPreset 定义每个分辨率档位的参数（YouTube风格）
+type qualityPreset struct {
+	LongSide   int    // 长边像素数
+	ShortSide  int    // 短边像素数
+	BitrateH   string // 横屏码率
+	BitrateV   string // 竖屏码率（像素少，码率适当降低）
+	Bitrate60H string // 横屏60fps码率
+	Bitrate60V string // 竖屏60fps码率
+}
+
+var qualityPresets = []qualityPreset{
+	{1920, 1080, "8000k", "5000k", "12000k", "8000k"},
+	{1280, 720, "5000k", "3000k", "7500k", "5000k"},
+	{854, 480, "2500k", "1500k", "", ""},
+	{640, 360, "1000k", "700k", "", ""},
+}
+
+// calcResolution 根据源视频宽高比和目标短边计算输出分辨率（保持宽高比，偶数对齐）
+func calcResolution(srcWidth, srcHeight, targetShortSide int) (w, h int) {
+	isPortrait := srcWidth < srcHeight
+	srcAspect := float64(srcWidth) / float64(srcHeight)
+
+	if isPortrait {
+		// 竖屏：宽是短边
+		w = targetShortSide
+		h = int(math.Round(float64(w) / srcAspect))
+	} else {
+		// 横屏/正方形：高是短边
+		h = targetShortSide
+		w = int(math.Round(float64(h) * srcAspect))
+	}
+	// FFmpeg 要求偶数尺寸
+	w = w &^ 1
+	h = h &^ 1
+	return
+}
+
+func parseBitrateKbps(rate string) int {
+	rate = strings.TrimSpace(strings.TrimSuffix(rate, "k"))
+	if rate == "" {
+		return 0
+	}
+	v, err := strconv.Atoi(rate)
+	if err != nil || v <= 0 {
+		return 0
+	}
+	return v
+}
+
+func formatBitrateKbps(rateKbps int) string {
+	if rateKbps < 1 {
+		rateKbps = 1
+	}
+	return fmt.Sprintf("%dk", rateKbps)
+}
+
+func getDefaultVideoBitRateByLevel(maxLevel int, isPortrait bool) int {
+	for _, preset := range qualityPresets {
+		if preset.ShortSide != maxLevel {
+			continue
+		}
+		bitrate := preset.BitrateH
+		if isPortrait {
+			bitrate = preset.BitrateV
+		}
+		if kbps := parseBitrateKbps(bitrate); kbps > 0 {
+			return kbps * 1000
+		}
+	}
+	// 理论不会走到这里，兜底给最低档横屏码率
+	return 1000000
+}
+
+func scaleBitrateBySource(sourceMaxKbps, maxPresetKbps, currentPresetKbps int) int {
+	if sourceMaxKbps <= 0 {
+		return currentPresetKbps
+	}
+	if maxPresetKbps <= 0 || currentPresetKbps <= 0 {
+		return sourceMaxKbps
+	}
+	if currentPresetKbps >= maxPresetKbps {
+		return sourceMaxKbps
+	}
+
+	scaled := int(math.Round(float64(sourceMaxKbps) * float64(currentPresetKbps) / float64(maxPresetKbps)))
+	if scaled < 200 {
+		scaled = 200
+	}
+	if scaled > sourceMaxKbps {
+		scaled = sourceMaxKbps
+	}
+	return scaled
+}
+
+func getPresetBitrateKbps(preset qualityPreset, isPortrait bool, fps60 bool) int {
+	var bitrate string
+	if fps60 {
+		if isPortrait {
+			bitrate = preset.Bitrate60V
+		} else {
+			bitrate = preset.Bitrate60H
+		}
+		if kbps := parseBitrateKbps(bitrate); kbps > 0 {
+			return kbps
+		}
+	}
+
+	if isPortrait {
+		bitrate = preset.BitrateV
+	} else {
+		bitrate = preset.BitrateH
+	}
+	return parseBitrateKbps(bitrate)
+}
+
+// 获取转码目标（YouTube风格：根据源视频宽高比动态计算输出分辨率）
 func getTranscodingTarget(videoInfo *dto.TranscodingInfo) []TranscodingTarget {
 	targets := make([]TranscodingTarget, 0)
-	maxRresolution := utils.Max(getWidthRes(videoInfo.Width), getHeigthRes(videoInfo.Height))
+	maxLevel := getMaxQualityLevel(videoInfo.Width, videoInfo.Height)
+	isPortrait := videoInfo.Width < videoInfo.Height
 
-	switch maxRresolution {
-	case 1080:
-		if global.Config.Transcoding.Generate1080p60 && videoInfo.FPS60 != "" {
-			targets = append(targets, TranscodingTarget{Resolution: "1920x1080", BitrateRate: "6000k", FPS: videoInfo.FPS60, FpsName: "60"})
+	var maxPreset qualityPreset
+	for _, preset := range qualityPresets {
+		if preset.ShortSide == maxLevel {
+			maxPreset = preset
+			break
 		}
-		targets = append(targets, TranscodingTarget{Resolution: "1920x1080", BitrateRate: "3000k", FPS: videoInfo.FPS30, FpsName: "30"})
-		fallthrough
-	case 720:
-		targets = append(targets, TranscodingTarget{Resolution: "1280x720", BitrateRate: "2000k", FPS: videoInfo.FPS30, FpsName: "30"})
-		fallthrough
-	case 480:
-		targets = append(targets, TranscodingTarget{Resolution: "854x480", BitrateRate: "900k", FPS: videoInfo.FPS30, FpsName: "30"})
-		fallthrough
-	case 360:
-		targets = append(targets, TranscodingTarget{Resolution: "640x360", BitrateRate: "500k", FPS: videoInfo.FPS30, FpsName: "30"})
+	}
+
+	if maxPreset.ShortSide == 0 {
+		return targets
+	}
+
+	maxPresetKbps30 := getPresetBitrateKbps(maxPreset, isPortrait, false)
+	maxPresetKbps60 := getPresetBitrateKbps(maxPreset, isPortrait, true)
+	if maxPresetKbps60 <= 0 {
+		maxPresetKbps60 = maxPresetKbps30
+	}
+	sourceMaxKbps := videoInfo.VideoBitRate / 1000
+	if sourceMaxKbps <= 0 {
+		sourceMaxKbps = maxPresetKbps30
+	}
+
+	enable60 := global.Config.Transcoding.Generate1080p60 && videoInfo.FPS60 != ""
+
+	for _, preset := range qualityPresets {
+		if preset.ShortSide > maxLevel {
+			continue
+		}
+
+		w, h := calcResolution(videoInfo.Width, videoInfo.Height, preset.ShortSide)
+		resolution := fmt.Sprintf("%dx%d", w, h)
+
+		currentPresetKbps30 := getPresetBitrateKbps(preset, isPortrait, false)
+		dynamicKbps30 := scaleBitrateBySource(sourceMaxKbps, maxPresetKbps30, currentPresetKbps30)
+		dynamicBitrate30 := formatBitrateKbps(dynamicKbps30)
+
+		// 60fps 档位：仅生成源文件最高档，并且源帧率满足60fps
+		if preset.ShortSide == maxLevel && enable60 {
+			currentPresetKbps60 := getPresetBitrateKbps(preset, isPortrait, true)
+			dynamicKbps60 := scaleBitrateBySource(sourceMaxKbps, maxPresetKbps60, currentPresetKbps60)
+			dynamicBitrate60 := formatBitrateKbps(dynamicKbps60)
+			targets = append(targets, TranscodingTarget{Resolution: resolution, BitrateRate: dynamicBitrate60, FPS: videoInfo.FPS60, FpsName: "60"})
+		}
+
+		targets = append(targets, TranscodingTarget{Resolution: resolution, BitrateRate: dynamicBitrate30, FPS: videoInfo.FPS30, FpsName: "30"})
 	}
 
 	return targets
@@ -331,7 +943,9 @@ func getTranscodingTarget(videoInfo *dto.TranscodingInfo) []TranscodingTarget {
 
 // 获取视频信息
 func getVideoInfo(input string) (info global.VideoInfo, err error) {
-	cmd := exec.Command("ffprobe", "-i", input, "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams")
+	cmd := exec.Command("ffprobe", "-i", input, "-v", "quiet", "-print_format", "json",
+		"-show_format", "-show_streams",
+		"-probesize", "5000000", "-analyzeduration", "5000000")
 	out, err := utils.RunCmd(cmd)
 	if err != nil {
 		return info, err
@@ -343,257 +957,403 @@ func getVideoInfo(input string) (info global.VideoInfo, err error) {
 		return info, err
 	}
 
-	// 提取帧率信息
-	if len(info.Stream) > 0 && info.Stream[0].AvgFrameRate != "" {
-		// 将帧率转换为浮点数（例如 "30000/1001" 转换为 29.97）
-		parts := strings.Split(info.Stream[0].AvgFrameRate, "/")
-		if len(parts) == 2 {
-			numerator, _ := strconv.Atoi(parts[0])
-			denominator, _ := strconv.Atoi(parts[1])
-			if denominator != 0 {
-				// 将浮点数转换为字符串
-				info.Stream[0].RFrameRate = fmt.Sprintf("%.2f", float64(numerator)/float64(denominator))
-			}
-		}
-	}
-
 	return info, nil
 }
 
-// CPU一步式HLS转码：边转码边切片 (优化画质 + 音频接近无损重编码)
-func pressingVideo(ctx context.Context, videoID, resourceID uint, inputFile, outputDir, fileName, quality, rate, fps string, cancelFunc context.CancelFunc) (string, error) {
-	outputM3U8 := outputDir + fileName + ".m3u8"
-	outputTs := outputDir + fileName + "_%05d.ts"
-
-	// 解析 fps
-	fpsInt, err := strconv.Atoi(fps)
-	if err != nil {
-		fpsInt = 30 // 默认30fps
-	}
-
-	// 10秒切片
-	sliceSeconds := 10
-	gop := fpsInt * sliceSeconds
-
-	// 引入 Lanczos 高质量缩放滤镜
-	scaleFilter := fmt.Sprintf("scale=%s:flags=lanczos", quality)
-
-	command := []string{
-		"-i", inputFile,
-
-		// --- 视频参数 ---
-		// 1. 画质控制：CRF 20 (建议值)
-		"-crf", "20",
-		// 2. 缩放质量：Lanczos 算法
-		"-vf", scaleFilter,
-		// 3. 编码效率：slow (同码率下画质更好)
-		"-preset", "slow",
-		// 4. 心理视觉调优
-		"-tune", "film",
-		// 5. 去块滤波优化
-		"-x264-params", "deblock=-1:-1:keyint-min=" + strconv.Itoa(gop),
-		// 6. Profile
-		"-profile:v", "high",
-		"-b:v", rate,
-		"-c:v", "libx264",
-		"-r", fps,
-
-		// --- HLS 关键帧对齐 ---
-		"-g", strconv.Itoa(gop),
-		"-sc_threshold", "0",
-		"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", sliceSeconds),
-		"-vsync", "cfr",
-
-		// --- 音频参数 (修改部分) ---
-		// 行业标准高音质重编码：解决兼容性与时间戳问题，同时保持接近无损的听感
-		"-c:a", "aac", // 编码器：AAC (兼容性之王)
-		"-b:a", "320k", // 码率：320kbps (AAC的画质上限，听感透明)
-		"-ar", "48000", // 采样率：48kHz (视频标准)
-		"-ac", "2", // 声道：双声道 (立体声)
-		"-af", "aresample=async=1", // 音频滤镜：修正音频时间戳，防止音画不同步
-
-		// --- HLS 切片设置 ---
-		"-f", "hls",
-		"-hls_time", strconv.Itoa(sliceSeconds),
-		"-hls_list_size", "0",
-		"-hls_segment_type", "mpegts",
-		"-hls_segment_filename", outputTs,
-		"-hls_playlist_type", "vod",
-
-		outputM3U8,
-	}
-
-	// 使用CommandContext支持取消
-	cmd := exec.CommandContext(ctx, "ffmpeg", command...)
-
-	// 注册转码进程
-	if err := cmd.Start(); err != nil {
-		utils.ErrorLog("HLS转码启动失败", "transcoding", err.Error())
-		return outputM3U8, err
-	}
-
-	registerTranscodingProcess(videoID, resourceID, cmd, cancelFunc, outputDir)
-	defer unregisterTranscodingProcess(videoID, resourceID)
-
-	// 等待命令完成
-	err = cmd.Wait()
-	if err != nil {
-		utils.ErrorLog("HLS转码失败", "transcoding", err.Error())
-		return outputM3U8, err
-	}
-
-	return outputM3U8, nil
-}
-
-// GPU一步式HLS转码：边转码边切片（使用NVIDIA硬件加速 - 优化画质 + 音频接近无损重编码）
-func pressingVideoGPU(ctx context.Context, videoID, resourceID uint, inputFile, outputDir, fileName, quality, rate, fps string, cancelFunc context.CancelFunc) (string, error) {
-	outputM3U8 := outputDir + fileName + ".m3u8"
-	outputTs := outputDir + fileName + "_%05d.ts"
-
-	fpsInt, err := strconv.Atoi(fps)
-	if err != nil {
-		fpsInt = 30
-	}
-
-	sliceSeconds := 10
-	gop := fpsInt * sliceSeconds
-
-	// 引入 Lanczos 高质量缩放滤镜
-	scaleFilter := fmt.Sprintf("scale=%s:flags=lanczos", quality)
-
-	command := []string{
-		"-i", inputFile,
-
-		// --- 视频参数 (NVENC) ---
-		// 1. 恒定质量控制
-		"-cq", "22",
-		// 2. 缩放
-		"-vf", scaleFilter,
-		// 3. 预设：最高质量 p6
-		"-preset", "p6",
-		// 4. 码率控制模式：VBR_HQ
-		"-rc", "vbr_hq",
-
-		"-b:v", rate, // MaxRate
-		"-c:v", "h264_nvenc",
-		"-r", fps,
-
-		// --- HLS 关键帧对齐 ---
-		"-g", strconv.Itoa(gop),
-		"-keyint_min", strconv.Itoa(gop),
-		"-sc_threshold", "0",
-		"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", sliceSeconds),
-		"-vsync", "cfr",
-
-		// --- 音频参数 (修改部分) ---
-		// 即使是 GPU 视频转码，音频通常也是由 CPU 处理的，参数同上
-		"-c:a", "aac",
-		"-b:a", "320k",
-		"-ar", "48000",
-		"-ac", "2",
-		"-af", "aresample=async=1", // 关键：防止 GPU 视频编码速度过快导致的音画同步问题
-
-		// --- HLS 切片设置 ---
-		"-f", "hls",
-		"-hls_time", strconv.Itoa(sliceSeconds),
-		"-hls_list_size", "0",
-		"-hls_segment_type", "mpegts",
-		"-hls_segment_filename", outputTs,
-		"-hls_playlist_type", "vod",
-
-		outputM3U8,
-	}
-
-	// 使用CommandContext支持取消
-	cmd := exec.CommandContext(ctx, "ffmpeg", command...)
-
-	// 注册转码进程
-	if err := cmd.Start(); err != nil {
-		utils.ErrorLog("GPU HLS转码启动失败", "transcoding", err.Error())
-		return outputM3U8, err
-	}
-
-	registerTranscodingProcess(videoID, resourceID, cmd, cancelFunc, outputDir)
-	defer unregisterTranscodingProcess(videoID, resourceID)
-
-	// 等待命令完成
-	err = cmd.Wait()
-	if err != nil {
-		errMsg := err.Error()
-
-		// 检测是否是GPU相关错误
-		if strings.Contains(errMsg, "No NVENC capable devices found") ||
-			strings.Contains(errMsg, "Cannot load nvcuda.dll") ||
-			strings.Contains(errMsg, "CUDA driver version is insufficient") ||
-			strings.Contains(errMsg, "h264_nvenc") ||
-			strings.Contains(errMsg, "nvenc") {
-			utils.ErrorLog("GPU不可用或驱动异常", "transcoding", errMsg)
-			return outputM3U8, fmt.Errorf("GPU error: %s", errMsg)
+// parseFPS 解析帧率字符串，支持 "24000/1001" 或 "30" 格式
+func parseFPS(fps string) float64 {
+	if strings.Contains(fps, "/") {
+		parts := strings.Split(fps, "/")
+		if len(parts) == 2 {
+			num, _ := strconv.ParseFloat(parts[0], 64)
+			den, _ := strconv.ParseFloat(parts[1], 64)
+			if den > 0 {
+				return num / den
+			}
 		}
-
-		utils.ErrorLog("GPU HLS转码失败", "transcoding", errMsg)
-		return outputM3U8, err
 	}
-
-	return outputM3U8, nil
+	f, _ := strconv.ParseFloat(fps, 64)
+	return f
 }
 
-/*
-func generateVideoSlices(inputFile, outputDir, outputName string) (string, error) {
-	outputM3U8 := outputDir + outputName + ".m3u8"
-	outputTs := outputDir + outputName + "_%05d.ts"
+func parseFfmpegClockToSeconds(clock string) float64 {
+	parts := strings.Split(clock, ":")
+	if len(parts) != 3 {
+		return 0
+	}
+	hours, err1 := strconv.ParseFloat(parts[0], 64)
+	mins, err2 := strconv.ParseFloat(parts[1], 64)
+	secs, err3 := strconv.ParseFloat(parts[2], 64)
+	if err1 != nil || err2 != nil || err3 != nil {
+		return 0
+	}
+	return hours*3600 + mins*60 + secs
+}
+
+// ProbeH264Avc1CodecString 对本地可读的视频文件（如 *_video.m4s）执行 ffprobe，生成与转码落库一致的 avc1 字符串。
+// 供维护脚本（如 cmd/fix_video_codec）使用。
+func ProbeH264Avc1CodecString(filePath string) (string, error) {
+	return probeH264Avc1CodecString(filePath)
+}
+
+// probeH264Avc1CodecString 生成 H.264 的 ISO BMFF codec 字符串形如 avc1.PPCCLL。
+// 这里基于 ffprobe 的 profile/level 组合生成：
+// - PP：profile_idc（baseline/main/high）
+// - CC：profile_compatibility（你的转码显式使用 -profile:v high，实践中可按 00 处理）
+// - LL：level_idc（ffprobe 的 level 例如 4.2 -> 42 -> 0x2A）
+func probeH264Avc1CodecString(filePath string) (string, error) {
+	// ffprobe 输出顺序与 show_entries 一致：profile、level
+	cmd := exec.Command(
+		"ffprobe",
+		"-v", "error",
+		"-select_streams", "v:0",
+		"-show_entries", "stream=profile,level",
+		"-of", "default=nw=1:nk=1",
+		filePath,
+	)
+
+	out, err := utils.RunCmd(cmd)
+	if err != nil {
+		return "", err
+	}
+
+	raw := strings.TrimSpace(out.String())
+	if raw == "" {
+		return "", fmt.Errorf("ffprobe output empty")
+	}
+
+	lines := make([]string, 0, 2)
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) < 2 {
+		return "", fmt.Errorf("ffprobe output unexpected: %q", raw)
+	}
+
+	profile := strings.ToLower(lines[0])
+	levelStr := strings.TrimSpace(lines[1])
+	level, err := strconv.Atoi(levelStr)
+	if err != nil {
+		return "", fmt.Errorf("parse level failed: %w", err)
+	}
+
+	return avc1CodecStringFromH264ProfileLevel(profile, level)
+}
+
+// avc1CodecStringFromH264ProfileLevel 是纯函数：把 profile/level 映射到 avc1.PPCCLL。
+// 注意：这里固定 CC=00，适配你当前转码链路（-profile:v high）。
+func avc1CodecStringFromH264ProfileLevel(profile string, level int) (string, error) {
+	profile = strings.ToLower(profile)
+	var profileHex string
+	switch {
+	case strings.Contains(profile, "baseline"):
+		profileHex = "42"
+	case strings.Contains(profile, "main"):
+		profileHex = "4D"
+	case strings.Contains(profile, "high"):
+		profileHex = "64"
+	default:
+		return "", fmt.Errorf("unsupported h264 profile: %s", profile)
+	}
+
+	levelHex := fmt.Sprintf("%02X", level)
+	return fmt.Sprintf("avc1.%s00%s", profileHex, levelHex), nil
+}
+
+func watchFFmpegProgress(scanner *bufio.Scanner, resourceID uint, quality string, totalDuration float64) {
+	if totalDuration <= 0 {
+		return
+	}
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "out_time_ms=") {
+			raw := strings.TrimPrefix(line, "out_time_ms=")
+			ms, err := strconv.ParseFloat(raw, 64)
+			if err != nil {
+				continue
+			}
+			seconds := ms / 1000000.0
+			updateTranscodingQualityProgress(resourceID, quality, seconds/totalDuration*100, "processing")
+			continue
+		}
+		if strings.HasPrefix(line, "out_time=") {
+			raw := strings.TrimPrefix(line, "out_time=")
+			seconds := parseFfmpegClockToSeconds(raw)
+			updateTranscodingQualityProgress(resourceID, quality, seconds/totalDuration*100, "processing")
+		}
+	}
+}
+
+func markAllTranscodingQualitiesFailed(resourceID uint) {
+	progressMutex.Lock()
+	defer progressMutex.Unlock()
+
+	state, ok := transcodingProgress[resourceID]
+	if !ok {
+		return
+	}
+	for quality, item := range state.Details {
+		item.Progress = 0
+		item.Status = "fail"
+		state.Details[quality] = item
+	}
+}
+
+func buildRateControlParams(rate string) (targetRate, maxRate, bufSize string) {
+	targetRate = rate
+	maxRate = rate
+	bufSize = "4000k"
+	if kbps, err := strconv.Atoi(strings.TrimSuffix(rate, "k")); err == nil && kbps > 0 {
+		const peakRateFactor = 1.4
+		maxKbps := int(math.Round(float64(kbps) * peakRateFactor))
+		if maxKbps < kbps {
+			maxKbps = kbps
+		}
+		maxRate = fmt.Sprintf("%dk", maxKbps)
+		bufSize = fmt.Sprintf("%dk", maxKbps*2)
+	}
+	return
+}
+
+// SegmentBase模式：编码视频（CPU）
+// 生成 fragmented MP4 (fMP4) 格式，包含 mvex box，用于 DASH SegmentBase
+func encodeVideoOnly(ctx context.Context, videoID, resourceID uint, inputFile, outputFile, quality, rate, fps, progressQuality string, totalDuration float64, cancelFunc context.CancelFunc) error {
+	// 解析帧率，支持 "24000/1001" 或 "30" 格式
+	fpsFloat := parseFPS(fps)
+
+	// YouTube/B站基本都是2秒GOP
+	gopSize := int(math.Round(fpsFloat * 2))
+	if gopSize < 1 {
+		gopSize = 60
+	}
+	gopSizeStr := strconv.Itoa(gopSize)
+	targetRate, maxrate, bufsize := buildRateControlParams(rate)
+
+	// 分辨率缩放
+	scaleFilter := fmt.Sprintf("scale=%s:flags=lanczos", quality)
 
 	command := []string{
 		"-i", inputFile,
-		"-c", "copy",
-		"-map", "0",
-		"-f", "segment",
-		"-segment_list", outputM3U8,
-		"-segment_time", "10",
-		"-segment_list_flags", "+live", // 确保最后一个片段被正确写入
-		"-break_non_keyframes", "1",    // 允许在非关键帧处切割，避免丢失尾部内容
-		outputTs,
+		"-filter_complex", fmt.Sprintf("[0:v]setpts=PTS-STARTPTS,%s", scaleFilter),
+		"-an",
+		"-c:v", "libx264",
+		"-preset", "medium",
+		"-crf", "20",
+		"-tune", "film",
+		"-profile:v", "high",
+		"-pix_fmt", "yuv420p",
+		"-bf", "3", // B 帧提升压缩；对齐由编码后 remuxVideoM4sPTSAlign 保证
+		"-b_strategy", "2", // 自适应B帧决策
+		"-flags", "+cgop", // 封闭GOP，确保P帧不跨GOP引用
+		"-b:v", targetRate,
+		"-maxrate", maxrate,
+		"-bufsize", bufsize,
+		"-r", fps,
+		"-g", gopSizeStr,
+		"-keyint_min", gopSizeStr,
+		"-sc_threshold", "0",
+		"-vsync", "cfr",
+		"-progress", "pipe:1",
+		"-nostats",
+		"-f", "mp4",
+		"-frag_duration", "2000000", // 每2秒一个fragment（微秒），与GOP对齐
+		"-movflags", "+frag_keyframe+empty_moov+default_base_moof+dash+global_sidx+negative_cts_offsets",
+		"-avoid_negative_ts", "make_zero", // 时间戳从0开始，与YouTube对齐
+		"-y", outputFile,
 	}
 
-	_, err := utils.RunCmd(exec.Command("ffmpeg", command...))
+	cmd := exec.CommandContext(ctx, "ffmpeg", command...)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		utils.ErrorLog("生成视频切片失败", "transcoding", err.Error())
-		return outputM3U8, err
+		return fmt.Errorf("视频编码启动失败: %s", err.Error())
 	}
 
-	return outputM3U8, nil
-}
-*/
+	// 打印完整命令
+	utils.InfoLog(fmt.Sprintf("【CPU编码命令】ffmpeg %s", strings.Join(command, " ")), "transcoding")
 
-// 保存m3u8文件
-func saveM3u8File(transcodingInfo *dto.TranscodingInfo, fileName, m3u8File string) error {
-	file, err := os.Open(m3u8File)
-	if err != nil {
-		utils.ErrorLog("打开m3u8文件失败", "transcoding", err.Error())
-		return err
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("视频编码启动失败: %s, stderr: %s", err.Error(), stderr.String())
 	}
+	go watchFFmpegProgress(bufio.NewScanner(stdout), resourceID, progressQuality, totalDuration)
 
-	bytes, err := io.ReadAll(file)
-	if err != nil {
-		utils.ErrorLog("读取m3u8文件失败", "transcoding", err.Error())
-		return err
+	registerTranscodingProcess(videoID, resourceID, cmd, cancelFunc, filepath.Dir(outputFile))
+	defer unregisterTranscodingProcess(videoID, cmd.Process.Pid)
+
+	if err := cmd.Wait(); err != nil {
+		return fmt.Errorf("视频编码失败: %s, stderr: %s", err.Error(), stderr.String())
 	}
-
-	file.Close()
-
-	global.Mysql.Create(&model.VideoIndexFile{
-		ResourceID: transcodingInfo.ResourceID,
-		Quality:    fileName,
-		DirName:    transcodingInfo.DirName,
-		Content:    string(bytes),
-	})
 
 	return nil
 }
 
+// SegmentBase模式：编码视频（GPU）
+// 生成 fragmented MP4 (fMP4) 格式，包含 mvex box，用于 DASH SegmentBase
+func encodeVideoOnlyGPU(ctx context.Context, videoID, resourceID uint, inputFile, outputFile, quality, rate, fps, progressQuality string, totalDuration float64, cancelFunc context.CancelFunc) error {
+	// 解析帧率，支持 "24000/1001" 或 "30" 格式
+	fpsFloat := parseFPS(fps)
+	gopSize := int(math.Round(fpsFloat * 2)) // 每2秒一个关键帧，与CPU编码和fragment对齐
+	if gopSize < 1 {
+		gopSize = 60 // 默认值（30fps * 2s）
+	}
+	gopSizeStr := strconv.Itoa(gopSize)
+	targetRate, maxrate, bufsize := buildRateControlParams(rate)
+	scaleFilter := fmt.Sprintf("scale=%s:flags=lanczos", quality)
+
+	command := []string{
+		"-i", inputFile,
+		"-filter_complex", fmt.Sprintf("[0:v]setpts=PTS-STARTPTS,%s", scaleFilter),
+		"-an",
+		"-c:v", "h264_nvenc",
+		"-cq", "20",
+		"-preset", "p6",
+		"-rc", "vbr",
+		"-profile:v", "high",
+		"-pix_fmt", "yuv420p",
+		"-bf", "3", // B帧提升压缩效率
+		"-b_ref_mode", "middle", // B帧参考模式，提升B帧质量
+		"-rc-lookahead", "32", // 前瞻分析，改善码率分配
+		"-temporal-aq", "1", // 时域自适应量化，提升运动场景质量
+		"-spatial-aq", "1", // 空域自适应量化，提升细节保留
+		"-aq-strength", "8", // AQ强度 (1-15，默认8)
+		"-no-scenecut", "1", // 禁用场景检测插入额外关键帧
+		"-forced-idr", "1", // 强制所有关键帧为IDR帧
+		"-b:v", targetRate,
+		"-maxrate", maxrate,
+		"-bufsize", bufsize,
+		"-r", fps,
+		"-g", gopSizeStr, // 每2秒一个关键帧，与CPU编码和frag_duration对齐
+		"-keyint_min", gopSizeStr, // 最小关键帧间距=GOP，防止nvenc插入额外关键帧
+		"-strict_gop", "1",
+		"-vsync", "cfr",
+		"-progress", "pipe:1",
+		"-nostats",
+		"-f", "mp4",
+		"-frag_duration", "2000000", // 每2秒一个fragment（微秒），与GOP对齐
+		"-movflags", "+frag_keyframe+empty_moov+default_base_moof+dash+global_sidx+negative_cts_offsets",
+		"-avoid_negative_ts", "make_zero", // 时间戳从0开始，与YouTube对齐
+		"-y", outputFile,
+	}
+
+	cmd := exec.CommandContext(ctx, "ffmpeg", command...)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("GPU视频编码启动失败: %s", err.Error())
+	}
+
+	// 打印完整命令
+	utils.InfoLog(fmt.Sprintf("【GPU编码命令】ffmpeg %s", strings.Join(command, " ")), "transcoding")
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("GPU视频编码启动失败: %s, stderr: %s", err.Error(), stderr.String())
+	}
+	go watchFFmpegProgress(bufio.NewScanner(stdout), resourceID, progressQuality, totalDuration)
+
+	registerTranscodingProcess(videoID, resourceID, cmd, cancelFunc, filepath.Dir(outputFile))
+	defer unregisterTranscodingProcess(videoID, cmd.Process.Pid)
+
+	if err := cmd.Wait(); err != nil {
+		errOutput := stderr.String()
+		if strings.Contains(errOutput, "No NVENC capable devices found") ||
+			strings.Contains(errOutput, "Cannot load nvcuda.dll") ||
+			strings.Contains(errOutput, "CUDA driver version is insufficient") ||
+			strings.Contains(errOutput, "h264_nvenc") ||
+			strings.Contains(errOutput, "nvenc") {
+			return fmt.Errorf("GPU error: %s", errOutput)
+		}
+		return fmt.Errorf("GPU视频编码失败: %s, stderr: %s", err.Error(), errOutput)
+	}
+
+	return nil
+}
+
+// SegmentBase模式：编码音频
+// 生成 fragmented MP4 (fMP4) 格式，包含 mvex box，用于 DASH SegmentBase
+// 注意：音频没有关键帧概念，frag_keyframe 对纯音频无效，
+// 必须用 -frag_duration 强制按时间分片，否则整个音频只有一个 fragment，
+// 导致 HLS v7 byte-range 模式下 iOS 播放器无法正常加载
+func encodeAudioOnly(ctx context.Context, inputFile, outputFile string, audioBitRate, audioSampleRate, audioChannels int) error {
+	// 构建动态音频参数
+	bitRateStr := fmt.Sprintf("%dk", audioBitRate/1000)
+	sampleRateStr := strconv.Itoa(audioSampleRate)
+	channelsStr := strconv.Itoa(audioChannels)
+
+	command := []string{
+		"-i", inputFile,
+		"-filter_complex", "[0:a]asetpts=PTS-STARTPTS,aresample=async=1[aout]",
+		"-map", "[aout]",
+		"-vn",
+		"-c:a", "aac",
+		"-b:a", bitRateStr,
+		"-ar", sampleRateStr,
+		"-ac", channelsStr,
+		"-f", "mp4",
+		"-frag_duration", "2000000",
+		"-movflags", "+frag_keyframe+empty_moov+default_base_moof+dash+global_sidx",
+		"-y", outputFile,
+	}
+
+	cmd := exec.CommandContext(ctx, "ffmpeg", command...)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+
+	// 打印音频编码命令
+	utils.InfoLog(fmt.Sprintf("【音频编码命令】ffmpeg %s", strings.Join(command, " ")), "transcoding")
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("音频编码失败: %s, stderr: %s", err.Error(), stderr.String())
+	}
+
+	return nil
+}
+
+// parseQualityInfo 从 quality 字符串解析分辨率、码率、帧率
+func parseQualityInfo(quality string) (width, height, bandwidth int, frameRate float64) {
+	width, height = 1920, 1080
+	bandwidth = 3000000
+	frameRate = 30
+
+	parts := strings.Split(quality, "_")
+	if len(parts) >= 1 {
+		resParts := strings.Split(parts[0], "x")
+		if len(resParts) == 2 {
+			if w, err := strconv.Atoi(resParts[0]); err == nil {
+				width = w
+			}
+			if h, err := strconv.Atoi(resParts[1]); err == nil {
+				height = h
+			}
+		}
+	}
+
+	if len(parts) >= 2 {
+		rateStr := strings.TrimSuffix(parts[1], "k")
+		if rate, err := strconv.Atoi(rateStr); err == nil {
+			bandwidth = rate * 1000
+		}
+	}
+
+	if len(parts) >= 3 {
+		if fr, err := strconv.ParseFloat(parts[2], 64); err == nil {
+			frameRate = fr
+		}
+	}
+
+	return
+}
+
 // 并发上传文件到OSS
-func uploadFilesToOSS(dirName, outputDir string, files []os.DirEntry) int {
-	const maxConcurrency = 10 // 最大并发数
+func uploadFilesToOSS(dirName, outputDir, suffix string, files []os.DirEntry) int {
+	maxConcurrency := ossUploadMaxConcurrency // 最大并发数
 	utils.InfoLog(fmt.Sprintf("【OSS准备上传】文件总数=%d, 并发数=%d", len(files), maxConcurrency), "transcoding")
 
 	// 创建任务通道和结果通道
@@ -614,9 +1374,10 @@ func uploadFilesToOSS(dirName, outputDir string, files []os.DirEntry) int {
 			for task := range tasks {
 				fileName := task.file.Name()
 
-				// 跳过upload.mp4如果配置不上传
-				if fileName == "upload.mp4" && !global.Config.Storage.UploadMp4File {
-					utils.InfoLog("【OSS跳过】upload.mp4 (配置不上传原文件)", "transcoding")
+				// 跳过原始上传文件如果配置不上传
+				originalFileName := "upload" + suffix
+				if fileName == originalFileName && !global.Config.Storage.UploadMp4File {
+					utils.InfoLog(fmt.Sprintf("【OSS跳过】%s (配置不上传原文件)", fileName), "transcoding")
 					results <- false
 					continue
 				}
@@ -624,14 +1385,14 @@ func uploadFilesToOSS(dirName, outputDir string, files []os.DirEntry) int {
 				objectKey := "video/" + dirName + "/" + fileName
 				filePath := outputDir + fileName
 
-				utils.InfoLog(fmt.Sprintf("【OSS上传中】Worker%d: %d/%d %s", workerID, task.index+1, len(files), fileName), "transcoding")
+				utils.InfoLog(fmt.Sprintf("【OSS上传中】Worker%d: %d/%d %s/%s", workerID, task.index+1, len(files), dirName, fileName), "transcoding")
 
 				// 上传文件,失败重试1次
 				err := global.Storage.PutObjectFromFile(objectKey, filePath)
 				if err != nil {
 					utils.ErrorLog(fmt.Sprintf("【OSS上传失败】%s,重试中...", fileName), "oss", err.Error())
 					// 重试一次
-					time.Sleep(500 * time.Millisecond)
+					time.Sleep(ossUploadRetryDelay)
 					err = global.Storage.PutObjectFromFile(objectKey, filePath)
 				}
 
@@ -669,7 +1430,8 @@ func uploadFilesToOSS(dirName, outputDir string, files []os.DirEntry) int {
 }
 
 // 完成转码
-func completeTransCoding(videoId, resourceId uint, status int) error {
+func completeTransCoding(videoId, resourceId uint, status int, originalVideoStatus int) error {
+	defer clearResourceTranscodingProgress(resourceId)
 	utils.InfoLog("========== completeTransCoding 开始 ==========", "transcoding")
 	utils.InfoLog(fmt.Sprintf("【入参】VideoID=%d, ResourceID=%d, 期望Status=%d", videoId, resourceId, status), "transcoding")
 
@@ -702,46 +1464,49 @@ func completeTransCoding(videoId, resourceId uint, status int) error {
 	tx.Model(&model.Resource{}).Where("vid = ? and status = ? and id != ?", videoId, global.VIDEO_PROCESSING, resourceId).Count(&processingCount)
 	utils.InfoLog(fmt.Sprintf("【事务查询】VideoID=%d 除当前资源外,仍在转码中(status=200)的资源数=%d", videoId, processingCount), "transcoding")
 
-	// 如果还有其他资源在转码中,当前资源保持VIDEO_PROCESSING状态,不更新
-	// 只有当所有资源都转码完成时,才统一更新所有资源状态
-	if processingCount > 0 {
-		utils.InfoLog(fmt.Sprintf("【跳过更新】还有%d个其他资源在转码中,当前资源保持VIDEO_PROCESSING(200)状态", processingCount), "transcoding")
-		// 不更新资源状态,直接提交事务
-		if err := tx.Commit().Error; err != nil {
-			utils.ErrorLog("【事务失败】提交事务失败", "transcoding", err.Error())
-			return err
-		}
-		utils.InfoLog("【事务提交】成功（资源状态未更新）", "transcoding")
-		cache.DelVideoInfo(videoId)
-		utils.InfoLog(fmt.Sprintf("【缓存清理】删除VideoID=%d的缓存", videoId), "transcoding")
-		utils.InfoLog("========== completeTransCoding 结束 ==========", "transcoding")
-		return nil
-	}
-
-	// 所有资源都转码完成了,现在统一更新状态
-	utils.InfoLog("【判断】所有资源转码已完成,准备统一更新所有资源状态", "transcoding")
-
-	// 如果视频已经审核通过,资源应该直接设为审核通过状态
-	if currentVideo.Status == global.AUDIT_APPROVED && status == global.WAITING_REVIEW {
+	// 仅“重新转码”场景允许资源自动恢复为审核通过。
+	// 普通新增分P（originalVideoStatus=-1）必须保持 WAITING_REVIEW，避免绕过人工审核。
+	if status == global.WAITING_REVIEW && originalVideoStatus >= 0 && originalVideoStatus == global.AUDIT_APPROVED {
 		status = global.AUDIT_APPROVED
-		utils.InfoLog("【状态修正】视频已审核通过,资源status从WAITING_REVIEW(500)改为AUDIT_APPROVED(0)", "transcoding")
+		utils.InfoLog("【状态修正】重新转码场景恢复资源为AUDIT_APPROVED(0)", "transcoding")
 	}
 
-	// 统一更新所有转码中的资源状态(包括当前资源)
-	result := tx.Model(&model.Resource{}).Where("vid = ? and status = ?", videoId, global.VIDEO_PROCESSING).Updates(
+	// 先更新当前资源的状态（无论是否还有其他资源在转码）
+	result := tx.Model(&model.Resource{}).Where("id = ? and status = ?", resourceId, global.VIDEO_PROCESSING).Updates(
 		map[string]any{
 			"status": status,
 		},
 	)
 	if result.Error != nil {
 		tx.Rollback()
-		utils.ErrorLog("【事务失败】批量更新资源状态失败", "transcoding", result.Error.Error())
+		utils.ErrorLog("【事务失败】更新当前资源状态失败", "transcoding", result.Error.Error())
 		return result.Error
 	}
-	utils.InfoLog(fmt.Sprintf("【事务执行】批量更新resource表 VideoID=%d所有资源 status=%d, 影响行数=%d", videoId, status, result.RowsAffected), "transcoding")
+	utils.InfoLog(fmt.Sprintf("【事务执行】更新resource表 ResourceID=%d status=%d, 影响行数=%d", resourceId, status, result.RowsAffected), "transcoding")
 
-	// 所有资源状态已更新完成,现在更新视频状态
-	utils.InfoLog("【判断】所有资源转码已完成，准备更新video状态", "transcoding")
+	// 仅在资源转码成功时更新 VideoFile 为已就绪；失败场景不能误标记为 ready
+	if status != global.PROCESSING_FAIL {
+		updateVideoFileStatus(tx, currentResource, resourceId)
+	} else {
+		utils.InfoLog(fmt.Sprintf("【跳过VideoFile置ready】ResourceID=%d status=PROCESSING_FAIL", resourceId), "transcoding")
+	}
+
+	// 如果还有其他资源在转码中,只更新当前资源,不更新视频状态
+	if processingCount > 0 {
+		utils.InfoLog(fmt.Sprintf("【部分完成】还有%d个其他资源在转码中,仅更新当前资源状态,不更新视频状态", processingCount), "transcoding")
+		if err := tx.Commit().Error; err != nil {
+			utils.ErrorLog("【事务失败】提交事务失败", "transcoding", err.Error())
+			return err
+		}
+		utils.InfoLog("【事务提交】成功（仅更新当前资源状态）", "transcoding")
+		cache.DelVideoInfo(videoId)
+		utils.InfoLog(fmt.Sprintf("【缓存清理】删除VideoID=%d的缓存", videoId), "transcoding")
+		utils.InfoLog("========== completeTransCoding 结束 ==========", "transcoding")
+		return nil
+	}
+
+	// 所有资源都转码完成了，准备更新视频状态
+	utils.InfoLog("【判断】所有资源转码已完成,准备更新视频状态", "transcoding")
 
 	// 检查所有资源是否都失败了
 	var totalCount int64
@@ -755,14 +1520,23 @@ func completeTransCoding(videoId, resourceId uint, status int) error {
 		// 所有资源都失败，视频状态设为处理失败
 		videoStatus = global.PROCESSING_FAIL
 		utils.InfoLog("【判断】全部资源失败，video status设为PROCESSING_FAIL(3000)", "transcoding")
+	} else if currentVideo.Status == global.AUDIT_APPROVED {
+		// 视频已审核通过（添加新分P场景），保持审核通过状态不变
+		// 新分P由资源级别的状态独立控制审核，不影响已上线的视频
+		videoStatus = global.AUDIT_APPROVED
+		utils.InfoLog("【判断】视频已审核通过，保持AUDIT_APPROVED(0)不变（新分P独立审核）", "transcoding")
+	} else if originalVideoStatus >= 0 && originalVideoStatus == global.AUDIT_APPROVED {
+		// 重新转码且原始状态是审核通过，恢复为审核通过
+		videoStatus = global.AUDIT_APPROVED
+		utils.InfoLog("【判断】重新转码完成，恢复原始状态AUDIT_APPROVED(0)", "transcoding")
 	} else {
-		// 至少有一个资源成功，视频状态设为待审核
+		// 普通上传转码或原始状态非审核通过，设为待审核
 		videoStatus = global.WAITING_REVIEW
 		utils.InfoLog("【判断】至少一个资源成功，video status设为WAITING_REVIEW(500)", "transcoding")
 	}
 
-	// 更新视频状态（不限制为SUBMIT_REVIEW，允许从CREATED_VIDEO等状态更新）
-	videoResult := tx.Model(&model.Video{}).Where("id = ? and status NOT IN (?, ?)", videoId, global.AUDIT_APPROVED, global.REVIEW_FAILED).Updates(
+	// 更新视频状态
+	videoResult := tx.Model(&model.Video{}).Where("id = ?", videoId).Updates(
 		map[string]any{
 			"status": videoStatus,
 		},
@@ -772,7 +1546,7 @@ func completeTransCoding(videoId, resourceId uint, status int) error {
 		utils.ErrorLog("【事务失败】更新视频状态失败", "transcoding", videoResult.Error.Error())
 		return videoResult.Error
 	}
-	utils.InfoLog(fmt.Sprintf("【事务执行】更新video表 VideoID=%d status=%d, WHERE条件: status NOT IN (0,2000), 影响行数=%d",
+	utils.InfoLog(fmt.Sprintf("【事务执行】更新video表 VideoID=%d status=%d, 影响行数=%d",
 		videoId, videoStatus, videoResult.RowsAffected), "transcoding")
 
 	if videoResult.RowsAffected == 0 {
@@ -795,6 +1569,38 @@ func completeTransCoding(videoId, resourceId uint, status int) error {
 	return nil
 }
 
+// updateVideoFileStatus 更新关联的 VideoFile 状态为已就绪（支持全局去重秒传）
+// 每个资源转码完成后都应调用，而不是只在最后一个资源完成时调用
+func updateVideoFileStatus(db *gorm.DB, currentResource model.Resource, resourceId uint) {
+	if currentResource.FileID != 0 {
+		result := db.Model(&model.VideoFile{}).Where("id = ? AND status != ?", currentResource.FileID, model.FileStatusReady).
+			Update("status", model.FileStatusReady)
+		if result.Error != nil {
+			utils.ErrorLog(fmt.Sprintf("【警告】更新VideoFile状态失败, FileID=%d", currentResource.FileID), "transcoding", result.Error.Error())
+		} else {
+			utils.InfoLog(fmt.Sprintf("【VideoFile状态更新】FileID=%d 状态设为 FileStatusReady(4), 影响行数=%d", currentResource.FileID, result.RowsAffected), "transcoding")
+		}
+	} else {
+		// 兼容旧数据：Resource.FileID 为 0 时，尝试通过 VideoIndexFile.DirName 找到对应的 VideoFile 并更新
+		var videoIndex model.VideoIndexFile
+		if err := db.Where("resource_id = ?", resourceId).First(&videoIndex).Error; err == nil && videoIndex.DirName != "" {
+			result := db.Model(&model.VideoFile{}).Where("dir_name = ? AND status != ?", videoIndex.DirName, model.FileStatusReady).
+				Update("status", model.FileStatusReady)
+			if result.Error != nil {
+				utils.ErrorLog(fmt.Sprintf("【警告】通过DirName更新VideoFile状态失败, DirName=%s", videoIndex.DirName), "transcoding", result.Error.Error())
+			} else if result.RowsAffected > 0 {
+				utils.InfoLog(fmt.Sprintf("【VideoFile状态更新】DirName=%s 状态设为 FileStatusReady(4), 影响行数=%d", videoIndex.DirName, result.RowsAffected), "transcoding")
+
+				// 同时更新 Resource.FileID（补充旧数据）
+				if vf, err := findVideoFileByDirName(db, videoIndex.DirName); err == nil && vf != nil {
+					db.Model(&model.Resource{}).Where("id = ? AND file_id = 0", resourceId).Update("file_id", vf.ID)
+					utils.InfoLog(fmt.Sprintf("【Resource关联更新】ResourceID=%d 设置 FileID=%d", resourceId, vf.ID), "transcoding")
+				}
+			}
+		}
+	}
+}
+
 // 注册转码进程
 func registerTranscodingProcess(videoID, resourceID uint, cmd *exec.Cmd, cancelFunc context.CancelFunc, outputDir string) {
 	processMapMutex.Lock()
@@ -803,6 +1609,7 @@ func registerTranscodingProcess(videoID, resourceID uint, cmd *exec.Cmd, cancelF
 	process := TranscodingProcess{
 		VideoID:    videoID,
 		ResourceID: resourceID,
+		PID:        cmd.Process.Pid,
 		Cmd:        cmd,
 		CancelFunc: cancelFunc,
 		OutputDir:  outputDir,
@@ -813,7 +1620,7 @@ func registerTranscodingProcess(videoID, resourceID uint, cmd *exec.Cmd, cancelF
 }
 
 // 注销转码进程
-func unregisterTranscodingProcess(videoID, resourceID uint) {
+func unregisterTranscodingProcess(videoID uint, pid int) {
 	processMapMutex.Lock()
 	defer processMapMutex.Unlock()
 
@@ -822,10 +1629,10 @@ func unregisterTranscodingProcess(videoID, resourceID uint) {
 		return
 	}
 
-	// 过滤掉指定的resourceID
+	// 按 PID 精确过滤，避免同一 ResourceID 的多清晰度进程被提前全部移除
 	newProcesses := make([]TranscodingProcess, 0)
 	for _, p := range processes {
-		if p.ResourceID != resourceID {
+		if p.PID != pid {
 			newProcesses = append(newProcesses, p)
 		}
 	}
@@ -835,8 +1642,31 @@ func unregisterTranscodingProcess(videoID, resourceID uint) {
 		utils.InfoLog(fmt.Sprintf("【注销转码进程】VideoID=%d 所有进程已清理", videoID), "transcoding")
 	} else {
 		transcodingProcesses[videoID] = newProcesses
-		utils.InfoLog(fmt.Sprintf("【注销转码进程】VideoID=%d, ResourceID=%d", videoID, resourceID), "transcoding")
+		utils.InfoLog(fmt.Sprintf("【注销转码进程】VideoID=%d, PID=%d", videoID, pid), "transcoding")
 	}
+}
+
+func cleanupTranscodedFilesInOutputDir(outputDir string) error {
+	files, err := os.ReadDir(outputDir)
+	if err != nil {
+		return err
+	}
+
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+		fileName := file.Name()
+		// 保留原始上传文件和封面文件，避免误删共享源文件
+		if strings.HasPrefix(fileName, "upload.") || fileName == "cover.jpg" {
+			continue
+		}
+		filePath := filepath.Join(outputDir, fileName)
+		if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
 }
 
 // 停止视频的所有转码进程并清理文件
@@ -857,6 +1687,7 @@ func StopTranscodingAndCleanup(videoID uint) error {
 
 	utils.InfoLog(fmt.Sprintf("【停止转码】VideoID=%d 找到%d个转码进程，准备停止", videoID, len(processesCopy)), "transcoding")
 
+	cleanedDirs := make(map[string]struct{})
 	for _, process := range processesCopy {
 		// 取消context（如果有）
 		if process.CancelFunc != nil {
@@ -875,17 +1706,41 @@ func StopTranscodingAndCleanup(videoID uint) error {
 			}
 		}
 
-		// 清理输出目录
+		// 清理转码产物（保留 upload.* 原始文件）
 		if process.OutputDir != "" {
-			err := os.RemoveAll(process.OutputDir)
+			if _, alreadyCleaned := cleanedDirs[process.OutputDir]; alreadyCleaned {
+				continue
+			}
+			cleanedDirs[process.OutputDir] = struct{}{}
+
+			err := cleanupTranscodedFilesInOutputDir(process.OutputDir)
 			if err != nil {
-				utils.ErrorLog(fmt.Sprintf("【删除输出目录失败】%s", process.OutputDir), "transcoding", err.Error())
+				utils.ErrorLog(fmt.Sprintf("【清理转码产物失败】%s", process.OutputDir), "transcoding", err.Error())
 			} else {
-				utils.InfoLog(fmt.Sprintf("【删除输出目录成功】%s", process.OutputDir), "transcoding")
+				utils.InfoLog(fmt.Sprintf("【清理转码产物完成】%s", process.OutputDir), "transcoding")
 			}
 		}
 	}
 
 	utils.InfoLog(fmt.Sprintf("【停止转码完成】VideoID=%d", videoID), "transcoding")
 	return nil
+}
+
+// HasTranscodingProcess 检查指定VideoID是否有正在运行的转码进程
+func HasTranscodingProcess(videoID uint) bool {
+	processMapMutex.RLock()
+	defer processMapMutex.RUnlock()
+	processes, exists := transcodingProcesses[videoID]
+	return exists && len(processes) > 0
+}
+
+// GetTranscodingProcessCount 获取指定VideoID正在运行的转码进程数量
+func GetTranscodingProcessCount(videoID uint) int {
+	processMapMutex.RLock()
+	defer processMapMutex.RUnlock()
+	processes, exists := transcodingProcesses[videoID]
+	if !exists {
+		return 0
+	}
+	return len(processes)
 }

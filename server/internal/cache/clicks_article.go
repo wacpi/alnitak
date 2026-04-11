@@ -16,7 +16,7 @@ func GetArticleClicksLimit(articleId uint, ip string) string {
 
 func SetArticleClicksLimit(articleId uint, ip string) {
 	global.Redis.Set(ARTICLE_CLICKS_LIMIT_KEY+utils.UintToString(articleId)+":"+ip, 1,
-		ARTICLE_CLICKS_LIMIT_EXPRIRATION_TIME)
+		ARTICLE_CLICKS_LIMIT_EXPIRATION_TIME)
 }
 
 func GetArticleClicks(articleId uint) (int64, error) {
@@ -35,7 +35,7 @@ func GetArticleClicks(articleId uint) (int64, error) {
 }
 
 func SetArticleClicks(articleId uint, count int64) {
-	global.Redis.Set(ARTICLE_CLICKS_KEY+utils.UintToString(articleId), count, ARTICLE_CLICKS_EXPRIRATION_TIME)
+	global.Redis.Set(ARTICLE_CLICKS_KEY+utils.UintToString(articleId), count, ARTICLE_CLICKS_EXPIRATION_TIME)
 }
 
 func GetArticleClicksKeys() []string {

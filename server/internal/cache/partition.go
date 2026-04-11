@@ -28,7 +28,7 @@ func SetVideoPartition(partitions []vo.PartitionResp) {
 		utils.ErrorLog("分区序列化失败", "cache", err.Error())
 		return
 	}
-	global.Redis.Set(VIDEO_PARTITION_KEY, pb, VIDEO_PARTITION_EXPRIRATION_TIME)
+	global.Redis.Set(VIDEO_PARTITION_KEY, pb, VIDEO_PARTITION_EXPIRATION_TIME)
 }
 
 func DelVideoPartition() {
@@ -55,7 +55,7 @@ func SetArticlePartition(partitions []vo.PartitionResp) {
 		utils.ErrorLog("分区序列化失败", "cache", err.Error())
 		return
 	}
-	global.Redis.Set(ARTICLE_PARTITION_KEY, pb, ARTICLE_PARTITION_EXPRIRATION_TIME)
+	global.Redis.Set(ARTICLE_PARTITION_KEY, pb, ARTICLE_PARTITION_EXPIRATION_TIME)
 }
 
 func DelArticlePartition() {

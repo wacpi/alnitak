@@ -21,12 +21,12 @@ func GetLoginTryCount(username string) int {
 }
 
 func SetLoginTryCount(username string, count int) {
-	global.Redis.Set(LOGIN_TRY_COUNT_KEY+username, count, LOGIN_TRY_COUNT_EXPRIRATION_TIME)
+	global.Redis.Set(LOGIN_TRY_COUNT_KEY+username, count, LOGIN_TRY_COUNT_EXPIRATION_TIME)
 }
 
 func IncrLoginTryCount(username string) {
 	global.Redis.Incr(LOGIN_TRY_COUNT_KEY + username)
-	global.Redis.Expire(LOGIN_TRY_COUNT_KEY+username, LOGIN_TRY_COUNT_EXPRIRATION_TIME)
+	global.Redis.Expire(LOGIN_TRY_COUNT_KEY+username, LOGIN_TRY_COUNT_EXPIRATION_TIME)
 }
 
 func DelLoginTryCount(username string) {

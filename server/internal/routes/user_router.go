@@ -10,6 +10,8 @@ func CollectUserRoutes(r *gin.RouterGroup) {
 	userGroup := r.Group("user")
 	// 获取用户基本信息
 	userGroup.GET("getUserBaseInfo", api.GetUserBaseInfo)
+	// 搜索用户 / UP
+	userGroup.POST("searchUser", api.SearchUser)
 
 	userAuth := userGroup.Use(middleware.Auth())
 	{

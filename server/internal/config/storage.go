@@ -10,5 +10,6 @@ type Storage struct {
 	Region        string `mapstructure:"region" json:"region" yaml:"region"`
 	Domain        string `mapstructure:"domain" json:"domain" yaml:"domain"`
 	Private       bool   `mapstructure:"private" json:"private" yaml:"private"`
+	UseSSL        bool   `mapstructure:"use_ssl" json:"use_ssl" yaml:"use_ssl"` // OSS是否使用HTTPS
 	UploadMp4File bool   `mapstructure:"upload_mp4_file" json:"upload_mp4_file" yaml:"upload_mp4_file"`
 }

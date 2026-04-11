@@ -3,7 +3,9 @@ package service
 import (
 	"errors"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
@@ -45,70 +47,59 @@ func UserRegister(ctx *gin.Context, registerReq dto.RegisterReq) error {
 	return nil
 }
 
+// generateTokenPair 生成 accessToken + refreshToken 并存入缓存
+func generateTokenPair(userId uint) (accessToken, refreshToken string, err error) {
+	if accessToken, err = jwt.GenerateAccessToken(userId); err != nil {
+		return "", "", errors.New("验证token生成失败")
+	}
+	if refreshToken, err = jwt.GenerateRefreshToken(userId); err != nil {
+		return "", "", errors.New("刷新token生成失败")
+	}
+	cache.SetRefreshToken(userId, refreshToken)
+	return accessToken, refreshToken, nil
+}
+
 func UserLogin(ctx *gin.Context, loginReq dto.LoginReq) (accessToken, refreshToken string, userId uint, err error) {
-	// 读取数据库
 	user, err := FindUserByEmail(loginReq.Email)
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			cache.IncrLoginTryCount(loginReq.Email) // 记录登录尝试次数
+			cache.IncrLoginTryCount(loginReq.Email)
 			return "", "", 0, errors.New("用户名密码不匹配")
-		} else {
-			return "", "", 0, errors.New("获取用户信息失败")
 		}
+		return "", "", 0, errors.New("获取用户信息失败")
 	}
 
-	// 验证账号密码
-	passwordError := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(loginReq.Password))
-	if passwordError != nil {
-		cache.IncrLoginTryCount(loginReq.Email) // 记录登录尝试次数
+	if bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(loginReq.Password)) != nil {
+		cache.IncrLoginTryCount(loginReq.Email)
 		return "", "", 0, errors.New("用户名密码不匹配")
 	}
 
-	// 生成验证token
-	if accessToken, err = jwt.GenerateAccessToken(user.ID); err != nil {
-		return "", "", 0, errors.New("验证token生成失败")
+	accessToken, refreshToken, err = generateTokenPair(user.ID)
+	if err != nil {
+		return "", "", 0, err
 	}
-	// 生成刷新token
-	if refreshToken, err = jwt.GenerateRefreshToken(user.ID); err != nil {
-		return "", "", 0, errors.New("刷新token生成失败")
-	}
-
-	// 存入缓存
-	cache.SetRefreshToken(user.ID, refreshToken)
-
 	return accessToken, refreshToken, user.ID, nil
 }
 
 func EmailLogin(ctx *gin.Context, loginReq dto.EmailLoginReq) (accessToken, refreshToken string, userId uint, err error) {
-	// 读取数据库
 	user, err := FindUserByEmail(loginReq.Email)
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			cache.IncrLoginTryCount(loginReq.Email) // 记录登录尝试次数
+			cache.IncrLoginTryCount(loginReq.Email)
 			return "", "", 0, errors.New("用户名密码不匹配")
-		} else {
-			return "", "", 0, errors.New("获取用户信息失败")
 		}
+		return "", "", 0, errors.New("获取用户信息失败")
 	}
 
-	// 验证邮箱验证码
 	if cache.GetEmailCode(loginReq.Email) != loginReq.Code {
-		cache.IncrLoginTryCount(loginReq.Email) // 记录登录尝试次数
+		cache.IncrLoginTryCount(loginReq.Email)
 		return "", "", 0, errors.New("邮箱验证错误")
 	}
 
-	// 生成验证token
-	if accessToken, err = jwt.GenerateAccessToken(user.ID); err != nil {
-		return "", "", 0, errors.New("验证token生成失败")
+	accessToken, refreshToken, err = generateTokenPair(user.ID)
+	if err != nil {
+		return "", "", 0, err
 	}
-	// 生成刷新token
-	if refreshToken, err = jwt.GenerateRefreshToken(user.ID); err != nil {
-		return "", "", 0, errors.New("刷新token生成失败")
-	}
-
-	// 存入缓存
-	cache.SetRefreshToken(user.ID, refreshToken)
-
 	return accessToken, refreshToken, user.ID, nil
 }
 
@@ -118,6 +109,11 @@ func UpdateToken(ctx *gin.Context, tokenReq dto.TokenReq) (accessToken, refreshT
 	if err != nil {
 		utils.ErrorLog("token验证失败", "user", err.Error())
 		return "", "", 0, errors.New("token验证失败")
+	}
+
+	// 必须为 refreshToken（TokenType=1），拒绝 accessToken 被用于刷新
+	if claims.TokenType != 1 {
+		return "", "", 0, errors.New("token类型错误")
 	}
 
 	// 读取缓存
@@ -153,10 +149,17 @@ func UpdateToken(ctx *gin.Context, tokenReq dto.TokenReq) (accessToken, refreshT
 	return accessToken, refreshToken, claims.UserId, nil
 }
 
-func Logout(ctx *gin.Context, tokenReq dto.TokenReq) {
-	userId := ctx.GetUint("userId")
-	// 删除token
-	cache.DelRefreshToken(userId, tokenReq.RefreshToken)
+// Logout 吊销 refresh：阶段 B 下登出接口不再依赖 Auth 中间件注入 userId，
+// 须从 refresh JWT 解析出用户 id，与行业标准「仅凭 Cookie 即可退出」一致。
+func Logout(_ *gin.Context, tokenReq dto.TokenReq) {
+	if tokenReq.RefreshToken == "" {
+		return
+	}
+	_, claims, err := jwt.ParseToken(tokenReq.RefreshToken)
+	if err != nil {
+		return
+	}
+	cache.DelRefreshToken(claims.UserId, tokenReq.RefreshToken)
 }
 
 // 编辑用户信息
@@ -508,6 +511,23 @@ func GetUserBaseInfo(userId uint) (user vo.UserInfoResp) {
 	user.Email = ""
 	user.Phone = ""
 
+	// 查询粉丝数量（实时查询，不缓存）
+	global.Mysql.Model(&model.Relation{}).
+		Where("target_uid = ? and (relation = ? or relation = ?)", userId, global.FOLLOWED, global.MUTUAL_FANS).
+		Count(&user.Fans)
+
+	return
+}
+
+// GetAuthorPublic 视频区等场景使用的作者公开信息（仅 uid、昵称、头像）。
+func GetAuthorPublic(userId uint) (a vo.AuthorPublicResp) {
+	u := GetUserBaseInfo(userId)
+	if u.ID == 0 {
+		return
+	}
+	a.UID = u.ID
+	a.Name = u.Username
+	a.Avatar = u.Avatar
 	return
 }
 
@@ -552,6 +572,53 @@ func FindUserIdsByName(names []string) (ids []uint) {
 func FindUserLastBan(userId uint) (ban vo.BanResp) {
 	global.Mysql.Model(&model.UserBan{}).Where("uid = ?", userId).Order("id desc").First(&ban)
 	return
+}
+
+// SearchUser 按用户名、签名模糊搜索正常状态用户（status=0），返回公开字段（经 GetUserBaseInfo）
+func SearchUser(ctx *gin.Context, req dto.SearchKeywordPageReq) []vo.UserInfoResp {
+	var userIds []uint
+	page := req.Page
+	if page < 1 {
+		page = 1
+	}
+	ps := req.PageSize
+	if ps < 1 {
+		ps = 15
+	}
+	kw := strings.TrimSpace(req.KeyWords)
+	if utf8.RuneCountInString(kw) > 100 {
+		kw = string([]rune(kw)[:100])
+	}
+
+	q := global.Mysql.Model(&model.User{}).Where("status = ?", 0)
+
+	tr := normalizeTimeRange(req.TimeRange)
+	if start := parseTimeRangeStart(tr); start != nil {
+		q = q.Where("created_at >= ?", *start)
+	}
+
+	if len(kw) > 0 {
+		pattern := "%" + escapeLikeKeyword(kw) + "%"
+		q = q.Where("(username LIKE ? ESCAPE '\\\\' OR sign LIKE ? ESCAPE '\\\\')", pattern, pattern)
+	}
+
+	// 用户排序：most_fans 后续需要稳定 fans_count；MVP 默认 newest
+	switch normalizeSort(req.Sort) {
+	default:
+		q = q.Order("created_at desc").Order("id desc")
+	}
+
+	q.Limit(ps).Offset((page - 1) * ps).Pluck("id", &userIds)
+
+	users := make([]vo.UserInfoResp, 0, len(userIds))
+	for _, id := range userIds {
+		u := GetUserBaseInfo(id)
+		if u.ID == 0 {
+			continue
+		}
+		users = append(users, u)
+	}
+	return users
 }
 
 // 随机生成一个不重复的用户名

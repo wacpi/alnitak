@@ -61,7 +61,64 @@ func GetHistoryList(ctx *gin.Context, page, pageSize int) (videos []vo.HistoryVi
 		return videos, errors.New("获取失败")
 	}
 
+	enrichHistoryPGCMeta(videos)
 	return
+}
+
+type historyPGCRow struct {
+	Vid           uint   `gorm:"column:vid"`
+	EpID          uint   `gorm:"column:ep_id"`
+	EpisodeNumber int    `gorm:"column:episode_number"`
+	EpisodeTitle  string `gorm:"column:episode_title"`
+	PGCTitle      string `gorm:"column:pgc_title"`
+}
+
+// enrichHistoryPGCMeta 为 PGC 绑定视频补充系列标题、剧集信息与 ep_id（与播放页 ep 路由对齐）。
+func enrichHistoryPGCMeta(videos []vo.HistoryVideoResp) {
+	var vids []uint
+	for _, v := range videos {
+		if v.PGCAttached {
+			vids = append(vids, v.ID)
+		}
+	}
+	if len(vids) == 0 {
+		return
+	}
+
+	var rows []historyPGCRow
+	if err := global.Mysql.Table("pgc_episode pe").
+		Select("pe.vid, pe.id AS ep_id, pe.episode_number, pe.title AS episode_title, pc.title AS pgc_title").
+		Joins("JOIN pgc_content pc ON pc.pgc_id = pe.pgc_id AND pc.deleted_at IS NULL").
+		Where("pe.vid IN ? AND pe.deleted_at IS NULL", vids).
+		Order("pe.id DESC").
+		Scan(&rows).Error; err != nil {
+		return
+	}
+
+	mergeHistoryPGCRowsIntoVideos(videos, rows)
+}
+
+// mergeHistoryPGCRowsIntoVideos 将剧集查询结果合并进历史列表（按 vid 去重：同 vid 多行时保留 ORDER 中先出现的一条，通常即 id 最大）。
+func mergeHistoryPGCRowsIntoVideos(videos []vo.HistoryVideoResp, rows []historyPGCRow) {
+	byVid := make(map[uint]historyPGCRow, len(rows))
+	for _, r := range rows {
+		if _, ok := byVid[r.Vid]; !ok {
+			byVid[r.Vid] = r
+		}
+	}
+	for i := range videos {
+		if !videos[i].PGCAttached {
+			continue
+		}
+		r, ok := byVid[videos[i].ID]
+		if !ok {
+			continue
+		}
+		videos[i].EpID = r.EpID
+		videos[i].EpisodeNumber = r.EpisodeNumber
+		videos[i].EpisodeTitle = r.EpisodeTitle
+		videos[i].PGCTitle = r.PGCTitle
+	}
 }
 
 func GetHistoryProgress(ctx *gin.Context, videoId, part uint) (progress float64, realPart uint, err error) {
@@ -73,6 +130,10 @@ func GetHistoryProgress(ctx *gin.Context, videoId, part uint) (progress float64,
 		history, err = FindHistoryByPart(videoId, userId, part)
 	}
 	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			// 无历史记录，返回进度0，不视为错误
+			return 0, 0, nil
+		}
 		utils.ErrorLog("获取历史记录进度失败", "history", err.Error())
 		return 0, 0, errors.New("获取失败")
 	}

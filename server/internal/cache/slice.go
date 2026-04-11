@@ -7,7 +7,7 @@ func GetVideoSlice(key string) string {
 }
 
 func SetVideoSlice(key, value string) {
-	global.Redis.Set(VIDEO_SLICE_STATUS+key, value, VIDEO_SLICE_EXPRIRATION_TIME)
+	global.Redis.Set(VIDEO_SLICE_STATUS+key, value, VIDEO_SLICE_EXPIRATION_TIME)
 }
 
 func DelVideoSlice(key string) {

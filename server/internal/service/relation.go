@@ -113,9 +113,24 @@ func GetFollowings(ctx *gin.Context, userId uint, page, pageSize int) (relation 
 		Where("uid = ? and (relation = ? or relation = ?)", userId, global.FOLLOWED, global.MUTUAL_FANS).
 		Limit(pageSize).Offset((page - 1) * pageSize).Scan(&relation)
 
-	// 查询用户信息
+	// 当前登录用户ID（可选认证，未登录为0）
+	currentUid := ctx.GetUint("userId")
+
+	// 收集列表用户ID，批量查询当前用户与他们的关系
+	targetUids := make([]uint, 0, len(relation))
+	for _, r := range relation {
+		if currentUid > 0 && currentUid != r.TargetUid {
+			targetUids = append(targetUids, r.TargetUid)
+		}
+	}
+	myRelationMap := batchFindUserRelations(currentUid, targetUids)
+
+	// 查询用户信息并填充myRelation
 	for i := 0; i < len(relation); i++ {
 		relation[i].User = GetUserBaseInfo(relation[i].TargetUid)
+		if r, ok := myRelationMap[relation[i].TargetUid]; ok {
+			relation[i].MyRelation = r
+		}
 	}
 
 	return relation, nil
@@ -128,16 +143,47 @@ func GetFollowers(ctx *gin.Context, userId uint, page, pageSize int) (relation [
 		Where("target_uid = ? and (relation = ? or relation = ?)", userId, global.FOLLOWED, global.MUTUAL_FANS).
 		Limit(pageSize).Offset((page - 1) * pageSize).Scan(&relation)
 
-	// 查询用户信息
+	// 当前登录用户ID（可选认证，未登录为0）
+	currentUid := ctx.GetUint("userId")
+
+	// 收集列表用户ID，批量查询当前用户与他们的关系
+	targetUids := make([]uint, 0, len(relation))
+	for _, r := range relation {
+		if currentUid > 0 && currentUid != r.Uid {
+			targetUids = append(targetUids, r.Uid)
+		}
+	}
+	myRelationMap := batchFindUserRelations(currentUid, targetUids)
+
+	// 查询用户信息并填充myRelation
 	for i := 0; i < len(relation); i++ {
 		if relation[i].Relation != global.MUTUAL_FANS {
 			relation[i].Relation = global.NOT_FOLLOWING
 		}
 
 		relation[i].User = GetUserBaseInfo(relation[i].Uid)
+		if r, ok := myRelationMap[relation[i].Uid]; ok {
+			relation[i].MyRelation = r
+		}
 	}
 
 	return relation, nil
+}
+
+// 批量查询用户关系，返回 map[targetUid]relation
+func batchFindUserRelations(userId uint, targetUids []uint) map[uint]int {
+	result := make(map[uint]int)
+	if userId == 0 || len(targetUids) == 0 {
+		return result
+	}
+
+	var relations []model.Relation
+	global.Mysql.Where("uid = ? AND target_uid IN ?", userId, targetUids).Find(&relations)
+
+	for _, r := range relations {
+		result[r.TargetUid] = r.Relation
+	}
+	return result
 }
 
 // 获取关注和粉丝数

@@ -20,6 +20,8 @@ import (
 func main() {
 	env := flag.String("env", "prod", "dev/prod")
 	clearCache := flag.Bool("clear-cache", false, "是否清空所有Redis缓存")
+	// 保留 -api 仅兼容旧命令行；API 与 Casbin 规则已在 InitDefaultData→SyncApiData 中每次启动自动同步
+	_ = flag.Bool("api", false, "兼容旧参数（无额外效果）")
 	flag.Parse()
 
 	// 初始化配置文件
@@ -34,6 +36,8 @@ func main() {
 	}
 	// 初始化雪花ID
 	initialize.InitSnowflake()
+	// 初始化GPU检测
+
 	// 初始化mysql
 	global.Mysql = mysql.Init(global.Config.Mysql)
 	initialize.InitTables()

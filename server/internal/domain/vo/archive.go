@@ -4,4 +4,5 @@ package vo
 type ArchiveStatResp struct {
 	Collect int64 `json:"collect"`
 	Like    int64 `json:"like"`
+	Share   int64 `json:"share"`
 }

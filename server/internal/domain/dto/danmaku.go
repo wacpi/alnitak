@@ -1,10 +1,10 @@
 package dto
 
 type DanmakuReq struct {
-	Vid   uint
-	Part  uint
-	Time  float32 //时间
-	Type  int     //类型0滚动;1顶部;2底部
-	Color string
-	Text  string
+	Vid   uint    `json:"vid" form:"vid"`
+	Part  uint    `json:"part" form:"part"`
+	Time  float32 `json:"time" form:"time"`
+	Type  int     `json:"type" form:"type"`
+	Color string  `json:"color" form:"color"`
+	Text  string  `json:"text" form:"text"`
 }

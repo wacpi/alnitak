@@ -21,6 +21,7 @@ type StorageConfigResp struct {
 	Region   string `json:"region"`
 	Domain   string `json:"domain"`
 	Private  bool   `json:"private"`
+	UseSSL   bool   `json:"useSSL"`
 
 	UploadMp4File bool `json:"uploadMp4File"`
 }
@@ -30,4 +31,11 @@ type OtherConfigResp struct {
 	Prefix          string `json:"prefix"`
 	Generate1080p60 bool   `json:"generate1080p60"`
 	UseGpu          bool   `json:"useGpu"`
+
+	// 服务器配置
+	ServerPort   string `json:"serverPort"`
+	SslEnabled   bool   `json:"sslEnabled"`
+	SslPort      string `json:"sslPort"`
+	SslCertFile  string `json:"sslCertFile"`
+	SslKeyFile   string `json:"sslKeyFile"`
 }

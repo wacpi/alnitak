@@ -80,6 +80,19 @@ func IsVideoType(suffix string, allowedExts []string) bool {
 	return false
 }
 
+// IsAllASCIIDigits 判断字符串是否非空且每一位均为 ASCII 数字（用于区分数字主键与 shortId）。
+func IsAllASCIIDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 func FileSize(fileSize int64, count int64, targetSize int64) bool {
 	if (fileSize * count) > (targetSize * MB) {
 		return false

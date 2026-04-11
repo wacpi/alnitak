@@ -79,7 +79,7 @@ func (a *Aliyun) IsExists(objectKey string) (bool, error) {
 
 // 获取访问URL
 func (a *Aliyun) GetObjectUrl(objectKey string) string {
-	url, err := a.bucket.SignURL(objectKey, oss.HTTPGet, 1800)
+	url, err := a.bucket.SignURL(objectKey, oss.HTTPGet, 18000) // 5小时
 	if err != nil {
 		utils.ErrorLog("OSS生成文件URL失败", "transcoding", err.Error())
 		return ""

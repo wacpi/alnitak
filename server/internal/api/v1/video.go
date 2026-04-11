@@ -33,7 +33,12 @@ func UploadVideoInfo(ctx *gin.Context) {
 
 // 获取视频状态
 func GetVideoStatus(ctx *gin.Context) {
-	videoId := utils.StringToUint(ctx.Query("vid"))
+	raw := ctx.Query("vid")
+	videoId, err := service.ParseVideoID(raw)
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
 
 	video, err := service.GetVideoStatus(ctx, videoId)
 	if err != nil {
@@ -46,24 +51,33 @@ func GetVideoStatus(ctx *gin.Context) {
 }
 
 // 获取自己的视频
+// 支持按分类筛选：category=all|published|transcoding|transcode_failed|pending|rejected
 func GetUploadVideoList(ctx *gin.Context) {
 	page := utils.StringToInt(ctx.Query("page"))
 	pageSize := utils.StringToInt(ctx.Query("pageSize"))
+	category := ctx.DefaultQuery("category", "all")
 
 	if pageSize > 30 {
 		resp.FailWithMessage(ctx, "请求数量过多")
 		return
 	}
 
-	total, videos := service.GetUploadVideoList(ctx, page, pageSize)
+	total, videos := service.GetUploadVideoList(ctx, page, pageSize, category)
 
 	// 返回给前端
 	resp.OkWithData(ctx, gin.H{"total": total, "videos": videos})
 }
 
 // 获取视频信息
+// 兼容短ID和数字ID：?vid=<shortId 或 数字>
 func GetVideoById(ctx *gin.Context) {
-	vid := utils.StringToUint(ctx.DefaultQuery("vid", "0"))
+	raw := ctx.DefaultQuery("vid", "")
+
+	vid, err := service.ParseVideoID(raw)
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
 
 	video, err := service.GetVideoById(ctx, vid)
 	if err != nil {
@@ -194,11 +208,34 @@ func GetReviewList(ctx *gin.Context) {
 // 获取待审核视频资源
 func GetReviewResourceList(ctx *gin.Context) {
 	// 获取参数
-	vid := utils.StringToUint(ctx.Query("vid"))
+	raw := ctx.Query("vid")
+	vid, err := service.ParseVideoID(raw)
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
 	resources := service.GetReviewResourceList(vid)
 
+	// 查找相同文件的关联稿件（全局去重功能）
+	var relatedResources []interface{}
+	for _, r := range resources {
+		if r.FileID != 0 {
+			related := service.GetRelatedResources(r.FileID, vid)
+			if len(related) > 0 {
+				relatedResources = append(relatedResources, map[string]interface{}{
+					"resourceId":       r.ID,
+					"fileId":           r.FileID,
+					"relatedResources": related,
+				})
+			}
+		}
+	}
+
 	// 返回给前端
-	resp.OkWithData(ctx, gin.H{"resources": resources})
+	resp.OkWithData(ctx, gin.H{
+		"resources":        resources,
+		"relatedResources": relatedResources, // 相同文件的关联稿件
+	})
 }
 
 // 获取热门视频
@@ -214,6 +251,21 @@ func GetHotVideo(ctx *gin.Context) {
 	videos := service.GetHotVideo(ctx, page, pageSize)
 
 	// 返回给前端
+	resp.OkWithData(ctx, gin.H{"videos": videos})
+}
+
+// 获取最近上传的视频
+func GetLatestVideo(ctx *gin.Context) {
+	page := utils.StringToInt(ctx.Query("page"))
+	pageSize := utils.StringToInt(ctx.Query("pageSize"))
+
+	if pageSize > 30 {
+		resp.FailWithMessage(ctx, "请求数量过多")
+		return
+	}
+
+	videos := service.GetLatestVideo(ctx, page, pageSize)
+
 	resp.OkWithData(ctx, gin.H{"videos": videos})
 }
 
@@ -235,7 +287,12 @@ func GetVideoListByPartition(ctx *gin.Context) {
 
 // 获取相关推荐视频
 func GetRelatedVideoList(ctx *gin.Context) {
-	videoId := utils.StringToUint(ctx.Query("vid"))
+	raw := ctx.Query("vid")
+	videoId, err := service.ParseVideoID(raw)
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
 
 	videos := service.GetRelatedVideoList(ctx, videoId)
 
@@ -261,4 +318,55 @@ func SearchVideo(ctx *gin.Context) {
 
 	// 返回给前端
 	resp.OkWithData(ctx, gin.H{"videos": videos})
+}
+
+// 获取处理失败的视频列表（后台管理）
+func GetFailedVideoList(ctx *gin.Context) {
+	var videoListReq dto.VideoListReq
+	if err := ctx.Bind(&videoListReq); err != nil {
+		resp.FailWithMessage(ctx, "请求参数有误")
+		return
+	}
+
+	if videoListReq.PageSize > 100 {
+		resp.FailWithMessage(ctx, "请求数量过多")
+		return
+	}
+
+	total, videos := service.GetFailedVideoList(videoListReq)
+	resp.OkWithData(ctx, gin.H{"list": videos, "total": total})
+}
+
+// 获取处理中视频列表（后台管理）
+func GetProcessingVideoList(ctx *gin.Context) {
+	var videoListReq dto.VideoListReq
+	if err := ctx.Bind(&videoListReq); err != nil {
+		resp.FailWithMessage(ctx, "请求参数有误")
+		return
+	}
+
+	if videoListReq.PageSize > 100 {
+		resp.FailWithMessage(ctx, "请求数量过多")
+		return
+	}
+
+	total, videos := service.GetProcessingVideoList(videoListReq)
+	resp.OkWithData(ctx, gin.H{"list": videos, "total": total})
+}
+
+// 重新转码视频（后台管理专用）
+func ReTranscodeVideo(ctx *gin.Context) {
+	vid := utils.StringToUint(ctx.Query("vid"))
+
+	if vid == 0 {
+		resp.FailWithMessage(ctx, "视频ID不能为空")
+		return
+	}
+
+	if err := service.ReTranscodeVideo(ctx, vid); err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+
+	resp.OkWithMessage(ctx, "已触发重新转码")
 }

@@ -5,7 +5,6 @@ import (
 	"interastral-peace.com/alnitak/internal/domain/dto"
 	"interastral-peace.com/alnitak/internal/resp"
 	"interastral-peace.com/alnitak/internal/service"
-	"interastral-peace.com/alnitak/utils"
 )
 
 // 审核通过(视频)
@@ -44,7 +43,16 @@ func ReviewVideoFailed(ctx *gin.Context) {
 
 // 获取审核记录(视频)
 func GetVideoReviewRecord(ctx *gin.Context) {
-	id := utils.StringToUint(ctx.Query("vid"))
+	raw := ctx.Query("vid")
+	id, err := service.ParseVideoID(raw)
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+	if id == 0 {
+		resp.FailWithMessage(ctx, "参数有误")
+		return
+	}
 
 	review, err := service.GetVideoReviewRecord(ctx, id)
 	if err != nil {
@@ -92,7 +100,16 @@ func ReviewArticleFailed(ctx *gin.Context) {
 
 // 获取审核记录(文章)
 func GetArticleReviewRecord(ctx *gin.Context) {
-	id := utils.StringToUint(ctx.Query("aid"))
+	raw := ctx.Query("aid")
+	id, err := service.ParseArticleID(raw)
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+	if id == 0 {
+		resp.FailWithMessage(ctx, "参数有误")
+		return
+	}
 
 	review, err := service.GetArticleReviewRecord(ctx, id)
 	if err != nil {

@@ -31,7 +31,7 @@ func initVideoIds() {
 	cache.DelAllVideoId()
 
 	for {
-		if err := global.Mysql.Model(&model.Video{}).Where("status = ?", global.AUDIT_APPROVED).Offset(offset).
+		if err := global.Mysql.Model(&model.Video{}).Where("status = ? AND pgc_attached = ?", global.AUDIT_APPROVED, false).Offset(offset).
 			Limit(limit).Scan(&videos).Error; err != nil {
 			break
 		}
