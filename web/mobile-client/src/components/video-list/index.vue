@@ -1,7 +1,7 @@
 <template>
   <div class="video-list-box">
     <div class="video-list">
-      <div class="v-card" v-for="(item, index) in props.videos" @click="goToVideo(item.vid)">
+      <div class="v-card" v-for="(item, index) in props.videos" :key="item.vid + (item.shortId || '')" @click="goToVideo(item)">
         <div class="card">
           <img class="cover" :src="getResourceUrl(item.cover)" />
         </div>
@@ -14,14 +14,15 @@
 <script setup lang="ts">
 import { useRouter } from "vue-router";
 import { getResourceUrl } from '@/utils/resource';
+import { videoPathId } from '@/utils/video-route';
 
 const props = defineProps<{
   videos: Array<VideoType>
 }>();
 
 const router = useRouter();
-const goToVideo = (vid: number) => {
-  router.push({ name: "Video", params: { vid: vid } });
+const goToVideo = (item: VideoType) => {
+  router.push({ name: "Video", params: { vid: videoPathId(item) } });
 }
 </script>
 

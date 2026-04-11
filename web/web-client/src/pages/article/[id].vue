@@ -10,6 +10,7 @@
               <span class="publish-text">{{ articleInfo ? formatRelativeTime(articleInfo.createdAt) : '' }}</span>
               <span>{{ articleInfo?.clicks }}浏览</span> ·
               <span>{{ likeCount }}喜欢</span> ·
+              <span>{{ shareCount }}分享</span> ·
               <span>{{ commentCount }}评论</span>
             </div>
           </div>
@@ -72,6 +73,7 @@ const getSanitizeHtml = (val: string = "") => {
 }
 
 const likeCount = ref(0);
+const shareCount = ref(0);
 const commentCount = ref(0);
 const updateCommentCount = (val: number) => {
   commentCount.value = val;
@@ -83,6 +85,7 @@ const getArchiveStat = async () => {
   if (res.data.code === statusCode.OK) {
     if (res.data.data.stat) {
       likeCount.value = res.data.data.stat.like;
+      shareCount.value = res.data.data.stat.share || 0;
     }
   }
 }

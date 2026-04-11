@@ -101,16 +101,17 @@ const goLogin = () => {
 // 发送验证码
 const disabledSend = ref(false);//禁用发送按钮
 const sendBtnText = ref('发送验证码');//发送按钮文字
-const startCountdown = () => {
-  let count = 0;
+const startCountdown = (seconds: number) => {
+  let remaining = seconds;
+  sendBtnText.value = `${remaining}秒`;
   let tag = setInterval(() => {
-    if (++count >= 60) {
+    if (--remaining <= 0) {
       clearInterval(tag);
       disabledSend.value = false;
       sendBtnText.value = '发送验证码';
       return;
     }
-    sendBtnText.value = `${60 - count}秒`;
+    sendBtnText.value = `${remaining}秒`;
   }, 1000);
 }
 const sendEmailCode = async () => {
@@ -120,9 +121,9 @@ const sendEmailCode = async () => {
   const res = await sendEmailCodeAPI(registerForm);
   switch (res.data.code) {
     case statusCode.OK:
-      //开启倒计时
-      startCountdown();
-      message.success('发送成功');
+      //开启倒计时，使用后端返回的冷却时间
+      startCountdown(res.data.data.countdown || 60);
+      message.success(res.data.msg || '发送成功');
       break;
     case statusCode.CAPTCHA_REQUIRED:
       captchaTrigger = "code";
@@ -131,8 +132,13 @@ const sendEmailCode = async () => {
       disabledSend.value = false;
       break;
     case statusCode.FAIL:
-      disabledSend.value = false;
-      sendBtnText.value = '发送验证码';
+      //如果后端返回了冷却时间（发送过于频繁），开启倒计时
+      if (res.data.data?.countdown) {
+        startCountdown(res.data.data.countdown);
+      } else {
+        disabledSend.value = false;
+        sendBtnText.value = '发送验证码';
+      }
       message.error(res.data.msg);
       break;
     default:

@@ -46,3 +46,8 @@ export const getRandomArticleAPI = async (size: number) => {
 export const deleteArticleAPI = (id: number) => {
   return request.delete(`v1/article/deleteArticle/${id}`);
 }
+
+// 搜索专栏
+export const searchArticleAPI = (data: SearchKeywordPageType) => {
+  return request.post('v1/article/searchArticle', data);
+};

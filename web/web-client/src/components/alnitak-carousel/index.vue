@@ -250,7 +250,7 @@ onBeforeMount(async () => {
   
   .carousel-img {
     width: 100%;
-    height: 320px;
+    height: 100%;
     object-fit: cover;
     display: block;
   }

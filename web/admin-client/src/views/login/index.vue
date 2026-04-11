@@ -13,13 +13,16 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue';
 import LoginForm from './component/LoginForm.vue';
 import useUserStore from '@/stores/modules/user-store';
 import { useTheme } from '@/hooks/theme-hooks';
 import { globalConfig } from '@/utils/global-config';
 
-const { theme } = useTheme();
+const { theme, themeName } = useTheme();
 const { login } = useUserStore();
+
+const isDark = computed(() => themeName.value === 'dark');
 
 const loginSuccess = () => {
   login();
@@ -48,6 +51,8 @@ const loginSuccess = () => {
   .login-right {
     width: 50%;
     height: 100%;
+    background-color: v-bind("isDark ? '#18181c' : '#fff'");
+    transition: background-color 0.3s;
   }
 }
 
@@ -60,8 +65,9 @@ const loginSuccess = () => {
     display: block;
     width: 100%;
     margin: 20px 0;
-    color: var(--title-color);
+    color: v-bind("isDark ? '#fff' : '#333'");
     font-size: 28px;
+    transition: color 0.3s;
   }
 }
 </style>

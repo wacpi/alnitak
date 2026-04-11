@@ -24,7 +24,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="item in banList">
+            <tr v-for="item in banList" :key="item.id">
               <td>{{ formatTime(item.createdAt) }}</td>
               <td>{{ formatDate(item.endTime) }}</td>
               <td>{{ item.reason }}</td>
@@ -41,7 +41,7 @@
         <n-button class="btn" type="primary" @click="closeDrawer">完成</n-button>
       </template>
     </n-drawer-content>
-    <ban-modal v-model:visible="visibleBanModal" :uid="props.data.uid"></ban-modal>
+    <ban-modal v-if="props.data" v-model:visible="visibleBanModal" :uid="props.data.uid"></ban-modal>
   </n-drawer>
 </template>
 
@@ -141,7 +141,7 @@ watch(() => props.visible, (newVal) => {
 })
 
 watch(() => visibleBanModal.value, (newVal) => {
-  if (!newVal) {
+  if (!newVal && props.data) {
     getBanResourceList(props.data.uid);
   }
 })

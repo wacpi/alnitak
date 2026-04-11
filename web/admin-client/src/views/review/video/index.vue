@@ -109,16 +109,23 @@ const columns: DataTableColumns<VideoType> = [
 const tableData = ref<VideoType[]>([]);
 const getTableData = async () => {
   startLoading();
-  const page = pagination.page || 1;
-  const pageSize = pagination.pageSize || 1;
-  const res = await getReviewListAPI({ page, pageSize });
-  if (res.data.code === statusCode.OK) {
-    if (res.data.data.list) {
-      tableData.value = res.data.data.list;
-    } else {
-      tableData.value = [];
+  try {
+    const page = pagination.page || 1;
+    const pageSize = pagination.pageSize || 1;
+    const res = await getReviewListAPI({ page, pageSize });
+    if (res.data.code === statusCode.OK) {
+      tableData.value = res.data.data.list || [];
+      pagination.itemCount = res.data.data.total;
+      return;
     }
-    pagination.itemCount = res.data.data.total;
+    tableData.value = [];
+    pagination.itemCount = 0;
+    message.error(res.data.msg || '获取审核列表失败');
+  } catch {
+    tableData.value = [];
+    pagination.itemCount = 0;
+    message.error('获取审核列表失败');
+  } finally {
     endLoading();
   }
 }

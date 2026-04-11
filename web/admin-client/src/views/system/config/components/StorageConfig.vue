@@ -1,6 +1,6 @@
 <template>
-  <div class="database">
-    <n-scrollbar :style="{ maxHeight: '550px' }">
+  <div class="config-container">
+    <n-scrollbar class="config-scrollbar">
       <n-form class="form" :model="storageForm" label-width="auto">
         <n-form-item label="最大图片文件大小(MB)">
           <n-input-number placeholder="文件域名" v-model:value="storageForm.maxImgSize" />
@@ -42,6 +42,10 @@
         <!-- 显示"是否私有"开关，只在存储策略不为本地时展示 -->
         <n-form-item v-show="storageForm.type !== 'local'" label="是否私有">
           <n-switch v-model:value="storageForm.private"></n-switch>
+        </n-form-item>
+        <!-- 是否使用HTTPS连接OSS -->
+        <n-form-item v-show="storageForm.type !== 'local'" label="使用HTTPS连接OSS">
+          <n-switch v-model:value="storageForm.useSSL"></n-switch>
         </n-form-item>
         <!-- 新增的区域填写项 -->
         <n-form-item v-show="storageForm.type === 'qiniu'" label="七牛云存储桶地区">
@@ -112,6 +116,7 @@ const storageForm = reactive({
   region: "",
   domain: "",
   private: false,
+  useSSL: false,
   uploadMp4File: false,
 });
 
@@ -129,6 +134,7 @@ const getStorageConfig = async () => {
     storageForm.region = resData.region;
     storageForm.domain = resData.domain;
     storageForm.private = resData.private;
+    storageForm.useSSL = resData.useSSL;
     storageForm.uploadMp4File = resData.uploadMp4File;
   } else {
     message.error("读取配置失败");
@@ -192,8 +198,18 @@ onBeforeMount(() => {
 </script>
 
 <style lang="scss" scoped>
+.config-container {
+  height: calc(100vh - 280px);
+  min-height: 400px;
+}
+
+.config-scrollbar {
+  height: 100%;
+}
+
 .form {
   padding: 20px;
+  padding-bottom: 40px;
 }
 
 .submit {

@@ -7,12 +7,40 @@
       </div>
       <div class="home-right" :style="`margin-left: ${menuFold ? '50px' : '220px'};`">
         <div class="home-recommended" :class="menuFold ? 'recommended-fold' : ''">
-          <div class="recommended-carousel">
-            <client-only>
-              <HomeCarousel></HomeCarousel>
-            </client-only>
+          <div class="recommended-top">
+            <div class="recommended-carousel">
+              <div class="recommended-carousel-inner">
+                <client-only>
+                  <HomeCarousel></HomeCarousel>
+                </client-only>
+              </div>
+            </div>
+            <div class="recommended-side" :class="menuFold ? 'side-fold' : ''">
+              <video-item v-for="item in videoList.slice(0, menuFold ? 6 : 4)" :info="item"></video-item>
+            </div>
           </div>
-          <video-item v-for="item in videoList" :info="item"></video-item>
+          <div class="tab-bar">
+            <span class="tab-item" :class="{ active: activeTab === 'hot' }" @click="switchTab('hot')">热门推荐</span>
+            <span class="tab-item" :class="{ active: activeTab === 'latest' }" @click="switchTab('latest')">最近投稿</span>
+          </div>
+          <div class="pgc-section" :class="menuFold ? 'pgc-section-fold' : ''">
+            <div class="pgc-grid">
+              <div class="pgc-item" v-for="item in pgcList" :key="item.pgc_id">
+                <div class="pgc-cover-wrap">
+                  <img class="pgc-cover" :src="getResourceUrl(item.cover)" :alt="item.title" />
+                  <span class="pgc-badge" v-if="item.badge">{{ item.badge }}</span>
+                </div>
+                <div class="pgc-meta">
+                  <div class="pgc-item-title">{{ item.title }}</div>
+                  <div class="pgc-item-ep" v-if="item.new_ep?.index_show">{{ item.new_ep.index_show }}</div>
+                  <div class="pgc-item-ep" v-else-if="item.current_episodes">更新至 {{ item.current_episodes }} 集</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="recommended-grid" :class="menuFold ? 'grid-fold' : ''">
+            <video-item v-for="item in videoList.slice(menuFold ? 6 : 4)" :info="item"></video-item>
+          </div>
         </div>
       </div>
     </div>
@@ -25,7 +53,9 @@ import VideoItem from '@/components/home-video-item/index.vue';
 import HomeSidebar from '@/components/home-sidebar/index.vue';
 import HomeHeader from "@/components/home-header/index.vue";
 import HomeCarousel from '@/components/alnitak-carousel/index.vue';
-import { asyncGetHotVideoAPI, getHotVideoAPI } from "@/api/video";
+import { asyncGetHotVideoAPI, getHotVideoAPI, getLatestVideoAPI } from "@/api/video";
+import { asyncGetPGCRecommendAPI, getPGCRecommendAPI } from "@/api/pgc";
+import { getResourceUrl } from "@/utils/resource";
 
 useHead({
   title: globalConfig.title
@@ -36,28 +66,82 @@ const changeMenuFold = (val: boolean) => {
   menuFold.value = val;
 }
 
-// 获取分区
+// 客户端挂载后同步折叠状态
+onMounted(() => {
+  try {
+    const saved = localStorage.getItem('menu-fold-state');
+    if (saved === 'true') {
+      menuFold.value = true;
+    }
+  } catch {}
+});
+
+// 当前选项卡
+const activeTab = ref<'hot' | 'latest'>('hot');
 const page = ref(1);
-const pageSize = 10;
+const pageSize = 16;
 const videoList = ref<VideoType[]>([])
 const { data } = await asyncGetHotVideoAPI(page.value, pageSize);
 if ((data.value as any).code === statusCode.OK) {
   videoList.value = (data.value as any).data.videos;
 }
 
+const pgcPage = ref(1);
+const pgcPageSize = 8;
+const pgcList = ref<PGCRecommendItem[]>([]);
+const { data: pgcData } = await asyncGetPGCRecommendAPI({
+  page: pgcPage.value,
+  pageSize: pgcPageSize,
+  scene: 'home',
+});
+if ((pgcData.value as any).code === statusCode.OK) {
+  pgcList.value = (pgcData.value as any).data.list || [];
+}
+
 const noMore = ref(false);
 const loading = ref(false);
-const getViedeoList = async () => {
+const pgcLoading = ref(false);
+
+const fetchVideoList = async (append = true) => {
   loading.value = true;
-  const res = await getHotVideoAPI(page.value, pageSize);
+  const res = activeTab.value === 'hot'
+    ? await getHotVideoAPI(page.value, pageSize)
+    : await getLatestVideoAPI(page.value, pageSize);
   if (res.data.code === statusCode.OK) {
     if (res.data.data.videos) {
-      videoList.value = videoList.value.concat(res.data.data.videos);
+      videoList.value = append ? videoList.value.concat(res.data.data.videos) : res.data.data.videos;
     } else {
       noMore.value = true;
     }
   }
   loading.value = false;
+}
+
+const switchTab = async (tab: 'hot' | 'latest') => {
+  if (activeTab.value === tab) return;
+  activeTab.value = tab;
+  page.value = 1;
+  noMore.value = false;
+  videoList.value = [];
+  await fetchVideoList(false);
+}
+
+const getViedeoList = () => fetchVideoList(true);
+
+const refreshPGCList = async () => {
+  pgcLoading.value = true;
+  try {
+    const res = await getPGCRecommendAPI({
+      page: 1,
+      pageSize: pgcPageSize,
+      scene: 'home',
+    });
+    if (res.data.code === statusCode.OK) {
+      pgcList.value = res.data.data.list || [];
+    }
+  } finally {
+    pgcLoading.value = false;
+  }
 }
 
 const lazyLoading = (e: Event) => {
@@ -76,6 +160,7 @@ const lazyLoading = (e: Event) => {
 
 onMounted(() => {
   window.addEventListener('scroll', lazyLoading, true);
+  refreshPGCList();
 })
 
 onBeforeUnmount(() => {
@@ -123,22 +208,155 @@ onBeforeUnmount(() => {
 }
 
 .home-recommended {
-  display: grid;
   margin-left: 20px;
   width: calc(100% - 50px);
-  gap: 0 16px;
-  grid-template-columns: repeat(4, 1fr);
   overflow: hidden;
+}
 
+.recommended-top {
+  display: flex;
+  align-items: stretch;
+  gap: 16px;
+
+  /* 与右侧两列视频总高度对齐，避免轮播底部留空；不设死高，避免整体过高 */
   .recommended-carousel {
-    height: 420px;
-    grid-row: 1/ span 2;
-    grid-column: 1/ span 2;
+    flex: 2;
+    min-width: 0;
+    /* 行业常用：响应式高度 + 上限，避免轮播过高 */
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .recommended-carousel-inner {
+    height: clamp(220px, 26vw, 890px);
+    position: relative;
+    border-radius: 9px;
+    overflow: hidden;
+  }
+
+  .recommended-carousel-inner :deep(.carousel-area) {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  .recommended-side {
+    flex: 2;
+    min-width: 0;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+    align-content: start;
+  }
+
+  .side-fold {
+    flex: 3;
+    grid-template-columns: repeat(3, 1fr);
   }
 }
 
-.recommended-fold {
-  max-height: 780px;
+.tab-bar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  margin-top: 20px;
+  padding-bottom: 12px;
+
+  .tab-item {
+    font-size: 15px;
+    color: var(--font-primary-3);
+    cursor: pointer;
+    padding-bottom: 8px;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+
+    &:hover {
+      color: var(--font-primary-1);
+    }
+
+    &.active {
+      color: var(--primary-color);
+      font-weight: 600;
+      border-bottom-color: var(--primary-color);
+    }
+  }
+}
+
+.recommended-grid {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.pgc-section {
+  margin-top: 16px;
+  padding: 4px 0 0;
+
+  .pgc-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+  }
+
+  .pgc-item {
+    background: var(--bg-elev-1);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  .pgc-cover-wrap {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    background: rgba(0, 0, 0, .2);
+  }
+
+  .pgc-cover {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .pgc-badge {
+    position: absolute;
+    right: 8px;
+    top: 8px;
+    background: rgba(0, 0, 0, .65);
+    color: #fff;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+  }
+
+  .pgc-meta {
+    padding: 10px;
+  }
+
+  .pgc-item-title {
+    font-size: 14px;
+    line-height: 20px;
+    color: var(--font-primary-1);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .pgc-item-ep {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--font-primary-3);
+  }
+}
+
+.pgc-section-fold .pgc-grid {
+  grid-template-columns: repeat(5, 1fr);
+}
+
+.grid-fold {
   grid-template-columns: repeat(5, 1fr);
 }
 </style>

@@ -7,7 +7,12 @@
       </div>
       <div class="home-right">
         <div class="home-recommended">
-          <ul class="article-list">
+          <!-- 空状态提示 -->
+          <div v-if="!articleList || articleList.length === 0" class="empty-state">
+            <el-empty description="暂无专栏文章" />
+          </div>
+          <!-- 文章列表 -->
+          <ul v-else class="article-list">
             <li class="article-item" v-for="(item, index) in articleList" :key="index">
               <nuxt-link class="content-wrapper" :to="`/article/${item.aid}`" target="_blank">
                 <div class="content-main">
@@ -29,6 +34,8 @@
               </nuxt-link>
             </li>
           </ul>
+          <!-- 加载提示 -->
+          <div v-if="loading" class="loading-tip">加载中...</div>
         </div>
       </div>
     </div>
@@ -50,6 +57,16 @@ const menuFold = ref(false);
 const changeMenuFold = (val: boolean) => {
   menuFold.value = val;
 }
+
+// 客户端挂载后同步折叠状态
+onMounted(() => {
+  try {
+    const saved = localStorage.getItem('menu-fold-state');
+    if (saved === 'true') {
+      menuFold.value = true;
+    }
+  } catch {}
+});
 
 // 获取分区
 const size = 10;
@@ -139,6 +156,22 @@ onBeforeUnmount(() => {
   width: calc(100% - 32px);
 }
 
+.empty-state {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 400px;
+  background-color: var(--bg-elev-1);
+  border-radius: 4px;
+}
+
+.loading-tip {
+  text-align: center;
+  padding: 20px 0;
+  color: var(--font-primary-3);
+  font-size: 14px;
+}
+
 .article-list {
   list-style: none;
   box-sizing: border-box;
@@ -149,7 +182,7 @@ onBeforeUnmount(() => {
 
   .article-item {
     height: 110px;
-  padding: 0 20px 0;
+    padding: 0 20px 0;
     box-sizing: border-box;
   }
 }
@@ -177,6 +210,7 @@ onBeforeUnmount(() => {
       text-overflow: ellipsis;
       -webkit-box-orient: vertical;
       -webkit-line-clamp: 1;
+      line-clamp: 1;
     }
 
     .abstract {
@@ -191,6 +225,7 @@ onBeforeUnmount(() => {
       text-overflow: ellipsis;
       -webkit-box-orient: vertical;
       -webkit-line-clamp: 2;
+      line-clamp: 2;
     }
 
     .entry-footer {
@@ -237,7 +272,7 @@ onBeforeUnmount(() => {
           max-width: 76px;
           box-sizing: border-box;
           margin-left: 6px;
-          color: #8a919f;
+          color: var(--font-primary-3);
           text-overflow: ellipsis;
           overflow: hidden;
           white-space: nowrap;
@@ -254,9 +289,9 @@ onBeforeUnmount(() => {
     width: 108px;
     height: 72px;
     margin: 12px 0 0 24px;
-    background-color: #fff;
+    background-color: var(--bg-elev-1);
     border-radius: 4px;
-    border: 1px solid rgba(228, 230, 235, 0.5);
+    border: 1px solid var(--border-color);
   }
 }
 </style>

@@ -1,16 +1,18 @@
 <template>
   <div class="upload-cover">
-    <el-upload drag multiple :show-file-list="false" :before-upload="beforeUploadCover" @change="fileChange">
-      <img v-if="currentCover" :src="getResourceUrl(currentCover)" class="cover" alt="封面" />
-      <el-progress v-else-if="uploading" type="circle" :percentage="percent" />
-      <div class="upload-tips" v-else>
-        <div class="tips-icon">
-          <upload-icon size="48"></upload-icon>
+    <client-only>
+      <el-upload drag multiple action="#" :show-file-list="false" :auto-upload="false" :before-upload="beforeUploadCover" @change="fileChange">
+        <img v-if="currentCover" :src="getResourceUrl(currentCover)" class="cover" alt="封面" />
+        <el-progress v-else-if="uploading" type="circle" :percentage="percent" />
+        <div class="upload-tips" v-else>
+          <div class="tips-icon">
+            <upload-icon size="48"></upload-icon>
+          </div>
+          <p class="upload-title">点击或拖拽图片到此处上传封面</p>
+          <p class="upload-limit">上传文件大小需小于{{ globalConfig.maxImgSize }}M,仅支持.jpg .jpeg .png格式文件</p>
         </div>
-        <p class="upload-title">点击或拖拽图片到此处上传封面</p>
-        <p class="upload-limit">上传文件大小需小于{{ globalConfig.maxImgSize }}M,仅支持.jpg .jpeg .png格式文件</p>
-      </div>
-    </el-upload>
+      </el-upload>
+    </client-only>
 
     <image-cropper ref="cropperRef">
       <template #content="fileSlot">
@@ -21,7 +23,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { isUrl } from "@/utils/verify";
 import { globalConfig } from "@/utils/global-config";
@@ -35,6 +37,13 @@ const props = defineProps<{
 }>()
 
 const currentCover = ref(props.cover);
+
+// 监听props.cover的变化，更新currentCover
+watch(() => props.cover, (newCover) => {
+  if (newCover !== undefined) {
+    currentCover.value = newCover;
+  }
+}, { immediate: true });
 
 const percent = ref(0);//上传百分比
 const uploading = ref(false);//是否上传中
@@ -90,18 +99,17 @@ const changeUpload = (status: string, data: any) => {
     padding: 24px;
 
     .tips-icon {
-      color: #000;
-      opacity: 0.38;
+      color: var(--font-primary-3, #000);
       margin-bottom: 12px;
     }
 
     .upload-title {
-      color: #333639;
+      color: var(--font-primary-1, #333639);
       font-size: 16px
     }
 
     .upload-limit {
-      color: #767c82;
+      color: var(--font-primary-3, #767c82);
       font-size: 14px;
       margin: 8px 0 0 0;
     }

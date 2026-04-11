@@ -24,7 +24,7 @@ import HeaderBar from '@/components/header-bar/index.vue';
 import VideoIcon from "@/components/icons/VideoIcon.vue";
 import CommentIcon from "@/components/icons/CommentIcon.vue";
 import UploadIcon from "@/components/icons/UploadIcon.vue";
-import { Editor as EditorIcon, Inbox } from '@icon-park/vue-next';
+import { Editor as EditorIcon, Inbox, ListTwo as ListIcon } from '@icon-park/vue-next';
 
 useHead({
   title: `创作中心 - ${globalConfig.title}`
@@ -67,6 +67,13 @@ const menuList = [
     to: '/upload/article-manage',
     show: globalConfig.article,
     icon: Inbox,
+  },
+  {
+    key: 'upload-playlist-manage',
+    name: '合集管理',
+    to: '/upload/playlist-manage',
+    show: true,
+    icon: ListIcon,
   },
   {
     key: 'upload-comment-manage',

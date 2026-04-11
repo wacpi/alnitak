@@ -6,7 +6,12 @@ import { globalConfig } from "./src/utils/global-config";
 
 export default defineConfig({
   plugins: [
-    vue(),
+    vue({
+      script: {
+        defineModel: true,
+        propsDestructure: true,
+      },
+    }),
   ],
   base: `/${globalConfig.baseUrl}`,
   build: {
@@ -17,5 +22,8 @@ export default defineConfig({
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url))
     }
-  }
+  },
+  define: {
+    __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: 'false',
+  },
 })

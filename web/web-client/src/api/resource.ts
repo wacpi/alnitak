@@ -9,3 +9,18 @@ export const modifyTitleAPI = (resourceTitle: BaseResourceType) => {
 export const deleteResourceAPI = (id: number) => {
   return request.delete(`v1/resource/deleteResource/${id}`);
 }
+
+//检查资源是否需要替换（比较hash）
+export const checkReplaceResourceAPI = (resourceId: number, hash: string) => {
+  return request.post('v1/resource/checkReplace', { resourceId, hash });
+}
+
+//替换资源
+export const replaceResourceAPI = (resourceId: number, hash: string) => {
+  return request.post('v1/resource/replaceResource', { resourceId, hash });
+}
+
+//资源排序
+export const reorderResourceAPI = (vid: number, resourceIds: number[]) => {
+  return request.put('v1/resource/reorder', { vid, resourceIds });
+}

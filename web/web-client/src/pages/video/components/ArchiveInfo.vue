@@ -8,7 +8,7 @@
       <p>{{ stat.like }}</p>
     </div>
     <div class="archive-item">
-      <el-icon :class="archive.hasCollect ? 'active' : 'icon'" @click="showCollect = true">
+      <el-icon :class="archive.hasCollect ? 'active' : 'icon'" @click="collectClick">
         <collect-icon></collect-icon>
       </el-icon>
       <p>{{ stat.collect }}</p>
@@ -18,6 +18,7 @@
       <el-icon class="icon">
         <share-icon></share-icon>
       </el-icon>
+      <p>{{ stat.share }}</p>
       <div class="share-popover">
         <div class="share-popover-content">
           <el-tabs v-model="shareTab">
@@ -42,26 +43,30 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onBeforeMount, computed, reactive } from 'vue';
-import { ElIcon, ElMessage } from 'element-plus';
+import { ref, onBeforeMount, computed, reactive, watch } from 'vue';
+import { ElIcon } from 'element-plus';
 import { useRoute } from 'vue-router';
 import { statusCode } from '@/utils/status-code';
+import { requireLogin } from '@/utils/require-login';
+import { useAuthStore } from '@/stores/auth-store';
 import LikeIcon from "@/components/icons/LikeIcon.vue";
 import CollectIcon from "@/components/icons/CollectIcon.vue";
 import ShareIcon from '@/components/icons/ShareIcon.vue';
-import { getVideoArchiveStatAPI } from "@/api/archive";
+import { getVideoArchiveStatAPI, shareVideoAPI } from "@/api/archive";
 import { getLikeVideoStatusAPI, likeVideoAPI, cancelLikeVideoAPI } from "@/api/like";
 import { getCollectVideoStatusAPI } from '@/api/collect';
 import CollectionList from './CollectionList.vue';
 
 const props = defineProps<{
   vid: number;
+  shortId?: string;
 }>();
 
 // 点赞收藏数据
-const stat = ref<{ like: number, collect: number }>({
+const stat = ref<{ like: number, collect: number, share: number }>({
   like: 0,
-  collect: 0
+  collect: 0,
+  share: 0
 });
 
 const loading = ref(true);
@@ -69,6 +74,19 @@ const archive = reactive({ // 是否点赞收藏
   hasCollect: false,
   hasLike: false
 })
+
+const auth = useAuthStore();
+
+const refreshViewerStatus = async () => {
+  if (!auth.isLoggedIn) {
+    archive.hasLike = false;
+    archive.hasCollect = false;
+    showCollect.value = false;
+    return;
+  }
+  await getLikeStatus();
+  await getCollectStatus();
+};
 
 // 分享相关
 const shareTab = ref('link');
@@ -85,7 +103,8 @@ const route = useRoute();
 const embedCode = computed(() => {
   if (process.client) {
     const part = Number(route.query.p) || 1;
-    const url = window.location.origin + `/embed/video/${props.vid}` + (part > 1 ? `?p=${part}` : '');
+    const v = props.shortId || String(props.vid);
+    const url = window.location.origin + `/embed/watch?v=${v}` + (part > 1 ? `&p=${part}` : '');
     return `<iframe src='${url}' width='800' height='450' frameborder='0' allowfullscreen></iframe>`;
   }
   return '';
@@ -114,8 +133,12 @@ const copyText = async (text: string, msg: string) => {
   }
 };
 
-const copyUrl = () => copyText(shareUrl.value, '播放地址已复制');
-const copyEmbed = () => copyText(embedCode.value, '嵌入代码已复制');
+const doShare = async () => {
+  await shareVideoAPI(props.vid);
+  stat.value.share++;
+};
+const copyUrl = () => { copyText(shareUrl.value, '播放地址已复制'); doShare(); };
+const copyEmbed = () => { copyText(embedCode.value, '嵌入代码已复制'); doShare(); };
 
 //获取点赞收藏关注信息
 const getArchiveStat = async () => {
@@ -144,6 +167,7 @@ const getCollectStatus = async () => {
 const likeAnimation = ref('');
 const likeClick = async () => { // 点赞点赞按钮
   if (loading.value) return;
+  if (!(await requireLogin('点赞'))) return;
   if (!archive.hasLike) {
     //调用点赞接口
     await likeVideoAPI(props.vid);
@@ -159,6 +183,11 @@ const likeClick = async () => { // 点赞点赞按钮
 
 
 const showCollect = ref(false);
+const collectClick = async () => {
+  if (loading.value) return;
+  if (!(await requireLogin('收藏'))) return;
+  showCollect.value = true;
+};
 // 关闭收藏弹窗
 const closeCollectionCard = (val: number) => {
   if (val === 1) {
@@ -174,11 +203,18 @@ const closeCollectionCard = (val: number) => {
 
 onBeforeMount(async () => {
   await getArchiveStat();
-  await getLikeStatus();
-  await getCollectStatus();
+  await refreshViewerStatus();
 
   loading.value = false;
 })
+
+watch(
+  () => auth.isLoggedIn,
+  async () => {
+    if (loading.value) return;
+    await refreshViewerStatus();
+  }
+);
 </script>
 
 <style lang="scss" scoped>

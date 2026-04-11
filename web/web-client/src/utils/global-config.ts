@@ -1,6 +1,6 @@
 const title = "anime弹幕";
-const https = false;
-const domain = "127.0.0.1:9000";
+const https = true;
+const domain = "anime.ayypd.cn:9001";
 const mobile = "/mobile/";
 const icp = "icp备案信息";
 const security = "公网安备信息";
@@ -10,7 +10,7 @@ const article = true; // 是否开启专栏模块
 
 //上传文件大小限制，需要先修改后端大小限制
 const maxImgSize = 5;//上传图片最大大小(单位M)
-const maxVideoSize = 4096;//上传视频最大大小(单位M)
+const maxVideoSize = 12050;//上传视频最大大小(单位M)
 
 export const globalConfig = {
     title: title,

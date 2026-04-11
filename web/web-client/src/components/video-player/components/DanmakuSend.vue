@@ -75,11 +75,13 @@ import { ref, reactive } from "vue";
 import BaseSlider from "@/components/base-slider/index.vue";
 import TextIcon from "@/components/icons/TextIcon.vue";
 import { SettingConfig } from "@icon-park/vue-next";
+import { requireLogin } from "@/utils/require-login";
 
 const emit = defineEmits(["changeShow", "opacityChange", "send", "setFilter"]);
 const props = defineProps<{
   disableLeave?: number
   disableType?: number[]
+  isLoggedIn?: boolean
 }>()
 
 const danmakuForm = reactive<DrawDanmakuType>({
@@ -165,6 +167,10 @@ const changeShow = (val: boolean | string | number) => {
 
 //发送弹幕
 const sendDanmaku = () => {
+  if (props.isLoggedIn === false) {
+    requireLogin('发送弹幕');
+    return;
+  }
   // 保证颜色有 # 前缀
   if (!danmakuForm.color.startsWith('#')) {
     danmakuForm.color = `#${danmakuForm.color}`;

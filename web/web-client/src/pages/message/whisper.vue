@@ -206,9 +206,9 @@ let SocketURL = "";
 let websocket: WebSocket | null = null;
 //初始化weosocket
 const initWebSocket = async () => {
-  const wsProtocol = window.location.protocol === 'http:' ? 'ws://' : 'wss://';
-  const domain = globalConfig.domain || window.location.host;
-  SocketURL = `${wsProtocol}${domain}/api/v1/message/ws?token=${storageData.get("token")}`;
+  // 始终使用当前页面的 host，走前端代理，避免暴露后端地址
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+  SocketURL = `${wsProtocol}${window.location.host}/api/v1/message/ws?token=${storageData.get("token")}`;
   websocket = new WebSocket(SocketURL);
   websocket.onmessage = websocketOnmessage;
 }

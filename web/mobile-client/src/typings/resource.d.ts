@@ -1,5 +1,6 @@
 interface BaseResourceType {
   id: number;
+  shortId?: string;
   title: string;
 }
 

@@ -4,9 +4,7 @@ import { updateTokenAPI } from "@/api/auth";
 import { statusCode } from "./status-code";
 import { globalConfig as config, } from "./global-config";
 import { storageData as storage } from "./storage-data";
-import { useRouter } from "vue-router";
-
-const router = useRouter();
+import router from "@/router";
 
 let requests: any[] = [];
 let isRefreshing = false;
@@ -21,12 +19,12 @@ const service: AxiosInstance = axios.create({
 
 //请求拦截器
 service.interceptors.request.use(async (config) => {
-  //如果为刷新token的请求则不拦截
-  if (config.url === "v1/auth/updateToken") return config;
+  //登录、注册、刷新token等不需要鉴权的请求不拦截
+  if (config.url?.startsWith("v1/auth/")) return config;
   if (storage.get('token')) {
     config.headers.Authorization = storage.get('token');
   } else {
-    //如果没有accessToken且有refreshTokenoken
+    //如果没有accessToken且有refreshToken
     const localRefreshToken = storage.get('refreshToken')
     if (localRefreshToken) {
       // 只发送一次刷新token请求
@@ -50,6 +48,13 @@ service.interceptors.request.use(async (config) => {
             requests = []
           }
           return config;
+        } else {
+          // refreshToken 刷新失败，清理并跳转登录
+          storage.remove("token");
+          storage.remove('refreshToken');
+          requests = [];
+          router.push({ name: "login" });
+          return Promise.reject(new Error('登录已过期'));
         }
       } else {
         const token = storage.get('token');
@@ -66,6 +71,10 @@ service.interceptors.request.use(async (config) => {
           })
         }
       }
+    } else {
+      // 没有 token 也没有 refreshToken，跳转登录
+      router.push({ name: "login" });
+      return Promise.reject(new Error('未登录'));
     }
   }
   return config;
@@ -97,6 +106,12 @@ service.interceptors.response.use(async (res) => {
               requests = []
             }
             return service.request(res.config);
+          } else {
+            // refreshToken 刷新失败，跳转登录
+            storage.remove("token");
+            storage.remove('refreshToken');
+            requests = [];
+            router.push({ name: "login" });
           }
         } else {
           const token = storage.get('token');
@@ -113,6 +128,10 @@ service.interceptors.response.use(async (res) => {
             })
           }
         }
+      } else {
+        // 没有 refreshToken，直接跳转登录
+        storage.remove("token");
+        router.push({ name: "login" });
       }
       break;
     case statusCode.LOGIN_AGAIN:

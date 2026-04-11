@@ -8,9 +8,11 @@
       <div class="home-right" :style="`margin-left: ${menuFold ? '50px' : '220px'};`">
         <div class="home-recommended" :class="menuFold ? 'recommended-fold' : ''">
           <div class="recommended-carousel">
-            <client-only>
-              <HomeCarousel :partition-id="partitionId"></HomeCarousel>
-            </client-only>
+            <div class="recommended-carousel-inner">
+              <client-only>
+                <HomeCarousel :partition-id="partitionId"></HomeCarousel>
+              </client-only>
+            </div>
           </div>
           <video-item v-for="item in videoList" :info="item"></video-item>
         </div>
@@ -36,6 +38,16 @@ const menuFold = ref(false);
 const changeMenuFold = (val: boolean) => {
   menuFold.value = val;
 }
+
+// 客户端挂载后同步折叠状态
+onMounted(() => {
+  try {
+    const saved = localStorage.getItem('menu-fold-state');
+    if (saved === 'true') {
+      menuFold.value = true;
+    }
+  } catch {}
+});
 
 // 获取分区
 const size = 10;
@@ -127,14 +139,32 @@ onBeforeUnmount(() => {
   overflow: hidden;
 
   .recommended-carousel {
-    height: 420px;
+    /* 行业常用：响应式高度 + 上限，避免轮播过高 */
+    min-height: 0;
     grid-row: 1/ span 2;
     grid-column: 1/ span 2;
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .recommended-carousel-inner {
+    height: clamp(220px, 26vw, 890px);
+    position: relative;
+    border-radius: 9px;
+    overflow: hidden;
+  }
+
+  .recommended-carousel-inner :deep(.carousel-area) {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
   }
 }
 
 .recommended-fold {
-  max-height: 780px;
   grid-template-columns: repeat(5, 1fr);
 }
 </style>

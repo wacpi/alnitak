@@ -17,6 +17,7 @@
   "dependencies": {
     "artplayer": "^5.2.3",
     "artplayer-plugin-danmuku": "^5.1.6",
-    "hls.js": "^1.6.5"
+    "hls.js": "^1.6.5",
+    "oh-my-opencode-windows-x64": "^3.1.3"
   }
 }

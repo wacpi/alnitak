@@ -12,17 +12,24 @@ export default function usePartition(partitionType: "video" | "article") {
     }
   }
 
-  // 获取分区名
+  // 获取分区名（id 为子分区 ID；未加载分区表、id 为 0 或数据不匹配时避免显示 undefined/undefined）
   const getPartitionName = (id: number) => {
+    if (id == null || id === 0) {
+      return '-';
+    }
     const subpartition = partitionList.value.find((item) => {
       return item.id === id;
-    })
-
+    });
+    if (!subpartition) {
+      return '-';
+    }
     const partition = partitionList.value.find((item) => {
-      return item.id === subpartition?.parentId;
-    })
-
-    return `${partition?.name}/${subpartition?.name}`;
+      return item.id === subpartition.parentId;
+    });
+    if (!partition) {
+      return subpartition.name ?? '-';
+    }
+    return `${partition.name}/${subpartition.name}`;
   }
 
 

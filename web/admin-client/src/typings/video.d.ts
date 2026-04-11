@@ -16,4 +16,14 @@ interface VideoType {
   partitionId: number;
   author: UserInfoType;
   resources: ResourceType[];
+  transcodingProgress?: number;
+  transcodingDetails?: TranscodingProgressItem[];
+}
+
+interface TranscodingProgressItem {
+  resourceId: number;
+  resourceTitle: string;
+  quality: string;
+  progress: number;
+  status: 'waiting' | 'processing' | 'success' | 'fail' | string;
 }

@@ -14,12 +14,14 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeMount, computed } from "vue";
+import { onBeforeMount, computed, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { statusCode } from "@/utils/status-code";
 import { relationCode } from "@/utils/relation-code";
 import CommonAvatar from "@/components/common-avatar/index.vue";
 import { getUserRelationAPI, followAPI, unfollowAPI } from "@/api/relation";
+import { requireLogin } from "@/utils/require-login";
+import { useAuthStore } from "@/stores/auth-store";
 
 const props = defineProps<{
   author: UserInfoType
@@ -28,6 +30,10 @@ const props = defineProps<{
 
 const relation = ref(relationCode.NOT_FOLLOWING);
 const getUserRelation = async () => {
+  if (!auth.isLoggedIn) {
+    relation.value = relationCode.NOT_FOLLOWING;
+    return;
+  }
   if (props.author.uid) {
     const res = await getUserRelationAPI(props.author.uid);
     if (res.data.code === statusCode.OK) {
@@ -48,6 +54,7 @@ const btnText = computed(() => {
 })
 
 const followBtnClick = async () => {
+  if (!(await requireLogin('关注'))) return;
   if (props.author.uid) {
     const reqFunc = relation.value === relationCode.NOT_FOLLOWING ? followAPI : unfollowAPI;
     const res = await reqFunc(props.author.uid);
@@ -62,6 +69,12 @@ const followBtnClick = async () => {
 onBeforeMount(() => {
   getUserRelation();
 })
+
+const auth = useAuthStore();
+watch(
+  () => auth.isLoggedIn,
+  () => getUserRelation()
+);
 </script>
 
 <style lang="scss" scoped>

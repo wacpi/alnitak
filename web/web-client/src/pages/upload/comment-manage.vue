@@ -36,7 +36,7 @@
               <span class="msg-time"> {{ formatTime(item.createdAt) }}</span>
             </div>
             <div class="item-right">
-              <nuxt-link :to="`/video/${item.video.vid}`">
+              <nuxt-link :to="`/watch?v=${item.video.shortId || String(item.video.vid)}`">
                 <el-image class="img" :src="getResourceUrl(item.video.cover)" lazy alt="封面"></el-image>
               </nuxt-link>
             </div>

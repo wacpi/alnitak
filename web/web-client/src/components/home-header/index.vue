@@ -14,7 +14,7 @@
         </button>
       </div>
     </div>
-    <div v-if="!loading" class="header-right">
+    <div class="header-right">
       <!-- 用户头像 -->
       <div v-if="isLoggedIn" class="avatar-box">
         <nuxt-link to="/space">
@@ -68,7 +68,7 @@
         </div>
       </div>
       <div v-else class="avatar-box">
-        <div class="login-btn" @click="showLogin = true">登录</div>
+        <div class="login-btn" @click="auth.openLoginModal()">登录</div>
         <div class="menu-container">
           <div class="transition"></div>
           <div class="header-menu">
@@ -102,64 +102,57 @@
         <history-icon class="icon"></history-icon>
         <div class="icon-text">历史</div>
       </nuxt-link>
+      <nuxt-link class="icon-btn" to="/space/collection">
+        <collect-icon class="icon"></collect-icon>
+        <div class="icon-text">收藏</div>
+      </nuxt-link>
       <!-- 投稿按钮 -->
       <nuxt-link class="upload-btn disabled-select" to="/upload/video">
-        <upload-icon class="upload-icon"></upload-icon>
+        <client-only>
+          <upload-icon class="upload-icon"></upload-icon>
+          <template #fallback>
+            <span class="upload-icon"></span>
+          </template>
+        </client-only>
         <span>投稿</span>
       </nuxt-link>
     </div>
-    <div v-else class="header-right"></div>
-    <client-only>
-      <login-dialog v-if="showLogin" @close="loginClose" @success="loginSuccess"></login-dialog>
-    </client-only>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onBeforeMount, onMounted, ref } from 'vue';
-import Cookies from "js-cookie";
-import { logoutAPI } from '@/api/auth';
-import { getUserInfoAPI } from '@/api/user';
-import LoginDialog from "@/components/login-dialog/index.vue";
+import { onMounted, ref, computed } from 'vue';
 import {
   HamburgerButton, Upload as UploadIcon, Search as SearchIcon,
   Message as MessageIcon, History as HistoryIcon,
+  FolderFocusOne as CollectIcon,
   User as UserIcon, Logout as LogoutIcon, Right as RightIcon,
   Theme as ThemeIcon, SunOne as SunIcon, Moon as MoonIcon
 } from '@icon-park/vue-next';
+import { useAuthStore } from '@/stores/auth-store';
 
 const emits = defineEmits(["changeFold"]);
 
-const loading = ref(true);
-const isLoggedIn = ref(false);
-const showLogin = ref(false);
-const userInfo = ref<UserInfoType>()
-const getUserInfo = async () => {
-  const res = await getUserInfoAPI();
-  if (res.data.code === statusCode.OK) {
-    userInfo.value = res.data.data.userInfo;
-    isLoggedIn.value = true;
-  }
-
-  loading.value = false;
-}
+const auth = useAuthStore();
+const isLoggedIn = computed(() => auth.isLoggedIn);
+const userInfo = computed(() => auth.user);
 
 // 左侧菜单
+const MENU_FOLD_KEY = 'menu-fold-state';
 const menuFold = ref(false);
+
+
 const foldClick = () => {
   menuFold.value = !menuFold.value;
   emits("changeFold", menuFold.value);
+  try {
+    localStorage.setItem(MENU_FOLD_KEY, String(menuFold.value));
+  } catch {}
 }
 
 // 退出登录
 const logout = async () => {
-  await logoutAPI(storageData.get('refreshToken'));
-
-  storageData.remove("token");
-  storageData.remove('refreshToken');
-  Cookies.remove('user_id');
-
-  isLoggedIn.value = false;
+  await auth.logout();
 }
 
 //搜索功能
@@ -174,20 +167,6 @@ const handelSearch = () => {
     open: { target: '_blank' }
   })
 }
-
-const loginClose = () => {
-  showLogin.value = false;
-}
-
-// 登录成功
-const loginSuccess = () => {
-  getUserInfo();
-  loginClose();
-}
-
-onBeforeMount(() => {
-  getUserInfo();
-})
 
 // 主题切换（与通用 Header 保持一致，使用相同存储键）
 type ThemeMode = 'light' | 'dark';
@@ -209,6 +188,16 @@ const setTheme = (mode: ThemeMode) => {
 };
 
 onMounted(() => {
+  // 读取保存的折叠状态并通知父组件
+  try {
+    const savedFold = localStorage.getItem(MENU_FOLD_KEY);
+    if (savedFold === 'true') {
+      menuFold.value = true;
+      emits("changeFold", true);
+    }
+  } catch {}
+
+  // 读取主题设置
   let mode: ThemeMode = 'light';
   try {
     const saved = localStorage.getItem(THEME_KEY) as ThemeMode | null;
@@ -304,7 +293,7 @@ onMounted(() => {
   }
 
   .header-right {
-    width: 286px;
+    width: 340px;
     display: flex;
     align-items: center;
 
