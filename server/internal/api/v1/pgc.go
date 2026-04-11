@@ -208,6 +208,28 @@ func AddPGCEpisode(ctx *gin.Context) {
 	resp.OkWithMessage(ctx, "添加成功")
 }
 
+// BindPGCEpisodeVideo 占位剧集绑定已有视频
+func BindPGCEpisodeVideo(ctx *gin.Context) {
+	pgcID := ctx.Param("pgc_id")
+	episodeID := ctx.Param("id")
+	pgcIDUint, err1 := convertToUint(pgcID)
+	episodeIDUint, err2 := convertToUint(episodeID)
+	if err1 != nil || err2 != nil {
+		resp.FailWithMessage(ctx, "无效的ID")
+		return
+	}
+	var req dto.BindPGCEpisodeVideoReq
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		resp.FailWithMessage(ctx, "参数错误: "+err.Error())
+		return
+	}
+	if err := service.BindPGCEpisodeVideo(pgcIDUint, episodeIDUint, req); err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+	resp.OkWithMessage(ctx, "绑定成功")
+}
+
 func DeletePGCEpisode(ctx *gin.Context) {
 	pgcID := ctx.Param("pgc_id")
 	episodeID := ctx.Param("id")

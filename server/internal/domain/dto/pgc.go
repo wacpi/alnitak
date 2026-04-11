@@ -16,11 +16,19 @@ type CreatePGCReq struct {
 }
 
 type EpisodeReq struct {
-	EpisodeNumber int     `json:"episode_number" binding:"required"`
-	Title         string  `json:"title"`
-	VID           uint    `json:"vid" binding:"required"`
-	Duration      float64 `json:"duration"`
-	PublishTime   string  `json:"publish_time"`
+	EpisodeNumber int    `json:"episode_number" binding:"required"`
+	Title         string `json:"title"`
+	// VID 可选：0 表示仅创建剧集占位，后续通过 bind 接口绑定视频
+	VID         uint    `json:"vid"`
+	Duration    float64 `json:"duration"`
+	PublishTime string  `json:"publish_time"`
+}
+
+// BindPGCEpisodeVideoReq 为占位剧集绑定已存在的视频
+type BindPGCEpisodeVideoReq struct {
+	VID         uint     `json:"vid" binding:"required"`
+	Duration    *float64 `json:"duration"`
+	PublishTime string   `json:"publish_time"`
 }
 
 type UpdatePGCReq struct {

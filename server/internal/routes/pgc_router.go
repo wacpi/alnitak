@@ -42,6 +42,7 @@ func CollectPGCRoutes(r *gin.RouterGroup) {
 			pgcAuth.DELETE("/:pgc_id", api.DeletePGC)
 			pgcAuth.POST("/:pgc_id/episodes/add", api.AddPGCEpisode)
 			pgcAuth.DELETE("/:pgc_id/episodes/:id", api.DeletePGCEpisode)
+			pgcAuth.PUT("/:pgc_id/episodes/:id/bind", api.BindPGCEpisodeVideo)
 			pgcAuth.PUT("/:pgc_id/episodes/:id", api.UpdatePGCEpisode)
 			pgcAuth.PUT("/:pgc_id/episodes/:id/status", api.UpdatePGCEpisodeStatus)
 		}
