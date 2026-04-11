@@ -21,13 +21,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onBeforeMount } from 'vue';
+import { ref, onBeforeMount, reactive, watch } from 'vue';
 import { ElIcon } from 'element-plus';
 import LikeIcon from "@/components/icons/LikeIcon.vue";
 import CollectIcon from "@/components/icons/CollectIcon.vue";
 import CommentFillIcon from "@/components/icons/CommentFillIcon.vue";
 import { likeArticleAPI, cancelLikeArticleAPI, getLikeArticleStatusAPI } from "@/api/like";
 import { collectArticleAPI, cancelCollectArticleAPI, getCollectArticleStatusAPI } from '@/api/collect';
+import { statusCode } from '@/utils/status-code';
+import { requireLogin } from '@/utils/require-login';
+import { useAuthStore } from '@/stores/auth-store';
 
 const emit = defineEmits(["statChange", "scrollToComment"]);
 const props = defineProps<{
@@ -39,6 +42,18 @@ const archive = reactive({ // 是否点赞收藏
   hasCollect: false,
   hasLike: false
 })
+
+const auth = useAuthStore();
+
+const refreshViewerStatus = async () => {
+  if (!auth.isLoggedIn) {
+    archive.hasLike = false;
+    archive.hasCollect = false;
+    return;
+  }
+  await getLikeStatus();
+  await getCollectStatus();
+};
 
 // 获取是否点赞
 const getLikeStatus = async () => {
@@ -59,6 +74,7 @@ const getCollectStatus = async () => {
 const likeAnimation = ref('');
 const likeClick = async () => { // 点赞点赞按钮
   if (loading.value) return;
+  if (!(await requireLogin('点赞'))) return;
   if (!archive.hasLike) {
     await likeArticleAPI(props.aid);
     likeAnimation.value = 'like-active';
@@ -74,7 +90,8 @@ const likeClick = async () => { // 点赞点赞按钮
 const collectAnimation = ref('');
 const collectClick = async () => { // 点赞点赞按钮
   if (loading.value) return;
-  if (!archive.hasLike) {
+  if (!(await requireLogin('收藏'))) return;
+  if (!archive.hasCollect) {
     await collectArticleAPI(props.aid);
     collectAnimation.value = 'collect-active';
     emit("statChange", "collect", 1);
@@ -92,11 +109,18 @@ const scrollToComment = () => {
 }
 
 onBeforeMount(async () => {
-  await getLikeStatus();
-  await getCollectStatus();
+  await refreshViewerStatus();
 
   loading.value = false;
 })
+
+watch(
+  () => auth.isLoggedIn,
+  async () => {
+    if (loading.value) return;
+    await refreshViewerStatus();
+  }
+);
 </script>
 
 <style lang="scss" scoped>

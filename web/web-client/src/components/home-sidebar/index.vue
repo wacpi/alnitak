@@ -3,13 +3,13 @@
     <div class="scrollbar" v-if="!menuFold">
       <el-scrollbar height="calc(100vh - 56px)" style="width: 220px;">
         <div class="menu-group">
-          <nuxt-link class="menu-item menu-item-with-icon" to="/">
+          <nuxt-link class="menu-item menu-item-with-icon" :class="{ 'menu-active': isHomeActive }" to="/">
             <el-icon class="menu-item-icon" size="20">
               <home-icon></home-icon>
             </el-icon>
             <span class="menu-text">首页</span>
           </nuxt-link>
-          <nuxt-link v-if="globalConfig.article" class="menu-item menu-item-with-icon" to="/article/list">
+          <nuxt-link v-if="globalConfig.article" class="menu-item menu-item-with-icon" :class="{ 'menu-active': isArticleActive }" to="/article/list">
             <el-icon class="menu-item-icon" size="20">
               <article-icon></article-icon>
             </el-icon>
@@ -17,7 +17,7 @@
           </nuxt-link>
         </div>
         <div class="menu-group partition-list">
-          <nuxt-link class="menu-item menu-item-only-text" v-for="item in partitionList" :to="`/partition/${item.id}`">
+          <nuxt-link class="menu-item menu-item-only-text" :class="{ 'menu-active': isPartitionActive(item.id) }" v-for="item in partitionList" :to="`/partition/${item.id}`">
             {{ item.name }}
           </nuxt-link>
         </div>
@@ -48,12 +48,12 @@
     </div>
     <div v-else class="sidebar-content-fold">
       <nuxt-link to="/">
-        <el-icon class="fold-menu-icon-btn" :size="22">
+        <el-icon class="fold-menu-icon-btn" :class="{ 'fold-menu-active': isHomeActive }" :size="22">
           <home-icon></home-icon>
         </el-icon>
       </nuxt-link>
-      <nuxt-link to="/space/history">
-        <el-icon class="fold-menu-icon-btn" size="22">
+      <nuxt-link v-if="globalConfig.article" to="/article/list">
+        <el-icon class="fold-menu-icon-btn" :class="{ 'fold-menu-active': isArticleActive }" size="22">
           <article-icon></article-icon>
         </el-icon>
       </nuxt-link>
@@ -62,7 +62,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { ref, watch, computed } from "vue";
 import { asyncGetPartition } from "@/api/partition";
 import { globalConfig } from "@/utils/global-config";
 import HomeIcon from "@/components/icons/HomeIcon.vue";
@@ -78,6 +78,15 @@ const menuFold = ref(props.fold);
 watch(() => props.fold, (newValue) => {
   menuFold.value = newValue;
 });
+
+const route = useRoute();
+
+// 判断当前路由是否激活
+const isHomeActive = computed(() => route.path === '/');
+const isArticleActive = computed(() => route.path.startsWith('/article'));
+const isPartitionActive = (partitionId: number) => {
+  return route.path === `/partition/${partitionId}`;
+};
 
 // 获取分区
 const partitionList = ref<Array<PartitionType>>([])
@@ -204,6 +213,11 @@ if ((data.value as any).code === statusCode.OK) {
     &:hover {
       background-color: var(--hover-bg);
     }
+  }
+
+  .fold-menu-active {
+    background-color: var(--hover-bg);
+    color: var(--primary-color);
   }
 }
 </style>

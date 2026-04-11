@@ -5,7 +5,7 @@
         :minHeight="360" :minWidth="640" fillColor="#e6e6e6" @change="imgChange"></picture-cropper>
     </div>
     <div class="btn-container">
-      <button @click="uploadCover">裁剪并上传</button>
+      <button type="button" @click="uploadCover">裁剪并上传</button>
     </div>
   </div>
 </template>

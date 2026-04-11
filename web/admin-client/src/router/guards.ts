@@ -39,7 +39,7 @@ router.beforeEach(async (to, _from, next) => {
     const menuStore = useMenuStore();
     if (!menuStore.list.length && !isEmpty(loginStore.userInfo)) {
       await menuStore.createMenuList();
-      next({ ...to, replace: true })
+      return next({ ...to, replace: true })
     }
     // 历史记录存储
     const historyStore = useHistoryStore();

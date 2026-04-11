@@ -11,9 +11,9 @@
         </button>
       </div>
     </div>
-    <div v-if="!loading" class="header-right">
+    <div class="header-right">
       <!-- 用户头像 -->
-      <div v-if="isLoggedIn" class="avatar-box">
+      <div v-if="uiLoggedIn" class="avatar-box">
         <nuxt-link to="/space">
           <common-avatar :url="userInfo?.avatar" :size="40" :iconSize="22"></common-avatar>
         </nuxt-link>
@@ -66,7 +66,7 @@
         </div>
       </div>
       <div v-else class="avatar-box">
-        <nuxt-link class="login-btn" to="/login">登录</nuxt-link>
+        <div class="login-btn" @click="auth.openLoginModal()">登录</div>
         <div class="menu-container">
           <div class="transition"></div>
           <div class="header-menu">
@@ -107,16 +107,20 @@
       </nuxt-link>
       <!-- 投稿按钮 -->
       <nuxt-link class="upload-btn disabled-select" to="/upload/video">
-        <upload-icon class="upload-icon"></upload-icon>
+        <client-only>
+          <upload-icon class="upload-icon"></upload-icon>
+          <template #fallback>
+            <span class="upload-icon"></span>
+          </template>
+        </client-only>
         <span>投稿</span>
       </nuxt-link>
     </div>
-    <div v-else class="header-right"></div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, computed } from 'vue';
 import {
   Search as SearchIcon, Message as MessageIcon,
   Upload as UploadIcon, History as HistoryIcon,
@@ -124,11 +128,11 @@ import {
   Right as RightIcon, FolderFocusOne as CollectIcon,
   Theme as ThemeIcon, SunOne as SunIcon, Moon as MoonIcon
 } from '@icon-park/vue-next';
-import Cookies from "js-cookie";
-import { logoutAPI } from '@/api/auth';
-import { getUserInfoAPI } from '@/api/user';
 import CommonAvatar from '@/components/common-avatar/index.vue';
+import { useClientHydrated } from '@/composables/use-client-hydrated';
+import { useAuthStore } from '@/stores/auth-store';
 
+const { hydrated } = useClientHydrated();
 
 const route = useRoute();
 const isSearchPage = ref(route.name !== 'search-keywords');
@@ -178,32 +182,14 @@ const handelSearch = () => {
   })
 }
 
-const loading = ref(true);
-const isLoggedIn = ref(false);
-const userInfo = ref<UserInfoType>()
-const getUserInfo = async () => {
-  const res = await getUserInfoAPI();
-  if (res.data.code === statusCode.OK) {
-    userInfo.value = res.data.data.userInfo;
-    isLoggedIn.value = true;
-  }
-
-  loading.value = false;
-}
+const auth = useAuthStore();
+const isLoggedIn = computed(() => auth.isLoggedIn);
+const userInfo = computed(() => auth.user);
+const uiLoggedIn = computed(() => hydrated.value && isLoggedIn.value);
 
 const logout = async () => {
-  await logoutAPI(storageData.get('refreshToken'));
-
-  storageData.remove("token");
-  storageData.remove('refreshToken');
-  Cookies.remove('user_id');
-
-  isLoggedIn.value = false;
+  await auth.logout();
 }
-
-onBeforeMount(() => {
-  getUserInfo();
-})
 
 </script>
 

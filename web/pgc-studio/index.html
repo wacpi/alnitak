@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('pgc-studio-theme');
+          var isDark = t !== 'light';
+          document.documentElement.classList.toggle('dark', isDark);
+          document.body && document.body.classList.toggle('dark', isDark);
+        } catch (e) {}
+      })();
+    </script>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>影音档案 · PGC 管理系统</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

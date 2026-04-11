@@ -1,10 +1,21 @@
 <template>
   <ul class="video-list">
     <li class="video-item" v-for="item in videoList">
-      <nuxt-link class="cover" :to="`/video/${item.vid}?p=${item.part}`">
+      <nuxt-link class="cover" :to="watchLink(item)">
         <img class="img" :src="getResourceUrl(item.cover)" />
       </nuxt-link>
-      <nuxt-link class="title" :to="`/video/${item.vid}?p=${item.part}`">{{ item.title }}</nuxt-link>
+      <nuxt-link class="title" :to="watchLink(item)">
+        <template v-if="item.pgcAttached && item.pgcTitle">
+          <span class="pgc-series">{{ item.pgcTitle }}</span>
+          <span v-if="item.episodeNumber > 0 || item.episodeTitle" class="pgc-ep">
+            <template v-if="item.episodeNumber > 0">第{{ item.episodeNumber }}话</template>
+            <template v-if="item.episodeTitle">
+              <template v-if="item.episodeNumber > 0"> </template>{{ item.episodeTitle }}
+            </template>
+          </span>
+        </template>
+        <template v-else>{{ item.title }}</template>
+      </nuxt-link>
       <div class="meta">
         <div class="play-count">
           <span class="time">
@@ -25,6 +36,13 @@ const props = defineProps<{
   videoList: HistoryVideoType[];
 }>()
 
+const watchLink = (item: HistoryVideoType) => {
+  const p = item.part ?? 1;
+  if (item.pgcAttached && item.epId && item.epId > 0) {
+    return `/watch?ep=${item.epId}&mode=pgc&p=${p}`;
+  }
+  return `/watch?v=${item.shortId || String(item.vid)}&p=${p}`;
+};
 </script>
 
 <style lang="scss" scoped>
@@ -56,6 +74,7 @@ const props = defineProps<{
       .img {
         width: 100%;
         height: 100%;
+        object-fit: contain;
       }
     }
 
@@ -68,6 +87,25 @@ const props = defineProps<{
       margin-top: 6px;
       overflow: hidden;
       cursor: pointer;
+
+      .pgc-series {
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        font-weight: 500;
+      }
+
+      .pgc-ep {
+        display: block;
+        margin-top: 2px;
+        font-size: 11px;
+        color: var(--font-primary-3);
+        line-height: 16px;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        overflow: hidden;
+      }
 
       &:hover {
         color: var(--primary-hover-color);

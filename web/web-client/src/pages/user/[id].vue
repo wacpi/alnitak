@@ -47,6 +47,7 @@
 import { asyncGetUserBaseInfoAPI } from '@/api/user';
 import { followAPI, getFollowDataAPI, getUserRelationAPI, unfollowAPI } from '@/api/relation';
 import { Male, Female } from '@icon-park/vue-next';
+import { useAuthStore } from '@/stores/auth-store';
 
 definePageMeta({
   middleware: [(to) => {
@@ -77,6 +78,11 @@ const userData = reactive({
 
 const relation = ref(relationCode.NOT_FOLLOWING);
 const getUserRelation = async () => {
+  // 未登录时不探测关系接口，统一展示“关注”
+  if (!auth.isLoggedIn) {
+    relation.value = relationCode.NOT_FOLLOWING;
+    return;
+  }
   const res = await getUserRelationAPI(userId);
   if (res.data.code === statusCode.OK) {
     relation.value = res.data.data.relation;
@@ -95,9 +101,7 @@ const btnText = computed(() => {
 })
 
 const followBtnClick = async () => {
-  if (!storageData.get("refreshToken")) {
-    return navigateTo(`/login?redirect=${location.pathname}`);
-  }
+  if (!(await requireLogin('关注'))) return;
   const reqFunc = relation.value === relationCode.NOT_FOLLOWING ? followAPI : unfollowAPI;
   const res = await reqFunc(userId);
   if (res.data.code === statusCode.OK) {
@@ -127,6 +131,15 @@ onBeforeMount(() => {
   getUserRelation()
   // getFollowData(route.params.id.toString());
 })
+
+const auth = useAuthStore();
+watch(
+  () => auth.isLoggedIn,
+  () => {
+    getUserRelation();
+  },
+  { immediate: true }
+);
 </script>
 
 <style lang="scss" scoped>

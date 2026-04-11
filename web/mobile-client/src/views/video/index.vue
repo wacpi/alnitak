@@ -3,7 +3,7 @@
     <header-bar class="header-bar"></header-bar>
     <div v-if="!loading" class="video-main">
       <div class="video-player">
-        <video-player v-if="videoInfo" :video-info="videoInfo" :part="currentPart"></video-player>
+        <video-player v-if="videoInfo" :key="videoInfo.vid" :video-info="videoInfo" :part="currentPart"></video-player>
       </div>
       <!-- 视频信息 -->
       <div class="video-info-box">
@@ -63,7 +63,7 @@
 <script setup lang="ts">
 import { useRoute, useRouter } from 'vue-router';
 import { NIcon, NTime, NSkeleton, NCollapseTransition } from 'naive-ui';
-import { onBeforeMount, ref } from 'vue';
+import { ref, watch } from 'vue';
 import { formatTime } from "@/utils/format";
 
 import { Forbid as ForbidIcon } from "@icon-park/vue-next";
@@ -85,58 +85,61 @@ import { getVideoInfoAPI } from '@/api/video';
 
 const route = useRoute();
 const router = useRouter();
-const vid = parseInt(route.params.vid.toString());
 
-const ios = ref(navigator.userAgent.includes("iPhone") ? 1 : 0);
 const currentPart = ref(1);//当前分集
 const spread = ref(true);// 展开
 
 //获取视频信息
 const loading = ref(true);
-const resources = ref([]);
 const videoInfo = ref<VideoType | null>(null);
-const getVideoInfo = async (vid: number) => {
-  const res = await getVideoInfoAPI(vid);
+
+const syncPartFromRoute = () => {
+  if (route.query.p) {
+    const p = Number(route.query.p);
+    if (!Number.isNaN(p) && p >= 1) {
+      currentPart.value = p;
+    }
+  }
+}
+
+const fetchVideoByRoute = async () => {
+  const vidParam = String(route.params.vid ?? '').trim();
+  if (!vidParam) {
+    loading.value = false;
+    return;
+  }
+  loading.value = true;
+  videoInfo.value = null;
+  syncPartFromRoute();
+  const res = await getVideoInfoAPI(vidParam);
   if (res.data.code === statusCode.OK) {
     videoInfo.value = res.data.data.video;
-    //设置播放的资源
-    if (!resources.value[currentPart.value - 1]) {
+    const len = res.data.data.video.resources?.length ?? 0;
+    if (len === 0) {
+      currentPart.value = 1;
+    } else if (currentPart.value < 1 || currentPart.value > len) {
       currentPart.value = 1;
     }
-
-    //修改网站标题
     document.title = `${res.data.data.video.title}-${globalConfig.title}`
-    loading.value = false;
   }
-  // getVideoInfoAPI(vid, ios).then((res) => {
-  //   if (res.data.code === statusCode.OK) {
-  //     videoInfo.value = res.data.data.video;
-  //     resources.value = res.data.data.video.resources;
-  //     //设置播放的资源
-  //     if (!resources.value[part.value - 1]) {
-  //       part.value = 1;
-  //     }
-
-  //     //修改网站标题
-  //     document.title = `${res.data.data.video.title}-${window.$title || globalConfig.title}`
-  //     loading.value = false;
-  //   }
-  // })
+  loading.value = false;
 }
 
 const changePart = (target: number) => {
-  if (resources.value[target - 1]) {
+  const len = videoInfo.value?.resources?.length ?? 0;
+  if (target >= 1 && target <= len) {
     currentPart.value = target;
   }
-  router.replace({ query: { p: currentPart.value } });
+  router.replace({ query: { p: String(currentPart.value) } });
 }
 
-onBeforeMount(() => {
-  getVideoInfo(vid);
-  if (route.query.p) {
-    currentPart.value = Number(route.query.p);
-  }
-})
+watch(
+  () => route.params.vid,
+  () => {
+    fetchVideoByRoute();
+  },
+  { immediate: true }
+)
 </script>
 
 <style lang="scss" scoped>

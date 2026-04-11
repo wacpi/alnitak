@@ -2,11 +2,11 @@
   <div class="video-box">
     <p class="video-title">我的视频</p>
     <ul ref="videoListRef" class="video-list">
-      <li class="video-item" v-for="item in videoList ">
-        <nuxt-link class="cover" :to="item.status === reviewCode.AUDIT_APPROVED ? `/video/${item.vid}` : ''">
+      <li class="video-item" v-for="item in videoList">
+        <nuxt-link class="cover" :to="item.status === reviewCode.AUDIT_APPROVED ? `/watch?v=${item.shortId || String(item.vid)}` : ''">
           <img class="img" :src="getResourceUrl(item.cover)" />
         </nuxt-link>
-        <nuxt-link class="title" :to="item.status === reviewCode.AUDIT_APPROVED ? `/video/${item.vid}` : ''">
+        <nuxt-link class="title" :to="item.status === reviewCode.AUDIT_APPROVED ? `/watch?v=${item.shortId || String(item.vid)}` : ''">
           {{ item.title }}
         </nuxt-link>
         <div class="meta">
@@ -20,15 +20,13 @@
         </div>
       </li>
     </ul>
-    <div v-show="showPagination" class="pagination">
-      <el-pagination background layout="prev, pager, next" :page="page" :page-size="pageSize" :total="total"
-        @current-change="pageChange" />
-    </div>
+    <div v-if="loading" class="loading-tip">加载中...</div>
+    <div v-if="noMore && videoList.length > 0" class="no-more-tip">没有更多了</div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, onMounted, onBeforeUnmount } from 'vue';
 import { getUploadVideoAPI } from "@/api/video";
 import { ElIcon } from 'element-plus';
 import PlayCountIcon from "@/components/icons/PlayCountIcon.vue";
@@ -37,47 +35,59 @@ import { useVideoCountStore } from '@/composables/video-count-store';
 //获取我的视频
 const page = ref(1);
 const total = ref(0);
-const pageSize = ref(8);
-const showPagination = ref(false);
+const pageSize = ref(18);
+const noMore = ref(false);
+const loading = ref(false);
 const videoCountStore = useVideoCountStore();
 const videoList = ref<ManuscriptVideoType[]>([]);
 const videoListRef = ref<HTMLElement>();
+
 const getUploadVideo = async () => {
+  if (loading.value || noMore.value) return;
+  loading.value = true;
   const res = await getUploadVideoAPI(page.value, pageSize.value);
   if (res.data.code === statusCode.OK) {
     const videos = res.data.data.videos || [];
-    const approvedVideos = videos.filter((video: ManuscriptVideoType) => video.status === reviewCode.AUDIT_APPROVED);
-    videoList.value = approvedVideos;
+    if (videos.length > 0) {
+      const approvedVideos = videos.filter(
+        (video: ManuscriptVideoType) => video.status === reviewCode.AUDIT_APPROVED
+      );
+      videoList.value = videoList.value.concat(approvedVideos);
+      total.value = videoList.value.length;
+      videoCountStore.setVideoCountState(total.value);
 
-    total.value = approvedVideos.length;
-    videoCountStore.setVideoCountState(total.value);
-
-    showPagination.value = total.value > pageSize.value;
+      if (videos.length < pageSize.value) {
+        noMore.value = true;
+      }
+    } else {
+      noMore.value = true;
+    }
   }
+  loading.value = false;
 }
 
-//页码改变
-const pageChange = (target: number) => {
-  page.value = target;
-  getUploadVideo();
-}
+// 监听窗口滚动事件
+const handleScroll = () => {
+  const scrollTop = document.documentElement.scrollTop || document.body.scrollTop;
+  const clientHeight = document.documentElement.clientHeight;
+  const scrollHeight = document.documentElement.scrollHeight;
 
-const sizeChange = () => {
-  if (videoListRef.value!.clientWidth === 1076) {
-    pageSize.value = 18;
-  } else {
-    pageSize.value = 15;
+  // 距离底部 100px 时触发加载
+  if (scrollTop + clientHeight >= scrollHeight - 100) {
+    if (!loading.value && !noMore.value) {
+      page.value++;
+      getUploadVideo();
+    }
   }
 }
 
 onMounted(() => {
-  sizeChange();
   getUploadVideo();
-  window.addEventListener("resize", sizeChange);
+  window.addEventListener('scroll', handleScroll, true);
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener("resize", sizeChange);
+  window.removeEventListener('scroll', handleScroll, true);
 })
 </script>
 
@@ -92,10 +102,12 @@ onBeforeUnmount(() => {
     color: var(--font-primary-1);
   }
 
-  .pagination {
-    display: flex;
-    align-items: center;
-    justify-content: center;
+  .loading-tip,
+  .no-more-tip {
+    text-align: center;
+    padding: 20px 0;
+    color: var(--font-primary-3);
+    font-size: 14px;
   }
 }
 

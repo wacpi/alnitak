@@ -1,11 +1,11 @@
 <template>
   <div class="video-item">
-    <nuxt-link class="img" :to="`/video/${info.vid}`" target="_blank">
+    <nuxt-link class="img" :to="`/watch?v=${info.shortId || String(info.vid)}`" target="_blank">
       <img :src="getResourceUrl(info.cover)" alt="封面" />
       <span class="duration">{{ toDuration(info.duration) }}</span>
     </nuxt-link>
     <div class="video-info">
-      <nuxt-link class="title" :to="`/video/${info.vid}`" target="_blank">{{ info.title }}</nuxt-link>
+      <nuxt-link class="title" :to="`/watch?v=${info.shortId || String(info.vid)}`" target="_blank">{{ info.title }}</nuxt-link>
       <div class="author">
         <div class="avatar">
           <common-avatar :url="info.author.avatar" :size="26" :iconsize="16"></common-avatar>
@@ -29,16 +29,13 @@ const props = defineProps<{
 <style lang="scss" scoped>
 .video-item {
   width: 100%;
-  height: 260px;
 
   .img {
     position: relative;
     display: block;
-    height: auto;
-    /* 让高度自动调整以保持比例 */
-    max-height: 160px;
-    /* 最大高度限制 */
-    border-radius: 10px;
+    aspect-ratio: 16 / 9;
+    max-height: 200px;
+    border-radius: 9px;
     overflow: hidden;
     cursor: pointer;
     background-color: rgba(0, 0, 0, .2);
@@ -47,7 +44,6 @@ const props = defineProps<{
       width: 100%;
       height: 100%;
       object-fit: cover;
-      /* 保持图片比例，裁剪超出的部分 */
     }
 
     .duration {
@@ -95,7 +91,8 @@ const props = defineProps<{
       align-items: center;
       font-size: 13px;
       color: var(--font-primary-3);
-      margin-top: 5px;
+      //UP信息位置调整
+      margin-top: 2px;
 
       .avatar {
         width: 26px;

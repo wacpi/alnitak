@@ -11,9 +11,7 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeMount, ref } from "vue";
-import { getPartitionAPI } from '@/api/partition';
-import { statusCode } from "@/utils/status-code";
+import { computed, ref } from "vue";
 import { ElSelect, ElOption } from "element-plus";
 
 const emits = defineEmits(["selected"]);
@@ -23,14 +21,13 @@ const props = defineProps<{
 
 const partition = ref();
 const subpartition = ref();
-const partitionList = ref<Array<PartitionType>>(props.partitions);//所有分区
-const partitions = ref<Array<PartitionType>>([]);//分区
+const partitions = computed(() => props.partitions.filter(item => item.parentId === 0));
 const subpartitions = ref<Array<PartitionType>>([]);//二级分区
 const showSubpartition = ref(false);//是否显示二级分区
 
 //改变分区
 const partitionChange = (parentId: number) => {
-  subpartitions.value = partitionList.value.filter((item) => {
+  subpartitions.value = props.partitions.filter((item) => {
     return item.parentId === parentId;
   })
   showSubpartition.value = true;
@@ -39,12 +36,6 @@ const partitionChange = (parentId: number) => {
 const selectedPartition = (value: number) => {
   emits("selected", value);
 }
-
-onBeforeMount(async () => {
-  partitions.value = partitionList.value.filter((item) => {
-    return item.parentId === 0;
-  })
-})
 </script>
 
 <style lang="scss" scoped>

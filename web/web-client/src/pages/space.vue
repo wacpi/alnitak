@@ -270,6 +270,7 @@ const getUploadVideo = async () => {
     position: absolute;
     top: 12px;
     right: 20px;
+    z-index: 2;
     width: 120px;
     height: 32px;
     color: var(--primary-text-color);
@@ -284,6 +285,9 @@ const getUploadVideo = async () => {
   }
 
   .cover {
+    position: absolute;
+    top: 0;
+    left: 0;
     width: 100%;
     height: 100%;
     object-fit: cover;
@@ -360,6 +364,10 @@ const getUploadVideo = async () => {
   .space-menu {
     width: 200px;
     background-color: var(--bg-elev-1);
+    position: sticky;
+    top: 70px;
+    height: fit-content;
+    align-self: flex-start;
 
     .menu-item {
       position: relative;

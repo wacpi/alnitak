@@ -13,12 +13,12 @@
     
     <div class="video-card" v-for="item in videoList">
       <div class="card-box">
-        <nuxt-link class="cover-box" :to="`/video/${item.vid}`">
+        <nuxt-link class="cover-box" :to="`/watch?v=${item.shortId || String(item.vid)}`">
           <img :src="getResourceUrl(item.cover)" alt="封面" />
           <span class="duration">{{ toDuration(item.duration) }}</span>
         </nuxt-link>
         <div class="info">
-          <nuxt-link class="title" :to="`/video/${item.vid}`">{{ item.title }}</nuxt-link>
+          <nuxt-link class="title" :to="`/watch?v=${item.shortId || String(item.vid)}`">{{ item.title }}</nuxt-link>
           <div class="up-name">
             <el-icon class="icon" :size="16">
               <up-icon></up-icon>
@@ -86,7 +86,7 @@ const resetPlayIndex = (vid: number) => {
 
 // 暴露给父组件
 defineExpose({
-  autonext: readonly(autonext),
+  autonext: autonext,
   videoList: readonly(videoList),
   getNextVideo,
   resetPlayIndex
@@ -166,10 +166,16 @@ defineExpose({
         cursor: pointer;
         background-color: var(--fill-1, #c9ccd0);
 
+        &.disabled {
+          pointer-events: none;
+          opacity: .6;
+        }
+
         img {
           width: 100%;
           height: 100%;
           border-radius: 6px;
+          object-fit: contain;
         }
 
         .duration {
@@ -205,6 +211,11 @@ defineExpose({
           line-clamp: 2;
           -webkit-line-clamp: 2;
           -webkit-box-orient: vertical;
+
+          &.disabled {
+            pointer-events: none;
+            opacity: .6;
+          }
         }
 
         .up-name {

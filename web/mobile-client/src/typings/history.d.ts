@@ -6,6 +6,7 @@ interface AddHistoryType {
 
 interface HistoryVideoType {
   vid: number;
+  shortId?: string;
   uid: number;
   title: string;
   cover: string;

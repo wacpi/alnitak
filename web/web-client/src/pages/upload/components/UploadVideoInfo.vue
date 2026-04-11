@@ -49,13 +49,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, reactive } from "vue";
+import { ref, onMounted, reactive, watch, nextTick } from "vue";
 import { statusCode } from "@/utils/status-code";
 import { isLegalTag } from "@/utils/verify";
 import CoverUploader from "./CoverUploader.vue";
 import PartitionSelector from "./PartitionSelector.vue";
 import FormSkeleton from "@/components/form-skeleton/index.vue";
 import { uploadVideoInfoAPI, editVideoAPI } from "@/api/video";
+import { normalizeVideoTags } from "@/utils/video-tags";
 import { getPartitionAPI } from '@/api/partition';
 import { ElForm, ElFormItem, ElInput, ElSwitch, ElButton, ElSkeleton, ElSkeletonItem, ElMessage } from "element-plus";
 
@@ -152,15 +153,18 @@ const submitVideoInfo = async () => {
 
 // 获取分区列表
 const partitionList = ref<Array<PartitionType>>([]);//所有分区
+let partitionLoaded = false;
 const getPartition = async () => {
+  if (partitionLoaded) return;
   const res = await getPartitionAPI();
   if (res.data.code === statusCode.OK) {
     partitionList.value = res.data.data.partitions;
+    partitionLoaded = true;
   }
 }
 
 // 获取分区名
-const getPartitionName = async (id: number) => {
+const getPartitionName = (id: number) => {
   const subpartition = partitionList.value.find((item) => {
     return item.id === id;
   })
@@ -174,9 +178,7 @@ const getPartitionName = async (id: number) => {
 
 const loadVideoInfo = async () => {
   if (props.info.vid) {
-    if (props.info.tags) {
-      dynamicTags.value = props.info.tags.split(',');
-    }
+    dynamicTags.value = normalizeVideoTags(props.info.tags);
     Object.assign(videoForm, props.info);
     getPartitionName(props.info.partitionId);
 
@@ -186,6 +188,7 @@ const loadVideoInfo = async () => {
 
 watch(() => props.info, async () => {
   loadingForm.value = true;
+  await getPartition(); // 确保分区数据已加载
   await loadVideoInfo();
   nextTick(() => {
     loadingForm.value = false;

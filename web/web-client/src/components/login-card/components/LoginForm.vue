@@ -1,7 +1,7 @@
 <template>
   <div class="login-form">
     <base-tabs :tabs="tabs" @tab-change="tabChange"></base-tabs>
-    <div class="login-panel">
+    <form class="login-panel" @submit.prevent="handleLogin">
       <div v-if="currentTab === 'account'" class="input-group">
         <div class="input-box">
           <input v-model="loginForm.email" placeholder="请输入邮箱" class="input account-input" maxlength="64">
@@ -28,10 +28,10 @@
         <div class="error-text">{{ errorTips.codeError }}</div>
       </div>
       <div class="button-group">
-        <button class="btn-other" @click="emit('changeForm')">注册</button>
-        <button class="btn-primary" @click="handelLogin">登录</button>
+        <button class="btn-other" type="button" @click="emit('changeForm')">注册</button>
+        <button class="btn-primary" type="submit">登录</button>
       </div>
-    </div>
+    </form>
     <client-only>
       <slider-captcha v-model:show="showCaptcha" :captcha-id="loginForm.captchaId"
         @success="captchaSuccess"></slider-captcha>
@@ -40,12 +40,12 @@
 </template>
 
 <script setup lang="ts">
-import Cookies from "js-cookie";
 import { isEmail } from "@/utils/verify";
 import { loginAPI, emailLoginAPI } from "@/api/auth";
 import type { AxiosResponse } from "axios";
 import BaseTabs from "@/components/base-tabs/index.vue";
 import { sendEmailCodeAPI } from "@/api/code";
+import { saveCredentials } from "@/stores/auth-store";
 
 const emit = defineEmits(["success", "changeForm"]);
 
@@ -60,7 +60,7 @@ let captchaTrigger = "";
 const showCaptcha = ref(false);
 const captchaSuccess = () => {
   if (captchaTrigger === "login") {
-    handelLogin();
+    handleLogin();
   } else {
     sendEmailCode();
   }
@@ -84,7 +84,7 @@ const loginForm = reactive<UserLoginType>({
   code: '',
   captchaId: ''
 })
-const handelLogin = () => {
+const handleLogin = () => {
   initErrorTips();
   if (!loginForm.email) {
     errorTips.emailError = '邮箱不能为空';
@@ -115,22 +115,23 @@ const accountLogin = async () => {
   }
 
   const res = await loginAPI(loginForm);
-  handelLoginRes(res);
+  handleLoginRes(res);
 }
 
 // 验证码登录
 const disabledSend = ref(false);//禁用发送按钮
 const sendBtnText = ref('发送验证码');//发送按钮文字
-const startCountdown = () => {
-  let count = 0;
+const startCountdown = (seconds: number) => {
+  let remaining = seconds;
+  sendBtnText.value = `${remaining}秒`;
   let tag = setInterval(() => {
-    if (++count >= 60) {
+    if (--remaining <= 0) {
       clearInterval(tag);
       disabledSend.value = false;
       sendBtnText.value = '发送验证码';
       return;
     }
-    sendBtnText.value = `${60 - count}秒`;
+    sendBtnText.value = `${remaining}秒`;
   }, 1000);
 }
 const sendEmailCode = async () => {
@@ -140,9 +141,9 @@ const sendEmailCode = async () => {
   const res = await sendEmailCodeAPI(loginForm);
   switch (res.data.code) {
     case statusCode.OK:
-      //开启倒计时
-      startCountdown();
-      ElMessage.success('发送成功');
+      //开启倒计时，使用后端返回的冷却时间
+      startCountdown(res.data.data.countdown || 60);
+      ElMessage.success(res.data.msg || '发送成功');
       break;
     case statusCode.CAPTCHA_REQUIRED:
       captchaTrigger = "code";
@@ -151,8 +152,13 @@ const sendEmailCode = async () => {
       disabledSend.value = false;
       break;
     case statusCode.FAIL:
-      disabledSend.value = false;
-      sendBtnText.value = '发送验证码';
+      //如果后端返回了冷却时间（发送过于频繁），开启倒计时
+      if (res.data.data?.countdown) {
+        startCountdown(res.data.data.countdown);
+      } else {
+        disabledSend.value = false;
+        sendBtnText.value = '发送验证码';
+      }
       ElMessage.error(res.data.msg);
       break;
     default:
@@ -172,10 +178,10 @@ const codeLogin = async () => {
   }
 
   const res = await emailLoginAPI(loginForm);
-  handelLoginRes(res);
+  handleLoginRes(res);
 }
 
-const handelLoginRes = async (res: AxiosResponse<any, any>) => {
+const handleLoginRes = async (res: AxiosResponse<any, any>) => {
   switch (res.data.code) {
     case statusCode.CAPTCHA_REQUIRED:
       captchaTrigger = "login";
@@ -183,10 +189,7 @@ const handelLoginRes = async (res: AxiosResponse<any, any>) => {
       showCaptcha.value = true;
       break;
     case statusCode.OK:
-      storageData.set("token", res.data.data.token, 60);
-      storageData.set("refreshToken", res.data.data.refreshToken, 7 * 24 * 60);
-      Cookies.set('user_id', res.data.data.userId)
-
+      saveCredentials(res.data.data);
       emit("success");
       break;
     default:

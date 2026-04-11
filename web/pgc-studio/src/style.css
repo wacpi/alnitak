@@ -1,0 +1,101 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * 不使用 html { color-scheme: dark }：Chrome 等会为表单强加「系统深色控件」，
+ * 导致暗色主题下输入框变成白底、与我们的 CSS 变量不一致。
+ * 主题仅通过变量与 .dark class 控制。
+ */
+
+/* 浅色（默认无前缀 class；脚本在首屏根据 localStorage 打上 html.dark） */
+:root {
+  --st-bg: #f1f5f9;
+  --st-surface: #ffffff;
+  --st-card: #ffffff;
+  --st-elevated: #e2e8f0;
+  --st-border: #cbd5e1;
+  --st-muted: #64748b;
+  --st-accent: #0891b2;
+  --st-accent-dim: #0e7490;
+  --st-highlight: #06b6d4;
+  --st-fg: #0f172a;
+  --st-fg-muted: #475569;
+  --st-fg-subtle: #64748b;
+  --st-input: #ffffff;
+}
+
+html.dark,
+body.dark {
+  --st-bg: #070b12;
+  --st-surface: #0d121c;
+  --st-card: #121a26;
+  --st-elevated: #161f2e;
+  --st-border: #1e2a3d;
+  /* 次要文案在深色底上需更亮，避免「灰字吃进背景」 */
+  --st-muted: #94a3b8;
+  --st-accent: #06b6d4;
+  --st-accent-dim: #0891b2;
+  --st-highlight: #22d3ee;
+  --st-fg: #f8fafc;
+  --st-fg-muted: #94a3b8;
+  --st-fg-subtle: #94a3b8;
+  --st-input: #0d121c;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+#app {
+  background-color: var(--st-bg);
+}
+
+body {
+  margin: 0;
+  background-color: var(--st-bg);
+  color: var(--st-fg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 统一表单，覆盖 UA 在暗色下的默认底色，保证与 --st-input / --st-fg 一致 */
+@layer base {
+  input:not([type='button']):not([type='reset']):not([type='submit']):not([type='checkbox']):not(
+      [type='radio']
+    ):not([type='range']):not([type='file']):not([type='image']):not([type='hidden']),
+  select,
+  textarea {
+    background-color: var(--st-input);
+    color: var(--st-fg);
+    border-color: var(--st-border);
+  }
+
+  /* 去掉 number 默认白色增减按钮，避免深色主题出现突兀亮块 */
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  input[type='number'] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+
+  /* Chrome / Edge 自动填充会用浅色盖住深色主题，强制与主题变量一致 */
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus,
+  input:-webkit-autofill:active {
+    -webkit-text-fill-color: var(--st-fg) !important;
+    caret-color: var(--st-fg);
+    -webkit-box-shadow: 0 0 0 1000px var(--st-input) inset !important;
+    box-shadow: 0 0 0 1000px var(--st-input) inset !important;
+    transition: background-color 99999s ease-out 0s;
+  }
+}

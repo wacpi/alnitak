@@ -9,6 +9,8 @@ interface UploadOptionsType {
 
 interface FinishUploadType {
   hash: string;
+  fileID: number;
+  size: number;
   action: string;
   onFinish: (data?: any) => void
   onError: (error?: any) => void

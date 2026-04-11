@@ -46,7 +46,6 @@ const toolbarConfig = {
   }
 }
 const editorConfig = {
-  height: 200,
   placeholder: '请输入文章内容...',
   MENU_CONF: {
     uploadImage: {
