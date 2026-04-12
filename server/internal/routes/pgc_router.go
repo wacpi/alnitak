@@ -28,9 +28,12 @@ func CollectPGCRoutes(r *gin.RouterGroup) {
 		pgcAdmin := pgcGroup.Group("")
 		pgcAdmin.Use(middleware.Auth())
 		{
+			pgcAdmin.POST("getManageList", api.GetPGCManageList)
 			pgcAdmin.POST("getReviewList", api.GetPGCReviewList)
 			pgcAdmin.POST("reviewApproved", api.ReviewPGCApproved)
 			pgcAdmin.POST("reviewFailed", api.ReviewPGCFailed)
+			pgcAdmin.POST("adminUpdateStatus", api.AdminUpdatePGCStatus)
+			pgcAdmin.DELETE("adminDelete/:pgc_id", api.AdminDeletePGC)
 		}
 
 		pgcAuth := pgcGroup.Group("")

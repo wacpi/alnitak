@@ -87,6 +87,42 @@ func GetPGCList(ctx *gin.Context) {
 	})
 }
 
+// GetPGCManageList 后台：PGC 内容管理列表（所有状态）
+func GetPGCManageList(ctx *gin.Context) {
+	var req dto.PGCManageListReq
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		resp.FailWithMessage(ctx, "参数错误: "+err.Error())
+		return
+	}
+
+	// 复用已有 service 函数
+	listReq := dto.PGCListReq{
+		Page:     req.Page,
+		PageSize: req.PageSize,
+		PGCType:  req.PGCType,
+		Status:   req.Status,
+		Keyword:  req.Keyword,
+	}
+
+	total, list, err := service.GetPGCContentList(listReq)
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+
+	formatted := make([]gin.H, 0, len(list))
+	for _, item := range list {
+		formatted = append(formatted, formatPGCContent(item))
+	}
+
+	resp.OkWithData(ctx, gin.H{
+		"total":     total,
+		"list":      formatted,
+		"page":      req.Page,
+		"page_size": req.PageSize,
+	})
+}
+
 // GetPGCReviewList 后台：待审 PGC 列表
 func GetPGCReviewList(ctx *gin.Context) {
 	var req dto.PGCReviewListReq
@@ -138,6 +174,35 @@ func ReviewPGCFailed(ctx *gin.Context) {
 		return
 	}
 	resp.OkWithMessage(ctx, "操作成功")
+}
+
+// AdminUpdatePGCStatus 后台：管理员修改 PGC 状态（上架/下架）
+func AdminUpdatePGCStatus(ctx *gin.Context) {
+	var req dto.UpdatePGCStatusReq
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		resp.FailWithMessage(ctx, "参数错误: "+err.Error())
+		return
+	}
+	if err := service.UpdatePGCStatus(req.PGCID, req.Status); err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+	resp.OkWithMessage(ctx, "操作成功")
+}
+
+// AdminDeletePGC 后台：管理员删除 PGC
+func AdminDeletePGC(ctx *gin.Context) {
+	pgcID := ctx.Param("pgc_id")
+	pgcIDUint, err := convertToUint(pgcID)
+	if err != nil {
+		resp.FailWithMessage(ctx, "无效的PGC ID")
+		return
+	}
+	if err := service.DeletePGCContent(pgcIDUint); err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+	resp.OkWithMessage(ctx, "删除成功")
 }
 
 func GetPGCDetail(ctx *gin.Context) {

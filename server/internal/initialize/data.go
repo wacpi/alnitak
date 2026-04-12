@@ -153,6 +153,9 @@ func initApiData() {
 		{Method: "POST", Path: "/api/v1/pgc/getReviewList", Category: "PGC", Desc: "获取PGC待审列表（后台管理）"},
 		{Method: "POST", Path: "/api/v1/pgc/reviewApproved", Category: "PGC", Desc: "PGC审核通过（后台管理）"},
 		{Method: "POST", Path: "/api/v1/pgc/reviewFailed", Category: "PGC", Desc: "PGC审核驳回（后台管理）"},
+		{Method: "POST", Path: "/api/v1/pgc/getManageList", Category: "PGC", Desc: "获取PGC管理列表（后台管理）"},
+		{Method: "POST", Path: "/api/v1/pgc/adminUpdateStatus", Category: "PGC", Desc: "管理员修改PGC状态（后台管理）"},
+		{Method: "DELETE", Path: "/api/v1/pgc/adminDelete/:pgc_id", Category: "PGC", Desc: "管理员删除PGC（后台管理）"},
 		{Method: "GET", Path: "/api/v1/config/getEmailConfig", Category: "配置", Desc: "获取邮箱配置（后台管理）"},
 		{Method: "POST", Path: "/api/v1/config/setEmailConfig", Category: "配置", Desc: "编辑邮箱配置（后台管理）"},
 		{Method: "GET", Path: "/api/v1/config/getStorageConfig", Category: "配置", Desc: "获取存储配置（后台管理）"},
@@ -339,6 +342,9 @@ func initCasbinRuleData() {
 		{Ptype: "p", V0: "002", V1: "/api/v1/pgc/getReviewList", V2: "POST"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/pgc/reviewApproved", V2: "POST"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/pgc/reviewFailed", V2: "POST"},
+		{Ptype: "p", V0: "002", V1: "/api/v1/pgc/getManageList", V2: "POST"},
+		{Ptype: "p", V0: "002", V1: "/api/v1/pgc/adminUpdateStatus", V2: "POST"},
+		{Ptype: "p", V0: "002", V1: "/api/v1/pgc/adminDelete/:pgc_id", V2: "DELETE"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/role/addRole", V2: "POST"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/role/deleteRole/:id", V2: "DELETE"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/role/editRole", V2: "PUT"},
@@ -513,6 +519,26 @@ func syncMenuData() {
 		Name: "ContentPlaylist", Path: "content/playlist", Component: "views/content/playlist/index.vue",
 		Desc: "", Sort: 2, Title: "合集管理", Icon: "ListOutline", Hidden: false, KeepAlive: false,
 	})
+
+	// PGC管理（内容管理下）
+	ensureMenuExists("Content", "ContentVideo", model.Menu{
+		Name: "ContentPGC", Path: "content/pgc", Component: "views/content/pgc/index.vue",
+		Desc: "", Sort: 2, Title: "PGC管理", Icon: "FilmOutline", Hidden: false, KeepAlive: false,
+	})
+
+	// 同步内容管理子菜单排序：视频(1) → PGC(2) → 其余(3+)
+	contentSortOrder := map[string]uint{
+		"ContentVideo":     1,
+		"ContentPGC":       2,
+		"ContentArticle":   3,
+		"ContentCarousel":  4,
+		"ContentPartition": 5,
+		"ContentAnnounce":  6,
+		"ContentPlaylist":  7,
+	}
+	for name, sort := range contentSortOrder {
+		global.Mysql.Model(&model.Menu{}).Where("name = ?", name).Update("sort", sort)
+	}
 }
 
 // 初始化分区数据
@@ -760,6 +786,9 @@ var authApiDesc = map[string]string{
 	"POST|/api/v1/pgc/getReviewList":          "获取PGC待审列表（后台管理）",
 	"POST|/api/v1/pgc/reviewApproved":         "PGC审核通过（后台管理）",
 	"POST|/api/v1/pgc/reviewFailed":           "PGC审核驳回（后台管理）",
+	"POST|/api/v1/pgc/getManageList":          "获取PGC管理列表（后台管理）",
+	"POST|/api/v1/pgc/adminUpdateStatus":      "管理员修改PGC状态（后台管理）",
+	"DELETE|/api/v1/pgc/adminDelete/:pgc_id":  "管理员删除PGC（后台管理）",
 }
 
 // SyncApiData 自动同步需要登录权限的路由到API表

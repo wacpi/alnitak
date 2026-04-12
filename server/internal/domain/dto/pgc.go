@@ -75,6 +75,15 @@ type EpisodeListReq struct {
 	PageSize int  `form:"page_size" binding:"required,min=1,max=100"`
 }
 
+// PGCManageListReq 后台 PGC 内容管理列表（POST JSON）
+type PGCManageListReq struct {
+	Page     int    `json:"page" binding:"required,min=1"`
+	PageSize int    `json:"pageSize" binding:"required,min=1,max=100"`
+	PGCType  int    `json:"pgc_type"`
+	Status   *int   `json:"status"`
+	Keyword  string `json:"keyword"`
+}
+
 // PGCReviewListReq 后台 PGC 待审列表
 type PGCReviewListReq struct {
 	Page     int `json:"page" binding:"required,min=1"`

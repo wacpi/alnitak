@@ -1147,10 +1147,11 @@ func GetVideoByUser(ctx *gin.Context, userId uint, page, pageSize int) (total in
 	return
 }
 
-// 获取视频列表(后台管理)
+// 获取视频列表(后台管理) - 仅展示 UGC 内容，PGC 内容由独立管理入口管理
 func GetVideoListManage(videoListReq dto.VideoListReq) (total int64, videos []vo.VideoInfoManageResp) {
-	global.Mysql.Model(&model.Video{}).Where("status = ?", global.AUDIT_APPROVED).Count(&total)
-	global.Mysql.Model(&model.Video{}).Where("status = ?", global.AUDIT_APPROVED).
+	baseWhere := "status = ? AND pgc_attached = ?"
+	global.Mysql.Model(&model.Video{}).Where(baseWhere, global.AUDIT_APPROVED, false).Count(&total)
+	global.Mysql.Model(&model.Video{}).Where(baseWhere, global.AUDIT_APPROVED, false).
 		Order("created_at DESC").
 		Limit(videoListReq.PageSize).Offset((videoListReq.Page - 1) * videoListReq.PageSize).Scan(&videos)
 
@@ -1166,8 +1167,9 @@ func GetVideoListManage(videoListReq dto.VideoListReq) (total int64, videos []vo
 
 // 获取处理失败的视频列表（后台管理）
 func GetFailedVideoList(videoListReq dto.VideoListReq) (total int64, videos []vo.VideoInfoManageResp) {
-	global.Mysql.Model(&model.Video{}).Where("status = ?", global.PROCESSING_FAIL).Count(&total)
-	global.Mysql.Model(&model.Video{}).Where("status = ?", global.PROCESSING_FAIL).
+	baseWhere := "status = ? AND pgc_attached = ?"
+	global.Mysql.Model(&model.Video{}).Where(baseWhere, global.PROCESSING_FAIL, false).Count(&total)
+	global.Mysql.Model(&model.Video{}).Where(baseWhere, global.PROCESSING_FAIL, false).
 		Order("created_at DESC").
 		Limit(videoListReq.PageSize).Offset((videoListReq.Page - 1) * videoListReq.PageSize).Scan(&videos)
 
@@ -1183,8 +1185,8 @@ func GetFailedVideoList(videoListReq dto.VideoListReq) (total int64, videos []vo
 // 获取处理中视频列表（后台管理）
 func GetProcessingVideoList(videoListReq dto.VideoListReq) (total int64, videos []vo.VideoInfoManageResp) {
 	processingStatuses := []int{global.CREATED_VIDEO, global.VIDEO_PROCESSING, global.SUBMIT_REVIEW}
-	global.Mysql.Model(&model.Video{}).Where("status IN ?", processingStatuses).Count(&total)
-	global.Mysql.Model(&model.Video{}).Where("status IN ?", processingStatuses).
+	global.Mysql.Model(&model.Video{}).Where("status IN ? AND pgc_attached = ?", processingStatuses, false).Count(&total)
+	global.Mysql.Model(&model.Video{}).Where("status IN ? AND pgc_attached = ?", processingStatuses, false).
 		Order("created_at DESC").
 		Limit(videoListReq.PageSize).Offset((videoListReq.Page - 1) * videoListReq.PageSize).Scan(&videos)
 
