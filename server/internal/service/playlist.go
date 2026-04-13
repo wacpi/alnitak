@@ -423,12 +423,11 @@ func GetPlaylistVideoListWithParts(ctx *gin.Context, videoId uint) gin.H {
 		// 没有合集，返回当前视频的分P列表
 		resources := GetVideoResources(videoId)
 		currentParts := make([]gin.H, 0)
-		for _, r := range resources {
+		for i, r := range resources {
 			currentParts = append(currentParts, gin.H{
-				"ID":              r.ID,
-				"resourceShortId": r.ShortID,
-				"Title":           r.Title,
-				"Duration":        r.Duration,
+				"p":        i + 1,
+				"title":    r.Title,
+				"duration": r.Duration,
 			})
 		}
 		return gin.H{
@@ -457,47 +456,44 @@ func GetPlaylistVideoListWithParts(ctx *gin.Context, videoId uint) gin.H {
 
 		if len(resources) > 1 {
 			// 多分P，展开为多项
-			for _, r := range resources {
+			for i, r := range resources {
 				videos = append(videos, gin.H{
-					"vid":             v.Vid,
-					"shortId":         v.ShortID,
-					"title":           v.Title,
-					"cover":           v.Cover,
-					"duration":        r.Duration,
-					"clicks":          v.Clicks,
-					"desc":            v.Desc,
-					"resourceId":      r.ID,
-					"resourceShortId": r.ShortID,
-					"partTitle":       r.Title,
+					"vid":        v.Vid,
+					"shortId":    v.ShortID,
+					"title":      v.Title,
+					"cover":     v.Cover,
+					"duration":  r.Duration,
+					"clicks":    v.Clicks,
+					"desc":      v.Desc,
+					"p":         i + 1,
+					"partTitle":  r.Title,
 				})
 			}
 		} else if len(resources) == 1 {
 			// 单分P
 			videos = append(videos, gin.H{
-				"vid":             v.Vid,
-				"shortId":         v.ShortID,
-				"title":           v.Title,
-				"cover":           v.Cover,
-				"duration":        resources[0].Duration,
-				"clicks":          v.Clicks,
-				"desc":            v.Desc,
-				"resourceId":      resources[0].ID,
-				"resourceShortId": resources[0].ShortID,
-				"partTitle":       nil,
+				"vid":        v.Vid,
+				"shortId":   v.ShortID,
+				"title":     v.Title,
+				"cover":     v.Cover,
+				"duration": resources[0].Duration,
+				"clicks":    v.Clicks,
+				"desc":      v.Desc,
+				"p":        1,
+				"partTitle": nil,
 			})
 		} else {
 			// 无资源
 			videos = append(videos, gin.H{
-				"vid":             v.Vid,
-				"shortId":         v.ShortID,
-				"title":           v.Title,
-				"cover":           v.Cover,
-				"duration":        0,
-				"clicks":          v.Clicks,
-				"desc":            v.Desc,
-				"resourceId":      nil,
-				"resourceShortId": nil,
-				"partTitle":       nil,
+				"vid":        v.Vid,
+				"shortId":   v.ShortID,
+				"title":     v.Title,
+				"cover":     v.Cover,
+				"duration": 0,
+				"clicks":    v.Clicks,
+				"desc":      v.Desc,
+				"p":        nil,
+				"partTitle": nil,
 			})
 		}
 	}
@@ -505,12 +501,11 @@ func GetPlaylistVideoListWithParts(ctx *gin.Context, videoId uint) gin.H {
 	// 5. 获取当前视频的分P列表
 	currentParts := make([]gin.H, 0)
 	currentResources := GetVideoResources(videoId)
-	for _, r := range currentResources {
+	for i, r := range currentResources {
 		currentParts = append(currentParts, gin.H{
-			"resourceId":      r.ID,
-			"resourceShortId": r.ShortID,
-			"title":           r.Title,
-			"duration":        r.Duration,
+			"p":        i + 1,
+			"title":    r.Title,
+			"duration": r.Duration,
 		})
 	}
 
