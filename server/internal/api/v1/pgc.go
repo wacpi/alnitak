@@ -383,10 +383,19 @@ func SearchPGC(ctx *gin.Context) {
 	page := ctx.Query("page")
 	pageSize := ctx.Query("page_size")
 
-	pgcTypeInt, err1 := convertToInt(pgcType)
+	// pgc_type 可选：为空时默认 0（全部类型）
+	pgcTypeInt := 0
+	if pgcType != "" {
+		v, err := convertToInt(pgcType)
+		if err != nil {
+			resp.FailWithMessage(ctx, "无效的参数")
+			return
+		}
+		pgcTypeInt = v
+	}
 	pageInt, err2 := convertToInt(page)
 	pageSizeInt, err3 := convertToInt(pageSize)
-	if err1 != nil || err2 != nil || err3 != nil {
+	if err2 != nil || err3 != nil {
 		resp.FailWithMessage(ctx, "无效的参数")
 		return
 	}
