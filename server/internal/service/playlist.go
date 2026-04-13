@@ -332,7 +332,7 @@ func GetPlaylistVideoList(ctx *gin.Context, playlistID uint, page, pageSize int)
 	global.Mysql.Model(&model.PlaylistVideo{}).Where("playlist_id = ?", playlistID).Count(&total)
 
 	global.Mysql.Table("playlist_video").
-		Select("video.id as vid, video.title, video.cover, video.duration, video.clicks, video.desc, video.created_at").
+		Select("video.id as vid, video.short_id, video.title, video.cover, video.duration, video.clicks, video.desc, video.created_at").
 		Joins("LEFT JOIN video ON playlist_video.vid = video.id").
 		Where("playlist_video.playlist_id = ? AND playlist_video.deleted_at IS NULL AND video.deleted_at IS NULL", playlistID).
 		Order("playlist_video.sort ASC").
@@ -425,9 +425,10 @@ func GetPlaylistVideoListWithParts(ctx *gin.Context, videoId uint) gin.H {
 		currentParts := make([]gin.H, 0)
 		for _, r := range resources {
 			currentParts = append(currentParts, gin.H{
-				"ID":       r.ID,
-				"Title":    r.Title,
-				"Duration": r.Duration,
+				"ID":              r.ID,
+				"resourceShortId": r.ShortID,
+				"Title":           r.Title,
+				"Duration":        r.Duration,
 			})
 		}
 		return gin.H{
@@ -458,39 +459,45 @@ func GetPlaylistVideoListWithParts(ctx *gin.Context, videoId uint) gin.H {
 			// 多分P，展开为多项
 			for _, r := range resources {
 				videos = append(videos, gin.H{
-					"vid":        v.Vid,
-					"title":      v.Title,
-					"cover":      v.Cover,
-					"duration":   r.Duration,
-					"clicks":     v.Clicks,
-					"desc":       v.Desc,
-					"resourceId": r.ID,
-					"partTitle":  r.Title,
+					"vid":             v.Vid,
+					"shortId":         v.ShortID,
+					"title":           v.Title,
+					"cover":           v.Cover,
+					"duration":        r.Duration,
+					"clicks":          v.Clicks,
+					"desc":            v.Desc,
+					"resourceId":      r.ID,
+					"resourceShortId": r.ShortID,
+					"partTitle":       r.Title,
 				})
 			}
 		} else if len(resources) == 1 {
 			// 单分P
 			videos = append(videos, gin.H{
-				"vid":        v.Vid,
-				"title":      v.Title,
-				"cover":      v.Cover,
-				"duration":   resources[0].Duration,
-				"clicks":     v.Clicks,
-				"desc":       v.Desc,
-				"resourceId": resources[0].ID,
-				"partTitle":  nil,
+				"vid":             v.Vid,
+				"shortId":         v.ShortID,
+				"title":           v.Title,
+				"cover":           v.Cover,
+				"duration":        resources[0].Duration,
+				"clicks":          v.Clicks,
+				"desc":            v.Desc,
+				"resourceId":      resources[0].ID,
+				"resourceShortId": resources[0].ShortID,
+				"partTitle":       nil,
 			})
 		} else {
 			// 无资源
 			videos = append(videos, gin.H{
-				"vid":        v.Vid,
-				"title":      v.Title,
-				"cover":      v.Cover,
-				"duration":   0,
-				"clicks":     v.Clicks,
-				"desc":       v.Desc,
-				"resourceId": nil,
-				"partTitle":  nil,
+				"vid":             v.Vid,
+				"shortId":         v.ShortID,
+				"title":           v.Title,
+				"cover":           v.Cover,
+				"duration":        0,
+				"clicks":          v.Clicks,
+				"desc":            v.Desc,
+				"resourceId":      nil,
+				"resourceShortId": nil,
+				"partTitle":       nil,
 			})
 		}
 	}
@@ -500,9 +507,10 @@ func GetPlaylistVideoListWithParts(ctx *gin.Context, videoId uint) gin.H {
 	currentResources := GetVideoResources(videoId)
 	for _, r := range currentResources {
 		currentParts = append(currentParts, gin.H{
-			"resourceId": r.ID,
-			"title":      r.Title,
-			"duration":   r.Duration,
+			"resourceId":      r.ID,
+			"resourceShortId": r.ShortID,
+			"title":           r.Title,
+			"duration":        r.Duration,
 		})
 	}
 

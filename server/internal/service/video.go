@@ -94,6 +94,28 @@ func ParseVideoID(raw string) (uint, error) {
 	return video.ID, nil
 }
 
+// ParseResourceID 兼容对外 shortId（随机不透明串）与数字自增 id。
+func ParseResourceID(raw string) (uint, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, errors.New("资源ID不能为空")
+	}
+
+	if utils.IsAllASCIIDigits(raw) {
+		id := utils.StringToUint(raw)
+		if id == 0 {
+			return 0, errors.New("资源不存在")
+		}
+		return id, nil
+	}
+
+	var resource model.Resource
+	if err := global.Mysql.Where("short_id = ?", raw).First(&resource).Error; err != nil || resource.ID == 0 {
+		return 0, errors.New("资源不存在")
+	}
+	return resource.ID, nil
+}
+
 func GetVideoStatus(ctx *gin.Context, vid uint) (video vo.VideoStatusResp, err error) {
 	userId := ctx.GetUint("userId")
 	global.Mysql.Model(&model.Video{}).Select(vo.VIDEO_STATUS_FIELD).Where("id = ? and uid = ?", vid, userId).Scan(&video)

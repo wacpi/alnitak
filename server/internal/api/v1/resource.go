@@ -49,7 +49,11 @@ func DeleteResource(ctx *gin.Context) {
 
 // 获取视频资源支持的分辨率信息
 func GetResourceQuality(ctx *gin.Context) {
-	resourceId := utils.StringToUint(ctx.Query("resourceId"))
+	resourceId, parseErr := service.ParseResourceID(ctx.Query("resourceId"))
+	if parseErr != nil {
+		resp.FailWithMessage(ctx, parseErr.Error())
+		return
+	}
 
 	info, err := service.GetResourceQuality(ctx, resourceId)
 	if err != nil {

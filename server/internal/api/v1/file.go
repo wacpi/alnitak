@@ -60,7 +60,11 @@ func resolveStreamDir(ctx *gin.Context, key, file string) (dir string, ok bool) 
 // 获取视频文件
 func GetVideoFile(ctx *gin.Context) {
 	quality := ctx.Query("quality")
-	resourceId := utils.StringToUint(ctx.Query("resourceId"))
+	resourceId, parseErr := service.ParseResourceID(ctx.Query("resourceId"))
+	if parseErr != nil {
+		resp.FailWithMessage(ctx, parseErr.Error())
+		return
+	}
 	format := ctx.DefaultQuery("format", "m3u8") // m3u8 / mpd / dash / m3u8video / m3u8audio
 
 	file, err := service.GetVideoFile(ctx, resourceId, quality, format)
