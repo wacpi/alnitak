@@ -438,3 +438,22 @@ func ReplaceResource(ctx *gin.Context, replaceReq dto.ReplaceResourceReq) (vo.Re
 	global.Mysql.First(&updatedResource, replaceReq.ResourceID)
 	return vo.ResourceToResourceResp(updatedResource), nil
 }
+
+// GetResourceShortIDByPart 根据分P序号获取资源的ShortID
+// 用于历史记录绑定到具体资源，不受排序影响
+func GetResourceShortIDByPart(videoId uint, part uint) (string, error) {
+	if part == 0 {
+		part = 1
+	}
+	// 按 sort_order 和 id 排序，获取第 part-1 个资源
+	var resource model.Resource
+	err := global.Mysql.Model(&model.Resource{}).
+		Where("vid = ?", videoId).
+		Order("sort_order ASC, id ASC").
+		Offset(int(part - 1)).
+		First(&resource).Error
+	if err != nil {
+		return "", err
+	}
+	return resource.ShortID, nil
+}

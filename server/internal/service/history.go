@@ -18,6 +18,12 @@ func AddHistory(ctx *gin.Context, historyReq dto.HistoryReq) error {
 		historyReq.Part = 1
 	}
 
+	// 优先使用前端传入的ResourceShortID，否则通过part查询
+	resourceShortID := historyReq.ResourceShortID
+	if resourceShortID == "" {
+		resourceShortID, _ = GetResourceShortIDByPart(historyReq.Vid, historyReq.Part)
+	}
+
 	history, err := FindHistoryByPart(historyReq.Vid, userId, historyReq.Part)
 	if err != nil && err != gorm.ErrRecordNotFound {
 		utils.ErrorLog("保存历史记录失败", "history", err.Error())
@@ -26,11 +32,12 @@ func AddHistory(ctx *gin.Context, historyReq dto.HistoryReq) error {
 
 	if history.ID == 0 {
 		if err := global.Mysql.Create(&model.History{
-			Uid:      userId,
-			Vid:      historyReq.Vid,
-			Time:     historyReq.Time,
-			Part:     historyReq.Part,
-			Duration: historyReq.Duration,
+			Uid:               userId,
+			Vid:               historyReq.Vid,
+			Time:              historyReq.Time,
+			Part:              historyReq.Part,
+			Duration:          historyReq.Duration,
+			ResourceShortID:   resourceShortID,
 		}).Error; err != nil {
 			utils.ErrorLog("保存历史记录失败", "history", err.Error())
 			return errors.New("保存失败")
@@ -39,6 +46,9 @@ func AddHistory(ctx *gin.Context, historyReq dto.HistoryReq) error {
 		history.Time = historyReq.Time
 		history.Part = historyReq.Part
 		history.Duration = historyReq.Duration
+		if resourceShortID != "" {
+			history.ResourceShortID = resourceShortID
+		}
 		if err := global.Mysql.Save(&history).Error; err != nil {
 			utils.ErrorLog("保存历史记录失败", "history", err.Error())
 			return errors.New("保存失败")
@@ -123,6 +133,23 @@ func mergeHistoryPGCRowsIntoVideos(videos []vo.HistoryVideoResp, rows []historyP
 
 func GetHistoryProgress(ctx *gin.Context, videoId, part uint) (progress float64, realPart uint, err error) {
 	userId := ctx.GetUint("userId")
+	
+	// 优先通过ResourceShortID查找（不受排序影响）
+	if part > 0 {
+		resourceShortID, err := GetResourceShortIDByPart(videoId, part)
+		if err == nil && resourceShortID != "" {
+			var history model.History
+			err = global.Mysql.Where("vid = ? AND uid = ? AND resource_short_id = ?", videoId, userId, resourceShortID).First(&history).Error
+			if err == nil {
+				return history.Time, history.Part, nil
+			}
+			if err != gorm.ErrRecordNotFound {
+				utils.ErrorLog("通过ResourceShortID获取历史记录进度失败", "history", err.Error())
+			}
+		}
+	}
+	
+	// 回退：按旧逻辑查找
 	var history model.History
 	if part == 0 {
 		history, err = FindLatestHistory(videoId, userId)
