@@ -5,5 +5,5 @@ type HistoryReq struct {
 	Part              uint    `json:"part" form:"part"`
 	Time              float64 `json:"time" form:"time"`
 	Duration          float64 `json:"duration" form:"duration"`
-	ResourceShortID   string  `json:"resourceShortId" form:"resourceShortId"`
+	Rid               string  `json:"rid" form:"rid"`
 }

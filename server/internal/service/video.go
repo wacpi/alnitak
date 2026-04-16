@@ -1586,11 +1586,10 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 				continue
 			}
 
-			// 创建新的资源记录
-			rSid, errSid := AllocateUniqueResourceShortID()
-			if errSid != nil {
-				utils.ErrorLog("分配分P shortId 失败", "video", errSid.Error())
-				continue
+			// 复用原资源的 ShortID，确保历史记录/弹幕等绑定到 shortId 的数据不受影响
+			shortID := rf.resource.ShortID
+			if shortID == "" {
+				shortID, _ = AllocateUniqueResourceShortID()
 			}
 			newResource := model.Resource{
 				Vid:       videoId,
@@ -1600,7 +1599,7 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 				Status:    global.VIDEO_PROCESSING,
 				Duration:  utils.SecFromFloat(info.Duration),
 				FileID:    rf.vf.ID,
-				ShortID:   rSid,
+				ShortID:   shortID,
 			}
 			if err := global.Mysql.Create(&newResource).Error; err != nil {
 				utils.ErrorLog("创建新资源记录失败", "transcoding", err.Error())

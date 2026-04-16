@@ -38,7 +38,10 @@ func DeleteResource(ctx *gin.Context) {
 	// 获取参数
 	id := utils.StringToUint(ctx.Param("id"))
 
-	if err := service.DeleteResource(ctx, id); err != nil {
+	// 获取是否删除弹幕选项（默认为false）
+	deleteDanmaku := ctx.PostForm("deleteDanmaku") == "true"
+
+	if err := service.DeleteResource(ctx, id, deleteDanmaku); err != nil {
 		resp.FailWithMessage(ctx, err.Error())
 		return
 	}

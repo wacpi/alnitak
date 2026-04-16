@@ -84,8 +84,8 @@ func CollectRoutes(r *gin.Engine) *gin.Engine {
 		clientGroup := v1.Group("client")
 		clientGroup.Use(middleware.Auth())
 		clientGroup.POST("log", api.ClientLog)
-		// 登录注册相关路由路由
-		CollectAuthRoutes(v1)
+		// 用户认证相关路由
+		CollectUserAuthRoutes(v1)
 		// 用户相关路由
 		CollectUserRoutes(v1)
 		// 验证相关路由

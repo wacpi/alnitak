@@ -448,7 +448,7 @@ func GetPlaylistVideoListWithParts(ctx *gin.Context, videoId uint) gin.H {
 	// 3. 获取合集视频列表
 	_, rawVideos := GetPlaylistVideoList(ctx, first.ID, 1, 200)
 
-	// 4. 展开多分P视频
+// 4. 展开多分P视频
 	videos := make([]gin.H, 0)
 	for _, v := range rawVideos {
 		// 获取该视频的资源列表
@@ -458,42 +458,45 @@ func GetPlaylistVideoListWithParts(ctx *gin.Context, videoId uint) gin.H {
 			// 多分P，展开为多项
 			for i, r := range resources {
 				videos = append(videos, gin.H{
-					"vid":        v.Vid,
-					"shortId":    v.ShortID,
-					"title":      v.Title,
-					"cover":     v.Cover,
-					"duration":  r.Duration,
-					"clicks":    v.Clicks,
-					"desc":      v.Desc,
-					"p":         i + 1,
-					"partTitle":  r.Title,
+					"vid":         v.Vid,
+					"shortId":     v.ShortID,
+					"resourceRid": r.ShortID, // 资源的 shortId，用于精确匹配分P
+					"title":       v.Title,
+					"cover":       v.Cover,
+					"duration":    r.Duration,
+					"clicks":      v.Clicks,
+					"desc":        v.Desc,
+					"p":           i + 1,
+					"partTitle":   r.Title,
 				})
 			}
 		} else if len(resources) == 1 {
 			// 单分P
 			videos = append(videos, gin.H{
-				"vid":        v.Vid,
-				"shortId":   v.ShortID,
-				"title":     v.Title,
-				"cover":     v.Cover,
-				"duration": resources[0].Duration,
-				"clicks":    v.Clicks,
-				"desc":      v.Desc,
-				"p":        1,
-				"partTitle": nil,
+				"vid":         v.Vid,
+				"shortId":     v.ShortID,
+				"resourceRid": resources[0].ShortID, // 资源的 shortId
+				"title":       v.Title,
+				"cover":       v.Cover,
+				"duration":    resources[0].Duration,
+				"clicks":      v.Clicks,
+				"desc":        v.Desc,
+				"p":           1,
+				"partTitle":   nil,
 			})
 		} else {
 			// 无资源
 			videos = append(videos, gin.H{
-				"vid":        v.Vid,
-				"shortId":   v.ShortID,
-				"title":     v.Title,
-				"cover":     v.Cover,
-				"duration": 0,
-				"clicks":    v.Clicks,
-				"desc":      v.Desc,
-				"p":        nil,
-				"partTitle": nil,
+				"vid":         v.Vid,
+				"shortId":     v.ShortID,
+				"resourceRid": nil,
+				"title":       v.Title,
+				"cover":       v.Cover,
+				"duration":    0,
+				"clicks":      v.Clicks,
+				"desc":        v.Desc,
+				"p":           nil,
+				"partTitle":   nil,
 			})
 		}
 	}

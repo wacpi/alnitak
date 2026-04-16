@@ -38,7 +38,7 @@ func ModifyResourceTitle(ctx *gin.Context, modifyTitleReq dto.ModifyResourceTitl
 }
 
 // 删除资源
-func DeleteResource(ctx *gin.Context, id uint) error {
+func DeleteResource(ctx *gin.Context, id uint, deleteDanmaku bool) error {
 	var resource model.Resource
 	userId := ctx.GetUint("userId")
 	global.Mysql.Model(&model.Resource{}).Where("id = ? and uid = ?", id, userId).First(&resource)
@@ -78,6 +78,13 @@ func DeleteResource(ctx *gin.Context, id uint) error {
 
 	// 删除视频信息缓存（删除后让下次查询时重新从数据库加载）
 	cache.DelVideoInfo(resource.Vid)
+
+	// 删除关联弹幕（如果用户选择删除）
+	if deleteDanmaku && resource.ShortID != "" {
+		if err := global.Mysql.Where("rid = ?", resource.ShortID).Delete(&model.Danmaku{}).Error; err != nil {
+			utils.ErrorLog("删除弹幕失败", "resource", err.Error())
+		}
+	}
 
 	return nil
 }
