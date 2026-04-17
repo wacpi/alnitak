@@ -51,8 +51,12 @@ func FindArticleArchiveData(aid uint) vo.ArchiveStatResp {
 }
 
 // ShareVideo 视频分享计数+1
-func ShareVideo(ctx *gin.Context, vid uint) error {
-	result := global.Mysql.Model(&model.Video{}).Where("id = ?", vid).
+func ShareVideo(ctx *gin.Context, vid string) error {
+	videoId, err := ParseVideoID(vid)
+	if err != nil {
+		return errors.New("视频不存在")
+	}
+	result := global.Mysql.Model(&model.Video{}).Where("id = ?", videoId).
 		UpdateColumn("shares", gorm.Expr("shares + 1"))
 	if result.Error != nil {
 		return errors.New("分享失败")

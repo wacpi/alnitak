@@ -74,9 +74,17 @@ func GetArticleComment(ctx *gin.Context, vid uint, page, pageSize int) ([]vo.Com
 		return comments, total, errors.New("获取失败")
 	}
 
+	userId := ctx.GetUint("userId")
+	ids := make([]uint, len(comments))
+	for i := range comments {
+		ids[i] = comments[i].ID
+	}
+	likedSet := GetCommentLikedSet(userId, ids)
+
 	for i := 0; i < len(comments); i++ {
 		comments[i].Author = GetUserBaseInfo(comments[i].Uid)
-		comments[i].Reply, _ = FindArticleReplyList(comments[i].ID, 1, 3)
+		comments[i].Reply, _ = FindArticleReplyList(comments[i].ID, 1, 3, userId)
+		comments[i].Liked = likedSet[comments[i].ID]
 	}
 
 	return comments, total, nil
@@ -84,7 +92,8 @@ func GetArticleComment(ctx *gin.Context, vid uint, page, pageSize int) ([]vo.Com
 
 // 获取文章回复
 func GetArticleReply(ctx *gin.Context, commentId uint, page, pageSize int) ([]vo.ReplyResp, error) {
-	return FindArticleReplyList(commentId, page, pageSize)
+	userId := ctx.GetUint("userId")
+	return FindArticleReplyList(commentId, page, pageSize, userId)
 }
 
 // 删除评论回复
@@ -110,7 +119,12 @@ func DeleteArticleComment(ctx *gin.Context, id uint) error {
 	// 移除评论回复通知
 	RemoveReplyMessage(comment.ID)
 
-	// 删除子评论（所有parent_id等于当前评论id的评论）
+	// 收集要删除的评论ID（含子评论），用于级联清理点赞
+	var childIds []uint
+	global.Mysql.Model(&model.Comment{}).Where("parent_id = ?", id).Pluck("id", &childIds)
+	allIds := append(childIds, id)
+
+	// 删除子评论
 	if err := global.Mysql.Where("parent_id = ?", id).Delete(&model.Comment{}).Error; err != nil {
 		utils.ErrorLog("删除子评论失败", "comment", err.Error())
 	}
@@ -119,6 +133,9 @@ func DeleteArticleComment(ctx *gin.Context, id uint) error {
 		utils.ErrorLog("删除评论失败", "comment", err.Error())
 		return errors.New("删除失败")
 	}
+
+	// 级联清理点赞记录与点赞消息（孤儿数据）
+	CleanupCommentLikes(allIds)
 
 	return nil
 }
@@ -151,7 +168,7 @@ func GetArticleCommentList(ctx *gin.Context, cid uint, page, pageSize int) ([]vo
 	return comments, total, nil
 }
 
-func FindArticleReplyList(commentId uint, page, pageSize int) ([]vo.ReplyResp, error) {
+func FindArticleReplyList(commentId uint, page, pageSize int, userId uint) ([]vo.ReplyResp, error) {
 	var replies []vo.ReplyResp
 	err := global.Mysql.Model(&model.Comment{}).Select(vo.REPLY_FIELD).
 		Where("parent_id = ?", commentId).
@@ -161,8 +178,15 @@ func FindArticleReplyList(commentId uint, page, pageSize int) ([]vo.ReplyResp, e
 		return replies, errors.New("获取回复失败")
 	}
 
+	ids := make([]uint, len(replies))
+	for i := range replies {
+		ids[i] = replies[i].ID
+	}
+	likedSet := GetCommentLikedSet(userId, ids)
+
 	for i := 0; i < len(replies); i++ {
 		replies[i].Author = GetUserBaseInfo(replies[i].Uid)
+		replies[i].Liked = likedSet[replies[i].ID]
 	}
 
 	return replies, nil

@@ -8,8 +8,8 @@ import (
 
 const (
 	COMMENT_LIST_FIELD = "`id`,`vid`,`uid`,`content`,`at_usernames`,`at_user_ids`,`created_at`,`parent_id`"
-	COMMENT_FIELD      = "`comment`.`id`,`comment`.`uid`,`comment`.`content`,`comment`.`at_usernames`,`comment`.`at_user_ids`,`comment`.`created_at`,`comment`.`parent_id`,COUNT(`reply`.id) AS reply_count"
-	REPLY_FIELD        = "`id`,`uid`,`content`,`at_usernames`,`at_user_ids`,`created_at`,`parent_id`,`reply_user_id`,`reply_user_name`"
+	COMMENT_FIELD      = "`comment`.`id`,`comment`.`uid`,`comment`.`content`,`comment`.`at_usernames`,`comment`.`at_user_ids`,`comment`.`created_at`,`comment`.`parent_id`,COUNT(`reply`.id) AS reply_count,`comment`.`likes`"
+	REPLY_FIELD        = "`id`,`uid`,`content`,`at_usernames`,`at_user_ids`,`created_at`,`parent_id`,`reply_user_id`,`reply_user_name`,`likes`"
 )
 
 type CommentResp struct {
@@ -23,6 +23,8 @@ type CommentResp struct {
 	Author      UserInfoResp `json:"author" gorm:"-"`
 	Reply       []ReplyResp  `json:"reply" gorm:"-"`
 	ReplyCount  int64        `json:"replyCount"`
+	Likes       int          `json:"likes"`
+	Liked       bool         `json:"liked" gorm:"-"`
 }
 
 type AddCommentResp struct {
@@ -35,6 +37,7 @@ type AddCommentResp struct {
 	ParentId      uint      `json:"parentId"`
 	ReplyUserID   uint      `json:"replyUserId"`
 	ReplyUserName string    `json:"replyUserName"`
+	Likes         int       `json:"likes"`
 }
 
 type ReplyResp struct {
@@ -48,6 +51,8 @@ type ReplyResp struct {
 	ReplyUserName string       `json:"replyUserName"`
 	ParentId      uint         `json:"parentId"`
 	Author        UserInfoResp `json:"author" gorm:"-"`
+	Likes         int          `json:"likes"`
+	Liked         bool         `json:"liked" gorm:"-"`
 }
 
 type CommentListResp struct {
@@ -77,5 +82,13 @@ func CommentToCommentResp(comment model.Comment) AddCommentResp {
 		ParentId:      comment.ParentId,
 		ReplyUserID:   comment.ReplyUserID,
 		ReplyUserName: comment.ReplyUserName,
+		Likes:         comment.Likes,
 	}
+}
+
+type CommentInfoResp struct {
+	ID        uint      `json:"id"`
+	Content   string    `json:"content"`
+	Type      int       `json:"type"`
+	CreatedAt time.Time `json:"createdAt"`
 }

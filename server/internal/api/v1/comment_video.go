@@ -129,3 +129,52 @@ func GetVideoCommentList(ctx *gin.Context) {
 	// 返回
 	resp.OkWithData(ctx, gin.H{"comments": comments, "total": total})
 }
+
+// 点赞评论
+func LikeComment(ctx *gin.Context) {
+	commentId := utils.StringToUint(ctx.Param("id"))
+	if commentId == 0 {
+		resp.FailWithMessage(ctx, "评论ID不能为空")
+		return
+	}
+
+	if err := service.LikeComment(ctx, commentId); err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+
+	resp.Ok(ctx)
+}
+
+// 取消点赞评论
+func UnlikeComment(ctx *gin.Context) {
+	commentId := utils.StringToUint(ctx.Param("id"))
+	if commentId == 0 {
+		resp.FailWithMessage(ctx, "评论ID不能为空")
+		return
+	}
+
+	if err := service.UnlikeComment(ctx, commentId); err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+
+	resp.Ok(ctx)
+}
+
+// 获取评论点赞状态
+func GetCommentLikeStatus(ctx *gin.Context) {
+	commentId := utils.StringToUint(ctx.Query("commentId"))
+	if commentId == 0 {
+		resp.FailWithMessage(ctx, "评论ID不能为空")
+		return
+	}
+
+	liked, err := service.GetCommentLikeStatus(ctx, commentId)
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+
+	resp.OkWithData(ctx, gin.H{"liked": liked})
+}

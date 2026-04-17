@@ -71,7 +71,11 @@ func GetDanmakuCount(videoId uint) int64 {
 }
 
 func SendDanmaku(ctx *gin.Context, danmakuReq dto.DanmakuReq) error {
-	video := GetVideoInfo(danmakuReq.Vid)
+	videoId, err := ParseVideoID(danmakuReq.Vid)
+	if err != nil {
+		return errors.New("视频不存在")
+	}
+	video := GetVideoInfo(videoId)
 	if video.ID == 0 {
 		return errors.New("视频不存在")
 	}
@@ -86,7 +90,7 @@ func SendDanmaku(ctx *gin.Context, danmakuReq dto.DanmakuReq) error {
 	if danmakuReq.Rid != "" {
 		rid = danmakuReq.Rid
 	} else {
-		rid, _ = GetResourceShortIDByPart(danmakuReq.Vid, danmakuReq.Part)
+		rid, _ = GetResourceShortIDByPart(videoId, danmakuReq.Part)
 	}
 
 	// 保存到数据库（使用 video_short_id）

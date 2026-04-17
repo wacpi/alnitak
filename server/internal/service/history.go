@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -18,16 +19,25 @@ func AddHistory(ctx *gin.Context, historyReq dto.HistoryReq) error {
 		historyReq.Part = 1
 	}
 
+	// 转换 Vid 为字符串
+	vidStr := fmt.Sprintf("%v", historyReq.Vid)
+
+	// 解析视频ID（支持 shortId 或数字ID）
+	videoId, err := ParseVideoID(vidStr)
+	if err != nil {
+		return errors.New("视频不存在")
+	}
+
 	// 获取视频的 short_id
 	var video model.Video
-	if err := global.Mysql.Where("id = ?", historyReq.Vid).First(&video).Error; err != nil || video.ShortID == "" {
+	if err := global.Mysql.Where("id = ?", videoId).First(&video).Error; err != nil || video.ShortID == "" {
 		return errors.New("视频不存在")
 	}
 
 	// 优先使用前端传入的 rid
 	rid := historyReq.Rid
 	if rid == "" {
-		rid, _ = GetResourceShortIDByPart(historyReq.Vid, historyReq.Part)
+		rid, _ = GetResourceShortIDByPart(videoId, historyReq.Part)
 	}
 
 	// 优先通过 resource_short_id 查找（精准匹配，不受排序影响）
@@ -46,7 +56,7 @@ func AddHistory(ctx *gin.Context, historyReq dto.HistoryReq) error {
 				Uid:              userId,
 				Time:             historyReq.Time,
 				Part:             historyReq.Part,
-				Duration:         historyReq.Duration,
+				Duration:         float64(historyReq.Duration),
 				ResourceShortID:  rid,
 			}).Error; err != nil {
 				utils.ErrorLog("保存历史记录失败", "history", err.Error())
@@ -56,7 +66,7 @@ func AddHistory(ctx *gin.Context, historyReq dto.HistoryReq) error {
 			// 已存在，更新记录
 			history.Time = historyReq.Time
 			history.Part = historyReq.Part
-			history.Duration = historyReq.Duration
+			history.Duration = float64(historyReq.Duration)
 			history.ResourceShortID = rid
 			if err := global.Mysql.Save(&history).Error; err != nil {
 				utils.ErrorLog("保存历史记录失败", "history", err.Error())
@@ -68,7 +78,7 @@ func AddHistory(ctx *gin.Context, historyReq dto.HistoryReq) error {
 
 	// 回退到旧的按 video_short_id + uid 查询逻辑
 	var history model.History
-	err := global.Mysql.Where("video_short_id = ? AND uid = ?", video.ShortID, userId).First(&history).Error
+	err = global.Mysql.Where("video_short_id = ? AND uid = ?", video.ShortID, userId).First(&history).Error
 	if err != nil && err != gorm.ErrRecordNotFound {
 		utils.ErrorLog("保存历史记录失败", "history", err.Error())
 		return errors.New("保存失败")
@@ -80,7 +90,7 @@ func AddHistory(ctx *gin.Context, historyReq dto.HistoryReq) error {
 			Uid:              userId,
 			Time:             historyReq.Time,
 			Part:             historyReq.Part,
-			Duration:         historyReq.Duration,
+			Duration:         float64(historyReq.Duration),
 			ResourceShortID:  rid,
 		}).Error; err != nil {
 			utils.ErrorLog("保存历史记录失败", "history", err.Error())
@@ -89,7 +99,7 @@ func AddHistory(ctx *gin.Context, historyReq dto.HistoryReq) error {
 	} else {
 		history.Time = historyReq.Time
 		history.Part = historyReq.Part
-		history.Duration = historyReq.Duration
+		history.Duration = float64(historyReq.Duration)
 		if rid != "" {
 			history.ResourceShortID = rid
 		}

@@ -1041,14 +1041,14 @@ func deleteVideoAndRelatedData(id, ownerUid uint, video *model.Video) error {
 		utils.ErrorLog("删除视频关联资源失败", "video", err.Error())
 	}
 
-	// 删除关联的评论
-	if err := global.Mysql.Where("cid = ? and type = 0", id).Delete(&model.Comment{}).Error; err != nil {
-		utils.ErrorLog("删除视频关联评论失败", "video", err.Error())
-	}
+	// 删除关联的评论及级联点赞/点赞消息/回复消息
+	CleanupContentComments(id, global.CONTENT_TYPE_VIDEO)
 
 	// 删除关联的弹幕
-	if err := global.Mysql.Where("vid = ?", id).Delete(&model.Danmaku{}).Error; err != nil {
-		utils.ErrorLog("删除视频关联弹幕失败", "video", err.Error())
+	if video.ShortID != "" {
+		if err := global.Mysql.Where("video_short_id = ?", video.ShortID).Delete(&model.Danmaku{}).Error; err != nil {
+			utils.ErrorLog("删除视频关联弹幕失败", "video", err.Error())
+		}
 	}
 
 	// 删除关联的收藏记录
