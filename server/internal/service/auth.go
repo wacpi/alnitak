@@ -134,8 +134,6 @@ func GetAuthTypeByCode(code string) (*model.AuthType, error) {
 
 // AddUserAuth 添加用户认证
 func AddUserAuth(ctx *gin.Context, req dto.AddUserAuthReq) error {
-	userId := ctx.GetUint("userId")
-
 	// 验证认证类型存在且启用
 	authType, err := GetAuthTypeByID(req.AuthTypeID)
 	if err != nil {
@@ -165,9 +163,6 @@ func AddUserAuth(ctx *gin.Context, req dto.AddUserAuthReq) error {
 		utils.ErrorLog("添加用户认证失败", "auth", err.Error())
 		return errors.New("添加失败")
 	}
-
-	// 记录操作日志（如果需要）
-	_ = userId
 
 	return nil
 }
@@ -217,10 +212,10 @@ func DeleteUserAuth(ctx *gin.Context, req dto.DeleteUserAuthReq) error {
 	return nil
 }
 
-// GetUserAuthList 获取用户认证列表
-func GetUserAuthList(uid uint) (list []vo.UserAuthResp) {
+// GetUserAuthList 获取用户认证列表（公开，不含 ExtraData）
+func GetUserAuthList(uid uint) (list []vo.PublicUserAuthResp) {
 	global.Mysql.Model(&model.UserAuth{}).
-		Select("user_auth.id, user_auth.uid, user_auth.auth_type_id, user_auth.auth_type_code, user_auth.title, user_auth.desc, user_auth.extra_data, auth_type.name as auth_type_name, auth_type.icon as auth_type_icon, auth_type.color as auth_type_color, user_auth.created_at, user_auth.updated_at").
+		Select("user_auth.id, user_auth.uid, user_auth.auth_type_id, user_auth.auth_type_code, user_auth.title, user_auth.desc, auth_type.name as auth_type_name, auth_type.icon as auth_type_icon, auth_type.color as auth_type_color, user_auth.created_at, user_auth.updated_at").
 		Joins("LEFT JOIN auth_type ON user_auth.auth_type_id = auth_type.id").
 		Where("user_auth.uid = ?", uid).
 		Scan(&list)
@@ -256,11 +251,11 @@ func GetUserAuthByID(id uint) (*vo.UserAuthResp, error) {
 	return &userAuth, nil
 }
 
-// GetUserAuthByUid 根据用户ID获取认证信息
-func GetUserAuthByUid(uid uint) ([]vo.UserAuthResp, error) {
-	var list []vo.UserAuthResp
+// GetUserAuthByUid 根据用户ID获取认证信息（公开，不含 ExtraData）
+func GetUserAuthByUid(uid uint) ([]vo.PublicUserAuthResp, error) {
+	var list []vo.PublicUserAuthResp
 	err := global.Mysql.Model(&model.UserAuth{}).
-		Select("user_auth.id, user_auth.uid, user_auth.auth_type_id, user_auth.auth_type_code, user_auth.title, user_auth.desc, user_auth.extra_data, auth_type.name as auth_type_name, auth_type.icon as auth_type_icon, auth_type.color as auth_type_color, user_auth.created_at, user_auth.updated_at").
+		Select("user_auth.id, user_auth.uid, user_auth.auth_type_id, user_auth.auth_type_code, user_auth.title, user_auth.desc, auth_type.name as auth_type_name, auth_type.icon as auth_type_icon, auth_type.color as auth_type_color, user_auth.created_at, user_auth.updated_at").
 		Joins("LEFT JOIN auth_type ON user_auth.auth_type_id = auth_type.id").
 		Where("user_auth.uid = ?", uid).Find(&list).Error
 	if err != nil {
@@ -269,8 +264,8 @@ func GetUserAuthByUid(uid uint) ([]vo.UserAuthResp, error) {
 	return list, nil
 }
 
-// GetUserPrimaryAuth 获取用户主要认证（用于展示）
-func GetUserPrimaryAuth(uid uint) *vo.UserAuthResp {
+// GetUserPrimaryAuth 获取用户主要认证（用于展示，公开不含 ExtraData）
+func GetUserPrimaryAuth(uid uint) *vo.PublicUserAuthResp {
 	list := GetUserAuthList(uid)
 	if len(list) > 0 {
 		return &list[0]

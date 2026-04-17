@@ -17,12 +17,19 @@ func AddArticleComment(ctx *gin.Context) {
 		return
 	}
 
+	// cid 兼容 shortId 或数字 ID，统一解析为数字 ID
+	cid, err := service.ParseArticleID(addCommentReq.Cid)
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+
 	if utils.VerifyStringLength(addCommentReq.Content, "=", 0) {
 		resp.FailWithMessage(ctx, "评论或回复内容不能为空")
 		return
 	}
 
-	comment, err := service.AddArticleComment(ctx, addCommentReq)
+	comment, err := service.AddArticleComment(ctx, addCommentReq, cid)
 	if err != nil {
 		resp.FailWithMessage(ctx, err.Error())
 		return

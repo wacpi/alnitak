@@ -12,7 +12,8 @@ import (
 	"interastral-peace.com/alnitak/utils"
 )
 
-func AddArticleComment(ctx *gin.Context, addCommentReq dto.AddCommentReq) (vo.AddCommentResp, error) {
+// cid 为已解析好的文章数字 ID
+func AddArticleComment(ctx *gin.Context, addCommentReq dto.AddCommentReq, cid uint) (vo.AddCommentResp, error) {
     userId := ctx.GetUint("userId")
 
     // 处理@的用户
@@ -20,7 +21,7 @@ func AddArticleComment(ctx *gin.Context, addCommentReq dto.AddCommentReq) (vo.Ad
 
     // 保存到数据库
     comment := model.Comment{
-        Cid:           addCommentReq.Cid,
+        Cid:           cid,
         Uid:           userId,
         Content:       addCommentReq.Content,
         AtUsernames:   strings.Join(addCommentReq.At, ","),
@@ -37,14 +38,14 @@ func AddArticleComment(ctx *gin.Context, addCommentReq dto.AddCommentReq) (vo.Ad
     }
 
     // 发送回复通知
-    InsertReplyMessage(addCommentReq, comment.ID, userId, global.CONTENT_TYPE_ARTICLE)
+    InsertReplyMessage(addCommentReq, cid, comment.ID, userId, global.CONTENT_TYPE_ARTICLE)
 
     // 处理@通知
     if len(atUserIds) > 0 {
         newAtMsg := make([]model.AtMessage, len(atUserIds))
         for i := range atUserIds {
             newAtMsg[i].Uid = atUserIds[i]
-            newAtMsg[i].Cid = addCommentReq.Cid
+            newAtMsg[i].Cid = cid
             newAtMsg[i].Sid = userId
             newAtMsg[i].Type = global.CONTENT_TYPE_ARTICLE
         }

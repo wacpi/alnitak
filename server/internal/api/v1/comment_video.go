@@ -17,12 +17,19 @@ func AddVideoComment(ctx *gin.Context) {
 		return
 	}
 
+	// cid 兼容 shortId 或数字 ID，统一解析为数字 ID
+	cid, err := service.ParseVideoID(addCommentReq.Cid)
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+
 	if utils.VerifyStringLength(addCommentReq.Content, "=", 0) {
 		resp.FailWithMessage(ctx, "评论或回复内容不能为空")
 		return
 	}
 
-	comment, err := service.AddVideoComment(ctx, addCommentReq)
+	comment, err := service.AddVideoComment(ctx, addCommentReq, cid)
 	if err != nil {
 		resp.FailWithMessage(ctx, err.Error())
 		return
@@ -34,7 +41,11 @@ func AddVideoComment(ctx *gin.Context) {
 
 // 获取评论
 func GetVideoComment(ctx *gin.Context) {
-	cid := utils.StringToUint(ctx.Query("vid"))
+	cid, err := service.ParseVideoID(ctx.Query("vid"))
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
 	page := utils.StringToInt(ctx.Query("page"))
 	pageSize := utils.StringToInt(ctx.Query("pageSize"))
 
@@ -89,8 +100,18 @@ func DeleteVideoComment(ctx *gin.Context) {
 }
 
 // 获取视频评论列表
+// vid 为空时走"当前用户全部视频"逻辑，非空时兼容 shortId 与数字 ID
 func GetVideoCommentList(ctx *gin.Context) {
-	vid := utils.StringToUint(ctx.Query("vid"))
+	raw := ctx.Query("vid")
+	var vid uint
+	if raw != "" {
+		parsed, err := service.ParseVideoID(raw)
+		if err != nil {
+			resp.FailWithMessage(ctx, err.Error())
+			return
+		}
+		vid = parsed
+	}
 	page := utils.StringToInt(ctx.Query("page"))
 	pageSize := utils.StringToInt(ctx.Query("pageSize"))
 

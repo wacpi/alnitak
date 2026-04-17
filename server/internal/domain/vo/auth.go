@@ -36,7 +36,7 @@ type AuthTypeListResp struct {
 
 // ========== 用户认证 VO ==========
 
-// UserAuthResp 用户认证响应
+// UserAuthResp 用户认证响应（管理用，含 ExtraData）
 type UserAuthResp struct {
 	ID             uint      `json:"id"`
 	Uid            uint      `json:"uid"`
@@ -50,6 +50,21 @@ type UserAuthResp struct {
 	AuthTypeColor  string    `json:"authTypeColor"`  // 认证类型颜色
 	CreatedAt      time.Time `json:"createdAt"`
 	UpdatedAt      time.Time `json:"updatedAt"`
+}
+
+// PublicUserAuthResp 公开接口用户认证响应（不含 ExtraData，避免敏感材料泄露）
+type PublicUserAuthResp struct {
+	ID            uint      `json:"id"`
+	Uid           uint      `json:"uid"`
+	AuthTypeID    uint      `json:"authTypeId"`
+	AuthTypeCode  string    `json:"authTypeCode"`
+	Title         string    `json:"title"`
+	Desc          string    `json:"desc"`
+	AuthTypeName  string    `json:"authTypeName"`
+	AuthTypeIcon  string    `json:"authTypeIcon"`
+	AuthTypeColor string    `json:"authTypeColor"`
+	CreatedAt     time.Time `json:"createdAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
 }
 
 // UserAuthWithUserResp 用户认证（带用户信息）
