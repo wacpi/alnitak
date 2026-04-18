@@ -80,11 +80,13 @@ func GetArticleComment(ctx *gin.Context, vid uint, page, pageSize int) ([]vo.Com
 		ids[i] = comments[i].ID
 	}
 	likedSet := GetCommentLikedSet(userId, ids)
+	dislikedSet := GetCommentDislikedSet(userId, ids)
 
 	for i := 0; i < len(comments); i++ {
 		comments[i].Author = GetUserBaseInfo(comments[i].Uid)
 		comments[i].Reply, _ = FindArticleReplyList(comments[i].ID, 1, 3, userId)
 		comments[i].Liked = likedSet[comments[i].ID]
+		comments[i].Disliked = dislikedSet[comments[i].ID]
 	}
 
 	return comments, total, nil
@@ -183,10 +185,12 @@ func FindArticleReplyList(commentId uint, page, pageSize int, userId uint) ([]vo
 		ids[i] = replies[i].ID
 	}
 	likedSet := GetCommentLikedSet(userId, ids)
+	dislikedSet := GetCommentDislikedSet(userId, ids)
 
 	for i := 0; i < len(replies); i++ {
 		replies[i].Author = GetUserBaseInfo(replies[i].Uid)
 		replies[i].Liked = likedSet[replies[i].ID]
+		replies[i].Disliked = dislikedSet[replies[i].ID]
 	}
 
 	return replies, nil

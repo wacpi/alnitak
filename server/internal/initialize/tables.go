@@ -28,6 +28,7 @@ func InitTables() {
 	global.Mysql.AutoMigrate(&model.Review{})         // 视频审核表
 	global.Mysql.AutoMigrate(&model.Comment{})        // 评论回复表
 	global.Mysql.AutoMigrate(&model.CommentLike{})   // 评论点赞表
+	global.Mysql.AutoMigrate(&model.CommentDislike{}) // 评论点踩表
 	global.Mysql.AutoMigrate(&model.LikeVideo{})      // 视频点赞表
 	global.Mysql.AutoMigrate(&model.LikeArticle{})    // 文章点赞表
 	global.Mysql.AutoMigrate(&model.CollectVideo{})   // 视频收藏表

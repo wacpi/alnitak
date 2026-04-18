@@ -162,19 +162,35 @@ func UnlikeComment(ctx *gin.Context) {
 	resp.Ok(ctx)
 }
 
-// 获取评论点赞状态
-func GetCommentLikeStatus(ctx *gin.Context) {
-	commentId := utils.StringToUint(ctx.Query("commentId"))
+// 点踩评论
+func DislikeComment(ctx *gin.Context) {
+	commentId := utils.StringToUint(ctx.Param("id"))
 	if commentId == 0 {
 		resp.FailWithMessage(ctx, "评论ID不能为空")
 		return
 	}
 
-	liked, err := service.GetCommentLikeStatus(ctx, commentId)
-	if err != nil {
+	if err := service.DislikeComment(ctx, commentId); err != nil {
 		resp.FailWithMessage(ctx, err.Error())
 		return
 	}
 
-	resp.OkWithData(ctx, gin.H{"liked": liked})
+	resp.Ok(ctx)
 }
+
+// 取消点踩评论
+func UndislikeComment(ctx *gin.Context) {
+	commentId := utils.StringToUint(ctx.Param("id"))
+	if commentId == 0 {
+		resp.FailWithMessage(ctx, "评论ID不能为空")
+		return
+	}
+
+	if err := service.UndislikeComment(ctx, commentId); err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+
+	resp.Ok(ctx)
+}
+

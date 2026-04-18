@@ -82,11 +82,13 @@ func GetVideoComment(ctx *gin.Context, vid uint, page, pageSize int) ([]vo.Comme
 		ids[i] = comments[i].ID
 	}
 	likedSet := GetCommentLikedSet(userId, ids)
+	dislikedSet := GetCommentDislikedSet(userId, ids)
 
 	for i := 0; i < len(comments); i++ {
 		comments[i].Author = GetUserBaseInfo(comments[i].Uid)
 		comments[i].Reply, _ = FindVideoReplyList(comments[i].ID, 1, 3, userId)
 		comments[i].Liked = likedSet[comments[i].ID]
+		comments[i].Disliked = dislikedSet[comments[i].ID]
 	}
 
 	return comments, total, nil
@@ -185,10 +187,12 @@ func FindVideoReplyList(commentId uint, page, pageSize int, userId uint) ([]vo.R
 		ids[i] = replies[i].ID
 	}
 	likedSet := GetCommentLikedSet(userId, ids)
+	dislikedSet := GetCommentDislikedSet(userId, ids)
 
 	for i := 0; i < len(replies); i++ {
 		replies[i].Author = GetUserBaseInfo(replies[i].Uid)
 		replies[i].Liked = likedSet[replies[i].ID]
+		replies[i].Disliked = dislikedSet[replies[i].ID]
 	}
 
 	return replies, nil
@@ -214,8 +218,21 @@ func LikeComment(ctx *gin.Context, commentId uint) error {
 			return errors.New("已点赞")
 		}
 		// 原子自增点赞数，避免 read-then-write 丢失更新
-		return tx.Model(&model.Comment{}).Where("id = ?", commentId).
-			Update("likes", gorm.Expr("likes + ?", 1)).Error
+		if err := tx.Model(&model.Comment{}).Where("id = ?", commentId).
+			Update("likes", gorm.Expr("likes + ?", 1)).Error; err != nil {
+			return err
+		}
+		// 互斥：若已点踩，清除点踩并原子递减点踩数
+		delRes := tx.Where("comment_id = ? AND uid = ?", commentId, userId).Delete(&model.CommentDislike{})
+		if delRes.Error != nil {
+			return delRes.Error
+		}
+		if delRes.RowsAffected > 0 {
+			return tx.Model(&model.Comment{}).
+				Where("id = ? AND dislikes > 0", commentId).
+				Update("dislikes", gorm.Expr("dislikes - ?", 1)).Error
+		}
+		return nil
 	})
 	if err != nil {
 		if err.Error() == "已点赞" {
@@ -283,17 +300,6 @@ func UnlikeComment(ctx *gin.Context, commentId uint) error {
 	}()
 
 	return nil
-}
-
-// 查询评论点赞状态
-func GetCommentLikeStatus(ctx *gin.Context, commentId uint) (bool, error) {
-	userId := ctx.GetUint("userId")
-	if userId == 0 {
-		return false, nil
-	}
-	var count int64
-	global.Mysql.Model(&model.CommentLike{}).Where("comment_id = ? and uid = ?", commentId, userId).Count(&count)
-	return count > 0, nil
 }
 
 // 批量查询当前用户对一组评论的点赞状态

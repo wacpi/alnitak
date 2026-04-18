@@ -8,8 +8,8 @@ import (
 
 const (
 	COMMENT_LIST_FIELD = "`id`,`vid`,`uid`,`content`,`at_usernames`,`at_user_ids`,`created_at`,`parent_id`"
-	COMMENT_FIELD      = "`comment`.`id`,`comment`.`uid`,`comment`.`content`,`comment`.`at_usernames`,`comment`.`at_user_ids`,`comment`.`created_at`,`comment`.`parent_id`,COUNT(`reply`.id) AS reply_count,`comment`.`likes`"
-	REPLY_FIELD        = "`id`,`uid`,`content`,`at_usernames`,`at_user_ids`,`created_at`,`parent_id`,`reply_user_id`,`reply_user_name`,`likes`"
+	COMMENT_FIELD      = "`comment`.`id`,`comment`.`uid`,`comment`.`content`,`comment`.`at_usernames`,`comment`.`at_user_ids`,`comment`.`created_at`,`comment`.`parent_id`,COUNT(`reply`.id) AS reply_count,`comment`.`likes`,`comment`.`dislikes`"
+	REPLY_FIELD        = "`id`,`uid`,`content`,`at_usernames`,`at_user_ids`,`created_at`,`parent_id`,`reply_user_id`,`reply_user_name`,`likes`,`dislikes`"
 )
 
 type CommentResp struct {
@@ -25,6 +25,8 @@ type CommentResp struct {
 	ReplyCount  int64        `json:"replyCount"`
 	Likes       int          `json:"likes"`
 	Liked       bool         `json:"liked" gorm:"-"`
+	Dislikes    int          `json:"dislikes"`
+	Disliked    bool         `json:"disliked" gorm:"-"`
 }
 
 type AddCommentResp struct {
@@ -53,6 +55,8 @@ type ReplyResp struct {
 	Author        UserInfoResp `json:"author" gorm:"-"`
 	Likes         int          `json:"likes"`
 	Liked         bool         `json:"liked" gorm:"-"`
+	Dislikes      int          `json:"dislikes"`
+	Disliked      bool         `json:"disliked" gorm:"-"`
 }
 
 type CommentListResp struct {
