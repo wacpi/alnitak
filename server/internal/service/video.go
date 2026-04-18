@@ -1541,19 +1541,17 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 	for _, rf := range rfInfos {
 		dirsToClean[rf.vf.DirName] = true
 	}
-	// 收集旧目录、删除旧 VideoIndexFile 和软删除旧资源（Unscoped 确保能找到已软删除的记录）
+	// 收集旧目录、删除旧 VideoIndexFile 与旧资源（Unscoped 确保能找到已软删除的记录）
+	// 注意：这里必须硬删除旧 resource。用户侧数据（弹幕/历史/收藏/点赞）全部通过 short_id 或 vid 关联，
+	// 新资源复用原 ShortID 即可保住绑定；按 resource.id 关联的 video_index_file / video_file_ref 本就由转码重建。
+	// 如果软删除，旧行仍占用 UNIQUE(short_id) 索引，新资源 Create 时会报 Duplicate entry (Error 1062)。
 	for _, resource := range resources {
 		var indexFile model.VideoIndexFile
 		if err := global.Mysql.Unscoped().Where("resource_id = ?", resource.ID).First(&indexFile).Error; err == nil && indexFile.DirName != "" {
 			dirsToClean[indexFile.DirName] = true
 		}
 		global.Mysql.Unscoped().Where("resource_id = ?", resource.ID).Delete(&model.VideoIndexFile{})
-		if resource.DeletedAt.Valid {
-			// 已经软删除过的，硬删除避免持续累积垃圾记录
-			global.Mysql.Unscoped().Delete(&resource)
-		} else {
-			global.Mysql.Delete(&resource)
-		}
+		global.Mysql.Unscoped().Delete(&resource)
 	}
 
 	// 清理旧转码文件
