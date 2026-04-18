@@ -94,21 +94,54 @@ func SendDanmaku(ctx *gin.Context, danmakuReq dto.DanmakuReq) error {
 	}
 
 	// 保存到数据库（使用 video_short_id）
-	if err := global.Mysql.Create(&model.Danmaku{
+	danmaku := model.Danmaku{
 		VideoShortID:     video.ShortID,
-		Uid:               userId,
-		Part:              danmakuReq.Part,
+		Uid:              userId,
+		Part:             danmakuReq.Part,
 		ResourceShortID:  rid,
-		Time:              danmakuReq.Time,
-		Type:              danmakuReq.Type,
-		Color:             danmakuReq.Color,
-		Text:              danmakuReq.Text,
-	}).Error; err != nil {
+		Time:             danmakuReq.Time,
+		Type:             danmakuReq.Type,
+		Color:            danmakuReq.Color,
+		Text:             danmakuReq.Text,
+	}
+	if err := global.Mysql.Create(&danmaku).Error; err != nil {
 		utils.ErrorLog("保存弹幕失败", "danmaku", err.Error())
 		return errors.New("发送失败")
 	}
 
+	// 广播弹幕消息给同视频的所有用户
+	BroadcastDanmaku(videoId, danmaku)
+
 	return nil
+}
+
+// BroadcastDanmaku 广播弹幕消息
+func BroadcastDanmaku(videoId uint, danmaku model.Danmaku) {
+	// 构造弹幕响应
+	danmakuResp := vo.DanmakuResp{
+		ID:               danmaku.ID,
+		Time:             danmaku.Time,
+		Type:             danmaku.Type,
+		Color:            danmaku.Color,
+		Text:             danmaku.Text,
+		Part:             danmaku.Part,
+		ResourceShortID:  danmaku.ResourceShortID,
+		CreatedAt:        danmaku.CreatedAt,
+	}
+
+	// 广播给该视频所有分组的观众（包括无rid和有rid的）
+	// 无rid分组（只传vid没传rid的用户）
+	setMessageAllClient(groupVideoRid(videoId, ""), gin.H{
+		"type":    "danmaku",
+		"danmaku": danmakuResp,
+	})
+	// 有rid分组（传了rid的用户）
+	if danmaku.ResourceShortID != "" {
+		setMessageAllClient(groupVideoRid(videoId, danmaku.ResourceShortID), gin.H{
+			"type":    "danmaku",
+			"danmaku": danmakuResp,
+		})
+	}
 }
 
 // MigrateAllDanmakuAndHistoryResourceShortID 迁移所有视频的弹幕和历史记录的 resource_short_id
