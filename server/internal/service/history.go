@@ -114,11 +114,12 @@ func AddHistory(ctx *gin.Context, historyReq dto.HistoryReq) error {
 
 func GetHistoryList(ctx *gin.Context, page, pageSize int) (videos []vo.HistoryVideoResp, err error) {
 	userId := ctx.GetUint("userId")
-	// 改为通过 video_short_id 分组
-	subQuery := global.Mysql.Model(&model.History{}).Where("uid = ?", userId).Select("video_short_id, MAX(updated_at) as latest_updated_at").Group("video_short_id")
+	subQuery := global.Mysql.Model(&model.History{}).Where("uid = ?", userId).
+		Select("video_short_id, MAX(updated_at) as latest_updated_at, MAX(id) as latest_id").
+		Group("video_short_id")
 	if err := global.Mysql.Model(&model.History{}).Select(vo.HISTORY_VIDEO_FIELD).
 		Joins("LEFT JOIN `video` ON `video`.short_id = `history`.video_short_id").
-		Joins("INNER JOIN (?) latest on `history`.video_short_id = latest.video_short_id and `history`.updated_at = latest.latest_updated_at", subQuery).
+		Joins("INNER JOIN (?) latest on `history`.video_short_id = latest.video_short_id and `history`.updated_at = latest.latest_updated_at and `history`.id = latest.latest_id", subQuery).
 		Where("`history`.uid = ? and video.deleted_at is null and video.`status` = ?", userId, global.AUDIT_APPROVED).
 		Order("`history`.`updated_at` desc").Limit(pageSize).Offset((page - 1) * pageSize).
 		Find(&videos).Error; err != nil {
