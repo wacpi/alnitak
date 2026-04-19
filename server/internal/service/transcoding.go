@@ -739,16 +739,16 @@ func (s *TranscodeService) runVideoEncodeTask(
 
 	if useGpu {
 		args = append(args,
-			"-c:v", "h264_nvenc", "-cq", "20", "-preset", "p6", "-rc", "vbr",
-			"-profile:v", "high", "-pix_fmt", "yuv420p", "-bf", "3", "-b_ref_mode", "middle",
-			"-rc-lookahead", "32", "-temporal-aq", "1", "-spatial-aq", "1", "-aq-strength", "8",
-			"-no-scenecut", "1", "-forced-idr", "1",
+			"-c:v", "h264_nvenc", "-cq", "23", "-preset", "p4", "-rc", "vbr",
+			"-profile:v", "high", "-pix_fmt", "yuv420p", "-bf", "2", "-b_ref_mode", "middle",
+			"-forced-idr", "1",
 		)
 	} else {
 		args = append(args,
 			"-c:v", "libx264", "-preset", "medium", "-crf", "20", "-tune", "film",
 			"-profile:v", "high", "-pix_fmt", "yuv420p", "-bf", "3", "-b_strategy", "2",
 			"-flags", "+cgop", "-sc_threshold", "0",
+			"-refs", "6", "-me_method", "hex", "-subq", "9",
 		)
 	}
 
