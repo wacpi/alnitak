@@ -807,7 +807,7 @@ func encodeAudioOnly(ctx context.Context, inputFile, outputFile string, audioBit
 		"-map", "[aout]", "-vn", "-c:a", "aac", "-b:a", bitRateStr,
 		"-ar", sampleRateStr, "-ac", channelsStr, "-f", "mp4",
 		"-frag_duration", FragDurationUs,
-		"-movflags", "+frag_keyframe+empty_moov+default_base_moof+dash+global_sidx",
+		"-movflags", "+frag_keyframe+empty_moov+default_base_moof+dash+global_sidx+negative_cts_offsets",
 		"-y", outputFile,
 	}
 
