@@ -718,7 +718,8 @@ func (s *TranscodeService) runVideoEncodeTask(
 	}
 	gopSizeStr := strconv.Itoa(gopSize)
 	targetRate, maxrate, bufsize := buildRateControlParams(rate)
-	scaleFilter := fmt.Sprintf("scale=%s:flags=lanczos", quality)
+	// fps 过滤器强制精确 CFR（修复 59.94 源→30 输出时 avg_fps 漂移到 28.5 的问题）
+	scaleFilter := fmt.Sprintf("fps=%s,scale=%s:flags=lanczos", fps, quality)
 
 	// 【核心修复】防止 FFmpeg 默认吃光所有 CPU 引发 OS 上下文切换风暴
 	numCPU := runtime.NumCPU()
