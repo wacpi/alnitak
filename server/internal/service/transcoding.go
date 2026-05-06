@@ -278,10 +278,11 @@ func (s *TranscodeService) processSingleQuality(
 	}
 
 	// 音频同步处理
-	err := audioTask.DoOrWait(subCtx, func() error {
-		utils.InfoLog(fmt.Sprintf("【编码音频】audio.m4s (码率=%dk)", info.AudioBitRate/1000), "transcoding")
-		return encodeAudioOnly(subCtx, info.InputFile, audioFile, info.AudioBitRate, info.AudioSampleRate, info.AudioChannels)
-	})
+		err := audioTask.DoOrWait(subCtx, func() error {
+			utils.InfoLog(fmt.Sprintf("【编码音频】audio.m4s (码率=%dk)", info.AudioBitRate/1000), "transcoding")
+			leadMs := bFramePresentationLeadMs(t.FPS)
+			return encodeAudioOnly(subCtx, info.InputFile, audioFile, info.AudioBitRate, info.AudioSampleRate, info.AudioChannels, info.Duration, leadMs)
+		})
 	if err != nil {
 		s.markQualityFailed(info.ResourceID, qualityName)
 		return fmt.Errorf("【音频等待失败】%s: %w", qualityName, err)
@@ -706,7 +707,9 @@ func (s *TranscodeService) GetTranscodingProcessCount(videoID uint) int {
 // 第七部分：FFmpeg 指令动态拼接 (解决严重代码重复与CPU饥饿问题)
 // ==============================================================================
 
-// runVideoEncodeTask 动态合并构建 CPU 与 GPU 编码指令，消除 DRY 违规
+// runVideoEncodeTask 动态合并构建 CPU 与 GPU 编码指令，消除 DRY 违规。
+// 帧率模式使用 -fps_mode cfr（FFmpeg 文档：-vsync 已弃用，宜用 -fps_mode）。
+// 输出时长使用与音轨相同的 -t，见 ffmpegOutputDurationArgs。
 func (s *TranscodeService) runVideoEncodeTask(
 	ctx context.Context, videoID, resourceID uint, inputFile, outputFile, quality, rate, fps, progressQuality string,
 	totalDuration float64, useGpu bool, cancelFunc context.CancelFunc,
@@ -737,6 +740,8 @@ func (s *TranscodeService) runVideoEncodeTask(
 		"-an",
 	}
 
+	// 保留 B 帧；首帧展示时刻相对 t=0 常延后约 2 帧（参见 ffprobe stream start_time）。
+	// 音轨侧用 adelay 注入等量前置静声与视频首画对齐（ffmpeg 滤镜 adelay）。
 	if useGpu {
 		args = append(args,
 			"-c:v", "h264_nvenc", "-cq", "23", "-preset", "p4", "-rc", "vbr",
@@ -759,15 +764,26 @@ func (s *TranscodeService) runVideoEncodeTask(
 	)
 
 	if useGpu {
-		args = append(args, "-strict_gop", "1")
+		args = append(args,
+			// NVENC：与 CFR GOP 对齐，减少与 -fps_mode cfr 组合的边界抖动（参见 FFmpeg h264_nvenc 文档 strict_gop）
+			"-strict_gop", "1",
+			"-delay", "0",
+		)
 	}
 
+	// cfr：按请求帧率重复/丢桢，与前置 fps 滤镜共同保证恒定帧率（ffmpeg.html「fps_mode / cfr」）
 	args = append(args,
-		"-vsync", "cfr", "-progress", "pipe:1", "-nostats", "-f", "mp4",
+		"-fps_mode", "cfr",
+		"-progress", "pipe:1", "-nostats",
+		"-f", "mp4",
 		"-frag_duration", FragDurationUs,
 		"-movflags", "+frag_keyframe+empty_moov+default_base_moof+dash+global_sidx+negative_cts_offsets",
-		"-avoid_negative_ts", "make_zero", "-y", outputFile,
+		"-avoid_negative_ts", "make_zero",
 	)
+	if dur := ffmpegOutputDurationArgs(totalDuration); dur != nil {
+		args = append(args, dur...)
+	}
+	args = append(args, "-y", outputFile)
 
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	var stderr strings.Builder
@@ -796,21 +812,39 @@ func (s *TranscodeService) runVideoEncodeTask(
 	return nil
 }
 
-func encodeAudioOnly(ctx context.Context, inputFile, outputFile string, audioBitRate, audioSampleRate, audioChannels int) error {
+// encodeAudioOnly 与视频轨共用同一内容基准时长 durationSec（来自 ProcessVideoInfo）。
+// presentationLeadMs>0 时：adelay 在头部插入静声（https://ffmpeg.org/ffmpeg-filters.html#adelay）；
+// 输出 -t 使用 durationSec + leadSec，与 ffmpeg「-t 作输出选项」语义一致，为前置静声留出时间轴，
+// 避免原先固定 durationSec 截断导致挤掉末尾约 leadMs 的有效采样。视频轨仅用 durationSec。
+func encodeAudioOnly(ctx context.Context, inputFile, outputFile string, audioBitRate, audioSampleRate, audioChannels int, durationSec float64, presentationLeadMs int) error {
 	bitRateStr := fmt.Sprintf("%dk", audioBitRate/1000)
 	sampleRateStr := strconv.Itoa(audioSampleRate)
 	channelsStr := strconv.Itoa(audioChannels)
 
+	adelayArg := adelayPerChannelArg(presentationLeadMs, audioChannels)
+	audioFilter := fmt.Sprintf("[0:a]asetpts=PTS-STARTPTS,aresample=osr=%s", sampleRateStr)
+	if adelayArg != "" {
+		audioFilter += ",adelay=" + adelayArg
+	}
+	audioFilter += "[aout]"
+	audioOutputDur := durationSec
+	if presentationLeadMs > 0 {
+		audioOutputDur += float64(presentationLeadMs) / 1000.0
+	}
 	command := []string{
 		"-i", inputFile,
-		"-filter_complex", "[0:a]asetpts=PTS-STARTPTS,aresample=async=1[aout]",
+		"-filter_complex", audioFilter,
 		"-map", "[aout]", "-vn", "-c:a", "aac", "-b:a", bitRateStr,
-		"-ar", sampleRateStr, "-ac", channelsStr, "-f", "mp4",
+		"-ar", sampleRateStr, "-ac", channelsStr,
+		"-f", "mp4",
 		"-frag_duration", FragDurationUs,
 		"-movflags", "+frag_keyframe+empty_moov+default_base_moof+dash+global_sidx+negative_cts_offsets",
-		"-y", outputFile,
+		"-avoid_negative_ts", "make_zero",
 	}
-
+	if dur := ffmpegOutputDurationArgs(audioOutputDur); dur != nil {
+		command = append(command, dur...)
+	}
+	command = append(command, "-y", outputFile)
 	cmd := exec.CommandContext(ctx, "ffmpeg", command...)
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
@@ -823,6 +857,91 @@ func encodeAudioOnly(ctx context.Context, inputFile, outputFile string, audioBit
 // ==============================================================================
 // 第八部分：辅助工具函数 (纯函数)
 // ==============================================================================
+
+// ffmpegOutputDurationArgs 在写出文件前附加「-t duration」作为**输出选项**。
+// 官方说明见 https://ffmpeg.org/ffmpeg.html 中「-t duration (input/output)」：
+// 作为输出选项时，表示输出时长达到给定值后停止写入。音视频两次编码传入同一 duration
+// 可显著收敛分离封装（fMP4 + DASH）下片尾时长漂移。
+func ffmpegOutputDurationArgs(seconds float64) []string {
+	if seconds <= 0 || math.IsNaN(seconds) || math.IsInf(seconds, 0) {
+		return nil
+	}
+	// 与 ffmpeg 时间语法兼容的十进制秒（去掉无意义尾随 0）
+	s := strings.TrimRight(strings.TrimRight(strconv.FormatFloat(seconds, 'f', 6, 64), "0"), ".")
+	if s == "" {
+		return nil
+	}
+	return []string{"-t", s}
+}
+
+func parseProbDuration(s string) float64 {
+	if s == "" {
+		return 0
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil || v <= 0 {
+		return 0
+	}
+	return v
+}
+
+// minEncodeDurationSeconds 取 ffprobe 中 format / 视频轨 / 音频轨 时长的**最小正数**，
+// 避免按单一轨时长编码导致另一轨提前结束或片尾 Silent 拉长（分离轨时表现为 A/V 时长差）。
+func minEncodeDurationSeconds(formatDur string, videoStream, audioStream *global.Streams) float64 {
+	var candidates []float64
+	if d := parseProbDuration(formatDur); d > 0 {
+		candidates = append(candidates, d)
+	}
+	if videoStream != nil {
+		if d := parseProbDuration(videoStream.Duration); d > 0 {
+			candidates = append(candidates, d)
+		}
+	}
+	if audioStream != nil {
+		if d := parseProbDuration(audioStream.Duration); d > 0 {
+			candidates = append(candidates, d)
+		}
+	}
+	if len(candidates) == 0 {
+		return 0
+	}
+	m := candidates[0]
+	for _, d := range candidates[1:] {
+		if d < m {
+			m = d
+		}
+	}
+	return m
+}
+
+// bFramePresentationLeadMs 按目标帧率估计视频首帧「展示」相对 t=0 的毫秒延迟（与 IPB 下约 2 帧同量纲）。
+func bFramePresentationLeadMs(fps string) int {
+	f := parseFPS(fps)
+	if f <= 0 {
+		return 0
+	}
+	ms := int(math.Round(2000.0 / f))
+	if ms < 1 {
+		return 0
+	}
+	if ms > 200 {
+		return 200
+	}
+	return ms
+}
+
+// adelayPerChannelArg 生成 FFmpeg adelay 的「del0|del1|…」语法（各声道相等）。
+func adelayPerChannelArg(delayMs, channels int) string {
+	if delayMs <= 0 || channels < 1 {
+		return ""
+	}
+	s := strconv.Itoa(delayMs)
+	parts := make([]string, channels)
+	for i := range parts {
+		parts[i] = s
+	}
+	return strings.Join(parts, "|")
+}
 
 func watchFFmpegProgress(scanner *bufio.Scanner, resourceID uint, quality string, totalDuration float64, svc *TranscodeService) {
 	if totalDuration <= 0 {
@@ -917,11 +1036,14 @@ func ProcessVideoInfo(input string) (*dto.TranscodingInfo, error) {
 	ti.Height = videoStream.Height
 	ti.CodecName = videoStream.CodecName
 
-	durStr := videoStream.Duration
-	if durStr == "" {
-		durStr = videoData.Format.Duration
+	ti.Duration = minEncodeDurationSeconds(videoData.Format.Duration, videoStream, audioStream)
+	if ti.Duration <= 0 {
+		durStr := videoStream.Duration
+		if durStr == "" {
+			durStr = videoData.Format.Duration
+		}
+		ti.Duration, _ = strconv.ParseFloat(durStr, 64)
 	}
-	ti.Duration, _ = strconv.ParseFloat(durStr, 64)
 	ti.FPS = videoStream.AvgFrameRate
 	ti.FPS30, ti.FPS60 = getFpsInfo(ti.FPS)
 

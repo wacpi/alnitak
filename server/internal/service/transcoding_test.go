@@ -1,6 +1,10 @@
 package service
 
-import "testing"
+import (
+	"testing"
+
+	"interastral-peace.com/alnitak/internal/global"
+)
 
 func TestAvc1CodecStringFromH264ProfileLevel(t *testing.T) {
 	tests := []struct {
@@ -232,6 +236,52 @@ func TestParseBitrateKbps(t *testing.T) {
 					tt.input, result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestFfmpegOutputDurationArgs(t *testing.T) {
+	if got := ffmpegOutputDurationArgs(0); got != nil {
+		t.Fatalf("expected nil for 0, got %#v", got)
+	}
+	got := ffmpegOutputDurationArgs(120.5)
+	if len(got) != 2 || got[0] != "-t" || got[1] != "120.5" {
+		t.Fatalf("120.5: got %#v", got)
+	}
+	got = ffmpegOutputDurationArgs(210.043121)
+	if len(got) != 2 || got[0] != "-t" || got[1] != "210.043121" {
+		t.Fatalf("210.043121: got %#v", got)
+	}
+}
+
+func TestMinEncodeDurationSeconds(t *testing.T) {
+	v := &global.Streams{Duration: "210.05"}
+	a := &global.Streams{Duration: "209.90"}
+	if m := minEncodeDurationSeconds("210.10", v, a); m != 209.90 {
+		t.Fatalf("want 209.90 min, got %v", m)
+	}
+	if m := minEncodeDurationSeconds("", v, nil); m != 210.05 {
+		t.Fatalf("want 210.05, got %v", m)
+	}
+}
+
+func TestBFramePresentationLeadMs(t *testing.T) {
+	if bFramePresentationLeadMs("30") != 67 {
+		t.Fatalf("30fps: want 67ms, got %d", bFramePresentationLeadMs("30"))
+	}
+	if bFramePresentationLeadMs("60000/1001") != 33 {
+		t.Fatalf("59.94: want 33ms, got %d", bFramePresentationLeadMs("60000/1001"))
+	}
+}
+
+func TestAdelayPerChannelArg(t *testing.T) {
+	if adelayPerChannelArg(0, 2) != "" {
+		t.Fatal()
+	}
+	if adelayPerChannelArg(67, 2) != "67|67" {
+		t.Fatalf("got %q", adelayPerChannelArg(67, 2))
+	}
+	if adelayPerChannelArg(50, 1) != "50" {
+		t.Fatalf("got %q", adelayPerChannelArg(50, 1))
 	}
 }
 
