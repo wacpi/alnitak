@@ -137,6 +137,7 @@ func CollectRoutes(r *gin.Engine) *gin.Engine {
 
 	// 获取静态文件
 	r.GET("/api/image/:file", api.GetImgFile)
+	r.GET("/api/subtitle/:file", middleware.OptionalAuth(), api.GetSubtitleFile)
 	// 后台静态页（如 PGC 管理）
 	r.Static("/admin", "./static/admin")
 

@@ -51,6 +51,7 @@ func InitTables() {
 	global.Mysql.AutoMigrate(&model.PGCMedia{})       // PGC媒体表（media层）
 	global.Mysql.AutoMigrate(&model.PGCContent{})     // PGC内容表
 	global.Mysql.AutoMigrate(&model.PGCEpisode{})     // PGC剧集表
+	global.Mysql.AutoMigrate(&model.SubtitleTrack{})  // 分P字幕轨
 	// 认证相关表
 	global.Mysql.AutoMigrate(&model.AuthType{})      // 认证类型配置表
 	global.Mysql.AutoMigrate(&model.UserAuth{})       // 用户认证记录表
