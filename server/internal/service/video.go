@@ -841,6 +841,13 @@ func GetUploadVideoList(ctx *gin.Context, page, pageSize int, category string) (
 		Offset((page - 1) * pageSize).
 		Scan(&videos)
 
+	// 确保 shortId 有值
+	for i := range videos {
+		if videos[i].ShortID == "" {
+			videos[i].ShortID = utils.UintToString(videos[i].ID)
+		}
+	}
+
 	// 更新播放量数据并收集需要返回转码进度的视频
 	transcodingVideoIDs := make([]uint, 0)
 	for i := 0; i < len(videos); i++ {
@@ -1145,9 +1152,19 @@ func GetVideoById(ctx *gin.Context, videoId uint) (vo.VideoResp, error) {
 }
 
 // 获取所有的视频列表
-func GetAllVideoList(ctx *gin.Context) (videos []vo.AllVideoResp) {
+func GetAllVideoList(ctx *gin.Context, page, pageSize int) (total int64, videos []vo.AllVideoResp) {
 	userId := ctx.GetUint("userId")
-	global.Mysql.Model(&model.Video{}).Select("`id`,`title`,`cover`").Where("uid = ?", userId).Scan(&videos)
+	global.Mysql.Model(&model.Video{}).Where("uid = ?", userId).Count(&total)
+	global.Mysql.Model(&model.Video{}).Select("`id`,`title`,`cover`,`short_id`").
+		Where("uid = ?", userId).
+		Order("created_at DESC").
+		Limit(pageSize).Offset((page - 1) * pageSize).Scan(&videos)
+
+	for i := range videos {
+		if videos[i].ShortID == "" {
+			videos[i].ShortID = utils.UintToString(videos[i].ID)
+		}
+	}
 
 	return
 }

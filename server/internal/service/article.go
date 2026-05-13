@@ -188,9 +188,19 @@ func DeleteArticle(ctx *gin.Context, id uint) error {
 }
 
 // 获取所有的文章列表
-func GetAllArticleList(ctx *gin.Context) (articles []vo.AllArticleResp) {
+func GetAllArticleList(ctx *gin.Context, page, pageSize int) (total int64, articles []vo.AllArticleResp) {
 	userId := ctx.GetUint("userId")
-	global.Mysql.Model(&model.Article{}).Select("`id`,`title`").Where("uid = ?", userId).Scan(&articles)
+	global.Mysql.Model(&model.Article{}).Where("uid = ?", userId).Count(&total)
+	global.Mysql.Model(&model.Article{}).Select("`id`,`short_id`,`title`").
+		Where("uid = ?", userId).
+		Order("created_at DESC").
+		Limit(pageSize).Offset((page - 1) * pageSize).Scan(&articles)
+
+	for i := range articles {
+		if articles[i].ShortID == "" {
+			articles[i].ShortID = utils.UintToString(articles[i].ID)
+		}
+	}
 
 	return
 }

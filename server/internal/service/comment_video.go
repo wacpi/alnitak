@@ -167,6 +167,7 @@ func GetVideoCommentList(ctx *gin.Context, cid uint, page, pageSize int) ([]vo.C
 		comments[i].Author = GetUserInfo(comments[i].Sid)
 		comments[i].TargetUser = GetUserInfo(comments[i].Uid)
 		comments[i].Video = GetVideoInfo(comments[i].Cid)
+		comments[i].Video.ID = 0
 	}
 
 	return comments, total, nil

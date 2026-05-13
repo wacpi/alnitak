@@ -339,6 +339,12 @@ func GetPlaylistVideoList(ctx *gin.Context, playlistID uint, page, pageSize int)
 		Limit(pageSize).Offset((page - 1) * pageSize).
 		Scan(&list)
 
+	for i := range list {
+		if list[i].ShortID == "" {
+			list[i].ShortID = utils.UintToString(list[i].Vid)
+		}
+	}
+
 	return
 }
 

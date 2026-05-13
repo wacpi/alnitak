@@ -40,7 +40,7 @@ type PlaylistListResp struct {
 
 // 合集中的视频项
 type PlaylistVideoResp struct {
-	Vid       uint      `json:"vid"`
+	Vid       uint      `json:"-"`
 	ShortID   string    `json:"shortId"`
 	Title     string    `json:"title"`
 	Cover     string    `json:"cover"`

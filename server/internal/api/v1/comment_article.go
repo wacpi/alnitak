@@ -105,16 +105,17 @@ func DeleteArticleComment(ctx *gin.Context) {
 }
 
 // 获取文章评论列表
+// shortId 为空时走"当前用户全部文章"逻辑
 func GetArticleCommentList(ctx *gin.Context) {
-	raw := ctx.Query("aid")
-	aid, err := service.ParseArticleID(raw)
-	if err != nil {
-		resp.FailWithMessage(ctx, err.Error())
-		return
-	}
-	if aid == 0 {
-		resp.FailWithMessage(ctx, "参数有误")
-		return
+	raw := ctx.Query("shortId")
+	var aid uint
+	if raw != "" {
+		parsed, err := service.ParseArticleID(raw)
+		if err != nil {
+			resp.FailWithMessage(ctx, err.Error())
+			return
+		}
+		aid = parsed
 	}
 	page := utils.StringToInt(ctx.Query("page"))
 	pageSize := utils.StringToInt(ctx.Query("pageSize"))

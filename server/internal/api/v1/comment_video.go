@@ -100,9 +100,9 @@ func DeleteVideoComment(ctx *gin.Context) {
 }
 
 // 获取视频评论列表
-// vid 为空时走"当前用户全部视频"逻辑，非空时兼容 shortId 与数字 ID
+// shortId 为空时走"当前用户全部视频"逻辑
 func GetVideoCommentList(ctx *gin.Context) {
-	raw := ctx.Query("vid")
+	raw := ctx.Query("shortId")
 	var vid uint
 	if raw != "" {
 		parsed, err := service.ParseVideoID(raw)

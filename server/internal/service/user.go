@@ -512,10 +512,6 @@ func GetUserBaseInfo(userId uint) (user vo.UserInfoResp) {
 		cache.SetUserInfo(user)
 	}
 
-	// 过滤掉敏感信息
-	user.Email = ""
-	user.Phone = ""
-
 	// 查询粉丝数量（实时查询，不缓存）
 	global.Mysql.Model(&model.Relation{}).
 		Where("target_uid = ? and (relation = ? or relation = ?)", userId, global.FOLLOWED, global.MUTUAL_FANS).
