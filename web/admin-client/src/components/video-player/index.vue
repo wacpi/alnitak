@@ -58,8 +58,8 @@ const options: any = {
         }
       },
 
-      // DASH 播放逻辑 - 核心修复区
-      customDash: async (video: HTMLVideoElement) => {
+      // DASH 播放逻辑
+      customDash: (video: HTMLVideoElement) => {
         const token = storageData.get('token');
 
         // 1. 实例复用检查
@@ -115,31 +115,13 @@ const options: any = {
           }, true);
         }
 
-        // 5. 通过 axios 拉取 MPD（带正确 CORS），转 blob URL 避免跨域 CORB
-        let manifestUrl = video.src;
-        try {
-          const res = await getVideoFileAPI(video.src);
-          if (res.data) {
-            const blob = new Blob([res.data], { type: 'application/dash+xml' });
-            manifestUrl = URL.createObjectURL(blob);
-            // 记录以便清理
-            if (mpdBlobUrl) URL.revokeObjectURL(mpdBlobUrl);
-            mpdBlobUrl = manifestUrl;
-          }
-        } catch (e) {
-          console.warn('[DASH] MPD 拉取失败，回退直连:', e);
-        }
-
-        // 6. 初始化与事件
-        dp.initialize(video, manifestUrl, false);
-
+        // 5. 注册事件处理器（在 initialize 之前注册，确保不丢失事件）
         dp.on('streamInitialized', () => {
           const quality = dp.getQualityFor('video');
           console.log('[DASH] 初始清晰度索引:', quality, '总清晰度:', options.video.quality.length);
           if (options.video.quality[quality]) {
             console.log('[DASH] 初始清晰度名称:', options.video.quality[quality].name);
           }
-          // 设置默认清晰度为最高（降序排列后最高在最后）
           const maxQualityIndex = options.video.quality.length - 1;
           dp.setQualityFor('video', maxQualityIndex);
           console.log('[DASH] 切换到最高清晰度索引:', maxQualityIndex);
@@ -162,6 +144,24 @@ const options: any = {
         });
 
         dash.value = dp;
+
+        // 6. 【关键修复】Wplayer customType 必须为同步函数（不能 async）
+        // 因此用 IIFE 包裹异步的 MPD 拉取逻辑
+        (async () => {
+          let manifestUrl = video.src;
+          try {
+            const res = await getVideoFileAPI(video.src);
+            if (res.data) {
+              const blob = new Blob([res.data], { type: 'application/dash+xml' });
+              manifestUrl = URL.createObjectURL(blob);
+              if (mpdBlobUrl) URL.revokeObjectURL(mpdBlobUrl);
+              mpdBlobUrl = manifestUrl;
+            }
+          } catch (e) {
+            console.warn('[DASH] MPD 拉取失败，回退直连:', e);
+          }
+          dp.initialize(video, manifestUrl, false);
+        })();
       },
     },
   },

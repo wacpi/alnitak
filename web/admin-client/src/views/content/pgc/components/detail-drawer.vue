@@ -1,25 +1,23 @@
 <template>
   <n-drawer v-model:show="drawerVisible" :width="520">
     <n-drawer-content title="PGC 详情">
-      <n-form v-if="data" label-placement="top">
-        <n-grid :cols="24" :x-gap="18">
-          <n-form-item-grid-item :span="12" label="PGC ID">{{ data.pgc_id }}</n-form-item-grid-item>
-          <n-form-item-grid-item :span="12" label="类型">{{ pgcTypeLabel(data.pgc_type) }}</n-form-item-grid-item>
-          <n-form-item-grid-item :span="12" label="状态">
-            <n-tag size="small" :type="statusTagType(data.status)">{{ statusLabel(data.status) }}</n-tag>
-          </n-form-item-grid-item>
-          <n-form-item-grid-item :span="12" label="年份">{{ data.year || '-' }}</n-form-item-grid-item>
-          <n-form-item-grid-item :span="12" label="地区">{{ data.area || '-' }}</n-form-item-grid-item>
-          <n-form-item-grid-item v-if="data.created_at" :span="12" label="创建时间">
-            {{ new Date(data.created_at).toLocaleString() }}
-          </n-form-item-grid-item>
-          <n-form-item-grid-item :span="24" label="标题">{{ data.title }}</n-form-item-grid-item>
-          <n-form-item-grid-item :span="24" label="简介">{{ data.desc || '暂无' }}</n-form-item-grid-item>
-          <n-form-item-grid-item v-if="data.cover" :span="24" label="封面">
-            <n-image :src="getResourceUrl(data.cover)" :width="200" />
-          </n-form-item-grid-item>
-        </n-grid>
-      </n-form>
+      <n-descriptions v-if="data" label-placement="top" :column="2">
+        <n-descriptions-item label="PGC ID">{{ data.pgc_id }}</n-descriptions-item>
+        <n-descriptions-item label="类型">{{ pgcTypeLabel(data.pgc_type) }}</n-descriptions-item>
+        <n-descriptions-item label="状态">
+          <n-tag size="small" :type="statusTagType(data.status)">{{ statusLabel(data.status) }}</n-tag>
+        </n-descriptions-item>
+        <n-descriptions-item label="年份">{{ data.year || '-' }}</n-descriptions-item>
+        <n-descriptions-item label="地区">{{ data.area || '-' }}</n-descriptions-item>
+        <n-descriptions-item v-if="data.created_at" label="创建时间">
+          {{ new Date(data.created_at).toLocaleString() }}
+        </n-descriptions-item>
+        <n-descriptions-item label="标题" :span="2">{{ data.title }}</n-descriptions-item>
+        <n-descriptions-item label="简介" :span="2">{{ data.desc || '暂无' }}</n-descriptions-item>
+        <n-descriptions-item v-if="data.cover" label="封面" :span="2">
+          <n-image :src="getResourceUrl(data.cover)" :width="200" />
+        </n-descriptions-item>
+      </n-descriptions>
     </n-drawer-content>
   </n-drawer>
 </template>
@@ -27,7 +25,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { getResourceUrl } from '@/utils/resource';
-import { NDrawer, NDrawerContent, NForm, NGrid, NFormItemGridItem, NImage, NTag } from "naive-ui";
+import { NDrawer, NDrawerContent, NDescriptions, NDescriptionsItem, NImage, NTag } from "naive-ui";
 
 const emit = defineEmits(['update:visible']);
 const props = withDefaults(defineProps<{
