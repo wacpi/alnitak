@@ -1,16 +1,14 @@
 <template>
   <n-drawer v-model:show="drawerVisible" :width="500">
     <n-drawer-content title="视频详情">
-      <n-form v-if="data" label-placement="top">
-        <n-grid :cols="24" :x-gap="18">
-          <n-form-item-grid-item :span="12" label="作者ID">{{ data.author.uid }}</n-form-item-grid-item>
-          <n-form-item-grid-item :span="12" label="用户名">{{ data.author.name }}</n-form-item-grid-item>
-          <n-form-item-grid-item :span="12" label="上传时间">{{ formatTime(data.createdAt) }}</n-form-item-grid-item>
-          <n-form-item-grid-item :span="24" label="视频标签">
-            <n-tag class="tag" v-for="(item, index) in tagsList" :key="`${item}-${index}`">{{ item }}</n-tag>
-          </n-form-item-grid-item>
-        </n-grid>
-      </n-form>
+      <n-descriptions v-if="data" label-placement="top" :column="2">
+        <n-descriptions-item label="作者ID">{{ data.author.uid }}</n-descriptions-item>
+        <n-descriptions-item label="用户名">{{ data.author.name }}</n-descriptions-item>
+        <n-descriptions-item label="上传时间">{{ formatTime(data.createdAt) }}</n-descriptions-item>
+        <n-descriptions-item label="视频标签" :span="2">
+          <n-tag class="tag" v-for="(item, index) in tagsList" :key="`${item}-${index}`">{{ item }}</n-tag>
+        </n-descriptions-item>
+      </n-descriptions>
       <div class="video-box">
         <span>视频列表</span>
         <n-scrollbar style="max-height: 300px;">
@@ -38,7 +36,7 @@ import { formatTime } from '@/utils/format';
 import { getReviewResourceListAPI } from "@/api/video";
 import { statusCode } from '@/utils/status-code';
 import VideoModal from './video-modal.vue';
-import { NButton, NTag, NDrawer, NDrawerContent, NScrollbar, NForm, NGrid, NFormItemGridItem } from "naive-ui";
+import { NButton, NTag, NDrawer, NDrawerContent, NScrollbar, NDescriptions, NDescriptionsItem } from "naive-ui";
 
 const emit = defineEmits(['update:visible']);
 const props = withDefaults(defineProps<{

@@ -19,6 +19,7 @@ import { baseURL } from "@/utils/request";
 const message = useMessage();
 
 let player: any = null;
+let mpdBlobUrl: string | null = null;
 const defaultQuality = ref('');
 const hls = shallowRef<Hls | null>(null);
 const dash = shallowRef<any>(null);
@@ -58,7 +59,7 @@ const options: any = {
       },
 
       // DASH 播放逻辑 - 核心修复区
-      customDash: (video: HTMLVideoElement) => {
+      customDash: async (video: HTMLVideoElement) => {
         const token = storageData.get('token');
 
         // 1. 实例复用检查
@@ -84,6 +85,9 @@ const options: any = {
             },
             abr: {
               autoSwitchBitrate: { video: false, audio: false },
+            },
+            protection: {
+              enable: false, // 内容未加密，禁用 EME 避免 warning
             },
           },
           debug: { logLevel: 3 },
@@ -111,8 +115,23 @@ const options: any = {
           }, true);
         }
 
-        // 5. 初始化与事件
-        dp.initialize(video, video.src, false);
+        // 5. 通过 axios 拉取 MPD（带正确 CORS），转 blob URL 避免跨域 CORB
+        let manifestUrl = video.src;
+        try {
+          const res = await getVideoFileAPI(video.src);
+          if (res.data) {
+            const blob = new Blob([res.data], { type: 'application/dash+xml' });
+            manifestUrl = URL.createObjectURL(blob);
+            // 记录以便清理
+            if (mpdBlobUrl) URL.revokeObjectURL(mpdBlobUrl);
+            mpdBlobUrl = manifestUrl;
+          }
+        } catch (e) {
+          console.warn('[DASH] MPD 拉取失败，回退直连:', e);
+        }
+
+        // 6. 初始化与事件
+        dp.initialize(video, manifestUrl, false);
 
         dp.on('streamInitialized', () => {
           const quality = dp.getQualityFor('video');
@@ -156,6 +175,7 @@ const loadVideo = async (resourceId: number) => {
     if (player) player.destroy();
     if (dash.value) { dash.value.reset(); dash.value = null; }
     if (hls.value) { hls.value.destroy(); hls.value = null; }
+    if (mpdBlobUrl) { URL.revokeObjectURL(mpdBlobUrl); mpdBlobUrl = null; }
 
     const resourceReady = await loadResource(resourceId);
     if (!resourceReady) return;
@@ -324,6 +344,7 @@ onBeforeUnmount(() => {
   if (player) player.destroy();
   if (hls.value) hls.value.destroy();
   if (dash.value) dash.value.reset();
+  if (mpdBlobUrl) { URL.revokeObjectURL(mpdBlobUrl); mpdBlobUrl = null; }
 })
 </script>
 
