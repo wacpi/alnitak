@@ -14,6 +14,7 @@ import { getResourceQualityApi, getVideoFileUrl, getVideoFileUrlDash, getVideoFi
 import { useMessage } from "naive-ui";
 import { getResourceUrl } from "@/utils/resource";
 import { storageData } from "@/utils/storage-data";
+import { baseURL } from "@/utils/request";
 
 const message = useMessage();
 
@@ -90,14 +91,22 @@ const options: any = {
 
         // 4. 【关键修复】无论什么模式，只要有 token 就必须注入鉴权
         // 否则后端返回 JSON 错误导致 dash.js 报 "parsing failed"
+        // 注意：仅对后端 API 请求加 Authorization，外部 R2 分片请求不加
+        // 否则 R2 presigned URL 触发 CORS preflight 导致请求被拦截
         if (token) {
+          let _currentReqUrl = '';
           dp.extend('RequestModifier', function () {
             return {
+              modifyRequestURL: function (url: string) {
+                _currentReqUrl = url;
+                return url;
+              },
               modifyRequestHeader: function (xhr: XMLHttpRequest) {
-                xhr.setRequestHeader('Authorization', token);
+                if (_currentReqUrl.indexOf(baseURL) === 0) {
+                  xhr.setRequestHeader('Authorization', token);
+                }
                 return xhr;
               },
-              modifyRequestURL: function (url: string) { return url; }
             };
           }, true);
         }

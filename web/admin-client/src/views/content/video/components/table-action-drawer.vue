@@ -7,7 +7,7 @@
           <n-form-item-grid-item :span="12" label="用户名">{{ data.author.name }}</n-form-item-grid-item>
           <n-form-item-grid-item :span="12" label="上传时间">{{ formatTime(data.createdAt) }}</n-form-item-grid-item>
           <n-form-item-grid-item :span="24" label="视频标签">
-            <n-tag class="tag" v-for="(item, index) in data.tags.split(',')" :key="`${item}-${index}`">{{ item }}</n-tag>
+            <n-tag class="tag" v-for="(item, index) in tagsList" :key="`${item}-${index}`">{{ item }}</n-tag>
           </n-form-item-grid-item>
         </n-grid>
       </n-form>
@@ -24,11 +24,11 @@
           </div>
         </n-scrollbar>
       </div>
+      <video-modal v-model:visible="visibleVideoModal" :resource-id="currentResourceId"></video-modal>
       <template #footer>
         <n-button class="btn" @click="closeDrawer">完成</n-button>
       </template>
     </n-drawer-content>
-    <video-modal v-model:visible="visibleVideoModal" :resource-id="currentResourceId"></video-modal>
   </n-drawer>
 </template>
 
@@ -55,6 +55,13 @@ const drawerVisible = computed({
   set(visible) {
     emit('update:visible', visible);
   }
+});
+
+const tagsList = computed<string[]>(() => {
+  const tags = props.data?.tags;
+  if (Array.isArray(tags)) return tags;
+  if (typeof tags === 'string' && tags) return tags.split(',');
+  return [];
 });
 
 const closeDrawer = () => {

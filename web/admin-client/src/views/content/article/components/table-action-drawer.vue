@@ -6,7 +6,7 @@
           <n-form-item-grid-item :span="12" label="作者ID">{{ data.author.uid }}</n-form-item-grid-item>
           <n-form-item-grid-item :span="12" label="用户名">{{ data.author.name }}</n-form-item-grid-item>
           <n-form-item-grid-item :span="24" label="内容标签">
-            <n-tag class="tag" v-for="(item, index) in data.tags.split(',')" :key="`${item}-${index}`">{{ item }}</n-tag>
+            <n-tag class="tag" v-for="(item, index) in tagsList" :key="`${item}-${index}`">{{ item }}</n-tag>
           </n-form-item-grid-item>
         </n-grid>
       </n-form>
@@ -44,6 +44,12 @@ const drawerVisible = computed({
   }
 });
 
+const tagsList = computed<string[]>(() => {
+  const tags = props.data?.tags;
+  if (Array.isArray(tags)) return tags;
+  if (typeof tags === 'string' && tags) return tags.split(',');
+  return [];
+});
 
 </script>
 

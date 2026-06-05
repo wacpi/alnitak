@@ -290,7 +290,7 @@ const initPlayer = async () => {
     const idx = pickSubtitleTrackIndexByPreference(embedSubTracks);
     const st = embedSubTracks[idx];
     if (!st?.url) return;
-    player.subtitle.switch(st.url, { name: st.label });
+    player.subtitle.switch(st.url, { name: st.label, type: 'vtt' });
   }
 
   function syncSubtitleQuickControl() {
@@ -346,6 +346,16 @@ const initPlayer = async () => {
             html: '显示',
             tooltip: subtitleBarToggle.visible ? '隐藏' : '显示',
             switch: subtitleBarToggle.visible,
+            onSwitch(item: { tooltip?: string; switch: boolean }) {
+              if (!player) return item.switch;
+              item.tooltip = item.switch ? '隐藏' : '显示';
+              const show = !item.switch;
+              player.subtitle.show = show;
+              subtitleBarToggle.visible = show;
+              localStorage.setItem(ARTPLAYER_CC_LS, subtitleBarToggle.visible ? '1' : '0');
+              syncSubtitleQuickControl();
+              return !item.switch;
+            },
           },
           ...embedSubTracks.map((st, i) => ({
             html: st.label,
@@ -353,25 +363,25 @@ const initPlayer = async () => {
             default: i === idx,
           })),
         ],
-        onSelect(item: { html?: string; url?: string }) {
-          if (item.url && player) {
-            player.subtitle.switch(item.url, { name: item.html ?? '' });
-            const st = embedSubTracks.find((t) => t.url === item.url);
-            writeStoredSubtitlePreference({
-              label: ((item.html || st?.label) ?? '').trim(),
-              lang: (st?.srclang ?? '').trim(),
-            });
-          }
-          return item.html ?? '';
-        },
-      });
-    } catch {
-      /* setting.update may not be available */
-    }
-  }
-
-  const subtitleQuickControl =
-    embedSubTracks.length > 0
+            onSelect(item: { html?: string; url?: string }) {
+              if (item.url && player) {
+                player.subtitle.switch(item.url, { name: item.html ?? '', type: 'vtt' });
+                const st = embedSubTracks.find((t) => t.url === item.url);
+                writeStoredSubtitlePreference({
+                  label: ((item.html || st?.label) ?? '').trim(),
+                  lang: (st?.srclang ?? '').trim(),
+                });
+              }
+              return item.html ?? '';
+            },
+          });
+        } catch {
+          /* setting.update may not be available */
+        }
+      }
+    
+      const subtitleQuickControl =
+        embedSubTracks.length > 0
       ? {
           name: 'subtitle-quick',
           index: 8,
@@ -384,7 +394,6 @@ const initPlayer = async () => {
             subtitleBarToggle.visible = next;
             player.subtitle.show = next;
             localStorage.setItem(ARTPLAYER_CC_LS, subtitleBarToggle.visible ? '1' : '0');
-            if (next) applyPreferredEmbedSubtitleWhenShowing();
             syncSubtitleQuickControl();
             syncGearSubtitleToggle();
           },
@@ -416,7 +425,6 @@ const initPlayer = async () => {
             player.subtitle.show = show;
             subtitleBarToggle.visible = show;
             localStorage.setItem(ARTPLAYER_CC_LS, subtitleBarToggle.visible ? '1' : '0');
-            if (show) applyPreferredEmbedSubtitleWhenShowing();
             syncSubtitleQuickControl();
             return !item.switch;
           },
@@ -429,7 +437,7 @@ const initPlayer = async () => {
       ],
       onSelect(item: { html?: string; url?: string }) {
         if (item.url && player) {
-          player.subtitle.switch(item.url, { name: item.html ?? '' });
+          player.subtitle.switch(item.url, { name: item.html ?? '', type: 'vtt' });
           const st = embedSubTracks.find((t) => t.url === item.url);
           writeStoredSubtitlePreference({
             label: ((item.html || st?.label) ?? '').trim(),

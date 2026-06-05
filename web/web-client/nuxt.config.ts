@@ -78,6 +78,9 @@ export default defineNuxtConfig({
     'element-plus/theme-chalk/dark/css-vars.css',
     '~/assets/styles/element.scss'
   ],
+  routeRules: {
+    '/embed/**': { ssr: false },
+  },
   devtools: false,
   srcDir: 'src/',
   vite: {
@@ -106,6 +109,27 @@ export default defineNuxtConfig({
         'vuedraggable',
         'js-base64',
       ]
+    },
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id: string) {
+            if (id.includes('/node_modules/artplayer') ||
+                id.includes('/node_modules/hls.js') ||
+                id.includes('/node_modules/dashjs') ||
+                id.includes('/node_modules/artplayer-plugin-danmuku') ||
+                id.includes('/node_modules/wplayer-next')) {
+              return 'player-vendor';
+            }
+            if (id.includes('/node_modules/element-plus')) {
+              return 'ui-vendor';
+            }
+            if (id.includes('/node_modules/@wangeditor')) {
+              return 'editor-vendor';
+            }
+          },
+        },
+      },
     },
     server: {
       warmup: {

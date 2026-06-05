@@ -496,13 +496,8 @@ const initWebSocket = () => {
   const rid = videoInfo.value?.resources?.[currentPart.value - 1]?.shortId || '';
   const ridParam = rid ? `&rid=${rid}` : '';
 
-  if (process.dev) {
-    const wsProtocol = globalConfig.https ? 'wss://' : 'ws://';
-    SocketURL = `${wsProtocol}${globalConfig.domain}/api/v1/online/video?vid=${currentVid}&clientId=${clientId}${ridParam}`;
-  } else {
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
-    SocketURL = `${wsProtocol}${window.location.host}/api/v1/online/video?vid=${currentVid}&clientId=${clientId}${ridParam}`;
-  }
+  const wsProtocol = globalConfig.https ? 'wss://' : 'ws://';
+  SocketURL = `${wsProtocol}${globalConfig.domain}/api/v1/online/video?vid=${currentVid}&clientId=${clientId}${ridParam}`;
 
   if (heartbeatTimer) {
     clearInterval(heartbeatTimer);
