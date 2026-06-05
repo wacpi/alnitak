@@ -77,6 +77,7 @@ const options: any = {
         const dp = dashjs.MediaPlayer().create();
         
         // 3. 配置参数 (dash.js v4.x)
+        // protection 是顶层配置，不在 streaming 子级
         dp.updateSettings({
           streaming: {
             buffer: {
@@ -86,9 +87,9 @@ const options: any = {
             abr: {
               autoSwitchBitrate: { video: false, audio: false },
             },
-            protection: {
-              enable: false, // 内容未加密，禁用 EME 避免 warning
-            },
+          },
+          protection: {
+            enable: false, // 内容未加密，禁用 EME 避免 warning
           },
           debug: { logLevel: 3 },
         });
@@ -148,18 +149,24 @@ const options: any = {
         // 6. 【关键修复】Wplayer customType 必须为同步函数（不能 async）
         // 因此用 IIFE 包裹异步的 MPD 拉取逻辑
         (async () => {
+          console.log('[DASH] IIFE 开始, video.src:', video.src);
           let manifestUrl = video.src;
           try {
             const res = await getVideoFileAPI(video.src);
+            console.log('[DASH] MPD 拉取完成, 状态:', res.status, '数据长度:', res.data?.length);
             if (res.data) {
               const blob = new Blob([res.data], { type: 'application/dash+xml' });
               manifestUrl = URL.createObjectURL(blob);
+              console.log('[DASH] MPD 转 blob URL:', manifestUrl);
               if (mpdBlobUrl) URL.revokeObjectURL(mpdBlobUrl);
               mpdBlobUrl = manifestUrl;
+            } else {
+              console.warn('[DASH] MPD 返回数据为空，使用直连 URL');
             }
           } catch (e) {
             console.warn('[DASH] MPD 拉取失败，回退直连:', e);
           }
+          console.log('[DASH] 调用 dp.initialize, manifestUrl:', manifestUrl);
           dp.initialize(video, manifestUrl, false);
         })();
       },
