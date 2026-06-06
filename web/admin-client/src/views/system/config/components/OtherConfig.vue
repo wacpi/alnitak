@@ -22,6 +22,11 @@
             <n-radio-button value="av1">AV1</n-radio-button>
           </n-radio-group>
         </n-form-item>
+        <n-alert v-if="codecMode === 'av1'" type="warning" style="margin-bottom: 16px;">
+          <template #header>AV1 硬件要求</template>
+          AV1 硬件编码需要 <strong>NVIDIA RTX 40 系列及以上</strong> 显卡。
+          不满足时自动降级到 CPU 编码（libsvtav1），速度显著变慢，建议仅在 GPU H.265 无法满足需求时选用。
+        </n-alert>
 
         <n-divider title-placement="left">服务器配置</n-divider>
         <n-form-item label="HTTP端口">
