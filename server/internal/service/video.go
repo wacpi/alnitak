@@ -1634,15 +1634,6 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 				continue
 			}
 
-			// 字幕绑定迁移：旧 resource.ID → 新 newResource.ID
-			if err := global.Mysql.Model(&model.SubtitleTrack{}).
-				Where("resource_id = ?", rf.resource.ID).
-				Update("resource_id", newResource.ID).Error; err != nil {
-				utils.ErrorLog("迁移字幕绑定失败", "transcoding",
-					fmt.Sprintf("oldResourceID=%d, newResourceID=%d, err=%v",
-						rf.resource.ID, newResource.ID, err))
-			}
-
 			// 重新转码直接输出到源目录，不创建新目录
 			sourceDir := rf.vf.DirName
 

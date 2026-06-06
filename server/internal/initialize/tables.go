@@ -63,6 +63,9 @@ func InitTables() {
 
 	// 补填已有记录的空 ShortID
 	backfillShortIDs()
+
+	// 字幕绑定迁移：resource_id → resource_short_id
+	backfillSubtitleShortID()
 }
 
 // backfillPGCMedia 为历史 pgc_content（media_id=0）补齐 pgc_media 记录
@@ -154,4 +157,36 @@ func backfillShortIDs() {
 	backfillTable("video")
 	backfillTable("resource")
 	backfillTable("article")
+}
+
+// backfillSubtitleShortID 为已有字幕回填 resource_short_id 并清理旧唯一索引
+func backfillSubtitleShortID() {
+	var emptyCount int64
+	global.Mysql.Model(&model.SubtitleTrack{}).
+		Where("resource_short_id = ''").
+		Count(&emptyCount)
+	if emptyCount > 0 {
+		utils.InfoLog(fmt.Sprintf("【字幕绑定迁移】共%d条待回填", emptyCount), "init")
+		if err := global.Mysql.Exec(
+			"UPDATE subtitle_track st "+
+				"INNER JOIN resource r ON r.id = st.resource_id "+
+				"SET st.resource_short_id = r.short_id "+
+				"WHERE st.resource_short_id = ''",
+		).Error; err != nil {
+			utils.ErrorLog("字幕 resource_short_id 回填失败", "init", err.Error())
+		} else {
+			utils.InfoLog("【字幕绑定迁移】回填完成", "init")
+		}
+	}
+
+	// 清理旧唯一索引，避免新写入时 ResourceID=0 产生虚假冲突
+	if global.Mysql.Migrator().HasIndex(&model.SubtitleTrack{}, "uk_subtitle_resource_lang") {
+		if err := global.Mysql.Migrator().DropIndex(&model.SubtitleTrack{}, "uk_subtitle_resource_lang"); err != nil {
+			utils.ErrorLog("删除旧唯一索引 uk_subtitle_resource_lang 失败", "init", err.Error())
+		} else {
+			utils.InfoLog("【字幕绑定迁移】旧唯一索引已清理", "init")
+		}
+	} else {
+		utils.InfoLog("【字幕绑定迁移】旧唯一索引不存在，跳过清理", "init")
+	}
 }

@@ -111,9 +111,9 @@ func deleteSubtitleObject(objectKey, localPath string) error {
 	return nil
 }
 
-func unsetOtherSubtitleDefaults(tx *gorm.DB, resourceID uint, keepID uint) error {
+func unsetOtherSubtitleDefaults(tx *gorm.DB, resourceShortID string, keepID uint) error {
 	return tx.Model(&model.SubtitleTrack{}).
-		Where("resource_id = ? AND id != ? AND is_default = ?", resourceID, keepID, true).
+		Where("resource_short_id = ? AND id != ? AND is_default = ?", resourceShortID, keepID, true).
 		Update("is_default", false).Error
 }
 
@@ -167,7 +167,7 @@ func ListSubtitleTracks(ctx *gin.Context, resourceShortID string) ([]vo.Subtitle
 		return nil, errors.New("内容不可访问")
 	}
 	var tracks []model.SubtitleTrack
-	if err := global.Mysql.Where("resource_id = ? AND status = ?", res.ID, model.SubtitleStatusActive).
+	if err := global.Mysql.Where("resource_short_id = ? AND status = ?", res.ShortID, model.SubtitleStatusActive).
 		Order("is_default DESC, id ASC").Find(&tracks).Error; err != nil {
 		utils.ErrorLog("查询字幕失败", "subtitle", err.Error())
 		return nil, errors.New("获取字幕失败")
@@ -225,29 +225,29 @@ func CreateSubtitleTrack(ctx *gin.Context, resourceShortID, lang, label string, 
 
 	uid := ctx.GetUint("userId")
 	track := model.SubtitleTrack{
-		ResourceID: res.ID,
-		Vid:        v.ID,
-		Lang:       lang,
-		Label:      label,
-		SourceFmt:  sourceFmt,
-		ObjectKey:  objectKey,
-		IsDefault:  isDefault,
-		Origin:     model.SubtitleOriginUser,
-		Status:     model.SubtitleStatusActive,
-		CreatedBy:  uid,
+		ResourceShortID: res.ShortID,
+		Vid:             v.ID,
+		Lang:            lang,
+		Label:           label,
+		SourceFmt:       sourceFmt,
+		ObjectKey:       objectKey,
+		IsDefault:       isDefault,
+		Origin:          model.SubtitleOriginUser,
+		Status:          model.SubtitleStatusActive,
+		CreatedBy:       uid,
 	}
 
 	err = global.Mysql.Transaction(func(tx *gorm.DB) error {
 		if isDefault {
 			if err := tx.Model(&model.SubtitleTrack{}).
-				Where("resource_id = ?", res.ID).
+				Where("resource_short_id = ?", res.ShortID).
 				Update("is_default", false).Error; err != nil {
 				return err
 			}
 		}
 		if err := tx.Create(&track).Error; err != nil {
 			if strings.Contains(err.Error(), "Duplicate") {
-				utils.ErrorLog("字幕 Duplicate 键冲突", "subtitle", fmt.Sprintf("rid=%d lang=%s err=%v", res.ID, lang, err))
+				utils.ErrorLog("字幕 Duplicate 键冲突", "subtitle", fmt.Sprintf("short_id=%s lang=%s err=%v", res.ShortID, lang, err))
 				return ErrSubtitleDuplicateLang
 			}
 			return err
@@ -282,14 +282,15 @@ func UpdateSubtitleTrack(ctx *gin.Context, trackID uint, req UpdateSubtitleTrack
 	if err := global.Mysql.Where("id = ?", trackID).First(&track).Error; err != nil || track.ID == 0 {
 		return errors.New("字幕不存在")
 	}
-	_, v, err := loadResourceWithVideoByID(track.ResourceID)
-	if err != nil {
-		return err
+	var v model.Video
+	if err := global.Mysql.Where("id = ?", track.Vid).First(&v).Error; err != nil || v.ID == 0 {
+		return errors.New("视频不存在")
 	}
 	if err := assertSubtitleManager(ctx, v); err != nil {
 		return err
 	}
 
+	var err error
 	updates := map[string]interface{}{}
 	trimmedLabel := strings.TrimSpace(req.Label)
 	if trimmedLabel != track.Label {
@@ -339,7 +340,7 @@ func UpdateSubtitleTrack(ctx *gin.Context, trackID uint, req UpdateSubtitleTrack
 
 	err = global.Mysql.Transaction(func(tx *gorm.DB) error {
 		if req.IsDefault != nil && *req.IsDefault {
-			if err := unsetOtherSubtitleDefaults(tx, track.ResourceID, track.ID); err != nil {
+			if err := unsetOtherSubtitleDefaults(tx, track.ResourceShortID, track.ID); err != nil {
 				return err
 			}
 		}
@@ -368,9 +369,9 @@ func DeleteSubtitleTrack(ctx *gin.Context, trackID uint) error {
 	if err := global.Mysql.Where("id = ?", trackID).First(&track).Error; err != nil || track.ID == 0 {
 		return errors.New("字幕不存在")
 	}
-	_, v, err := loadResourceWithVideoByID(track.ResourceID)
-	if err != nil {
-		return err
+	var v model.Video
+	if err := global.Mysql.Where("id = ?", track.Vid).First(&v).Error; err != nil || v.ID == 0 {
+		return errors.New("视频不存在")
 	}
 	if err := assertSubtitleManager(ctx, v); err != nil {
 		return err
@@ -396,8 +397,12 @@ func GetSubtitleTrackForFileServe(ctx *gin.Context, fileName string) (localPath,
 	if err := global.Mysql.Where("object_key = ? AND status = ?", objectKey, model.SubtitleStatusActive).First(&tr).Error; err != nil || tr.ID == 0 {
 		return "", "", false
 	}
-	res, v, err := loadResourceWithVideoByID(tr.ResourceID)
-	if err != nil {
+	var res model.Resource
+	if err := global.Mysql.Where("short_id = ?", tr.ResourceShortID).First(&res).Error; err != nil || res.ID == 0 {
+		return "", "", false
+	}
+	var v model.Video
+	if err := global.Mysql.Where("id = ?", res.Vid).First(&v).Error; err != nil || v.ID == 0 {
 		return "", "", false
 	}
 	if !subtitleVisibleToViewer(ctx, v, res) {
