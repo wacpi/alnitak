@@ -189,4 +189,13 @@ func backfillSubtitleShortID() {
 	} else {
 		utils.InfoLog("【字幕绑定迁移】旧唯一索引不存在，跳过清理", "init")
 	}
+
+	// 删除已弃用的 resource_id 列（数据已迁到 resource_short_id）
+	if global.Mysql.Migrator().HasColumn(&model.SubtitleTrack{}, "resource_id") {
+		if err := global.Mysql.Migrator().DropColumn(&model.SubtitleTrack{}, "resource_id"); err != nil {
+			utils.ErrorLog("删除废弃列 resource_id 失败", "init", err.Error())
+		} else {
+			utils.InfoLog("【字幕绑定迁移】废弃列 resource_id 已删除", "init")
+		}
+	}
 }
