@@ -2,11 +2,11 @@
   <div class="upload-article">
     <p class="title">专栏管理</p>
     <div class="article-box">
-      <el-scrollbar>
+      <el-scrollbar ref="scrollbarRef" @scroll="onScroll">
         <template v-if="!articleList.length && !initialLoading">
           <el-empty description="暂无专栏" />
         </template>
-        <ul class="article-list" v-infinite-scroll="scrollLoad" v-else>
+        <ul class="article-list" v-else>
           <li class="article-item" v-for="(item, index) in articleList" :key="index">
             <div class="content-wrapper">
               <div class="content-main">
@@ -102,6 +102,13 @@ const scrollLoad = () => {
     page.value++;
     getUploadArticle();
   }
+}
+
+const scrollbarRef = ref()
+const onScroll = () => {
+  const wrap = scrollbarRef.value?.wrapRef
+  if (!wrap) return
+  if (wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 50) scrollLoad()
 }
 
 const deleteArticleIndex = ref(-1);

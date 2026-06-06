@@ -13,8 +13,8 @@
       </span>
     </div>
     <div class="video-box">
-      <el-scrollbar>
-        <ul v-if="videoList.length" class="video-list" v-infinite-scroll="scrollLoad">
+      <el-scrollbar ref="scrollbarRef" @scroll="onScroll">
+        <ul v-if="videoList.length" class="video-list">
           <li class="video-item" v-for="(item, index) in videoList" :key="index">
             <div class="item-left">
               <div class="cover">
@@ -146,6 +146,13 @@ const scrollLoad = () => {
     page.value++;
     getUploadVideo();
   }
+}
+
+const scrollbarRef = ref()
+const onScroll = () => {
+  const wrap = scrollbarRef.value?.wrapRef
+  if (!wrap) return
+  if (wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 50) scrollLoad()
 }
 
 const silentRefreshUploadVideo = async () => {

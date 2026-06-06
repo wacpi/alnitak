@@ -14,9 +14,9 @@
       </client-only>
     </div>
     <div class="comment-box">
-      <el-scrollbar>
+      <el-scrollbar ref="scrollbarRef" @scroll="onScroll">
         <client-only>
-          <ul v-if="commentList.length" class="comment-list" v-infinite-scroll="scrollLoad">
+          <ul v-if="commentList.length" class="comment-list">
             <li class="comment-msg-item" v-for="(item, index) in commentList" :key="index">
               <div class="item-left">
                 <common-avatar class="avatar" :url="item.author.avatar" :size="45"></common-avatar>
@@ -161,6 +161,13 @@ const scrollLoad = () => {
     page.value++;
     getReplyMsgList();
   }
+}
+
+const scrollbarRef = ref()
+const onScroll = () => {
+  const wrap = scrollbarRef.value?.wrapRef
+  if (!wrap) return
+  if (wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 50) scrollLoad()
 }
 
 // TODO: 增加删除评论
