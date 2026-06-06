@@ -15,15 +15,13 @@
         <n-form-item label="转码开启gpu加速">
           <n-switch v-model:value="otherForm.useGpu"></n-switch>
         </n-form-item>
-        <n-form-item label="转码使用H.265(10-bit)">
-          <n-switch v-model:value="otherForm.useH265"></n-switch>
+        <n-form-item label="视频编码">
+          <n-radio-group v-model:value="codecMode">
+            <n-radio-button value="h264">H.264</n-radio-button>
+            <n-radio-button value="h265">H.265 (10-bit)</n-radio-button>
+            <n-radio-button value="av1">AV1</n-radio-button>
+          </n-radio-group>
         </n-form-item>
-        <n-form-item label="转码使用AV1">
-          <n-switch v-model:value="otherForm.useAv1"></n-switch>
-        </n-form-item>
-        <n-alert type="info" style="margin-bottom: 16px;">
-          编码优先级：AV1 &gt; H.265 &gt; H.264。AV1 开启时 H.265 自动关闭。
-        </n-alert>
 
         <n-divider title-placement="left">服务器配置</n-divider>
         <n-form-item label="HTTP端口">
@@ -56,10 +54,10 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeMount, reactive, watch } from "vue";
+import { onBeforeMount, reactive, ref, watch } from "vue";
 import { statusCode } from "@/utils/status-code";
 import { getOtherConfigAPI, setOtherConfigAPI } from "@/api/config";
-import { NInput, NSwitch, NForm, NFormItem, NButton, NDivider, NScrollbar, NAlert, useMessage } from "naive-ui";
+import { NInput, NSwitch, NForm, NFormItem, NButton, NDivider, NScrollbar, NAlert, NRadioGroup, NRadioButton, useMessage } from "naive-ui";
 
 const message = useMessage();
 
@@ -88,6 +86,7 @@ const getConfig = async () => {
     otherForm.useGpu = data.useGpu;
     otherForm.useH265 = data.useH265;
     otherForm.useAv1 = data.useAv1;
+    codecMode.value = data.useAv1 ? 'av1' : data.useH265 ? 'h265' : 'h264';
     // 服务器配置
     otherForm.serverPort = data.serverPort || "9000";
     otherForm.sslEnabled = data.sslEnabled || false;
@@ -108,9 +107,11 @@ const setConfig = async () => {
   }
 }
 
-// AV1 与 H.265 互斥：优先级 AV1 > H.265 > H.264
-watch(() => otherForm.useAv1, (val) => { if (val) otherForm.useH265 = false; });
-watch(() => otherForm.useH265, (val) => { if (val) otherForm.useAv1 = false; });
+const codecMode = ref<'h264' | 'h265' | 'av1'>('h264');
+watch(codecMode, (mode) => {
+  otherForm.useH265 = mode === 'h265';
+  otherForm.useAv1 = mode === 'av1';
+});
 
 onBeforeMount(() => {
   getConfig();
