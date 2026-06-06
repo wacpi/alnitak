@@ -4,6 +4,7 @@ interface OtherConfigType {
   generate1080p60: boolean;
   useGpu: boolean;
   useH265: boolean;
+  useAv1: boolean;
   serverPort: string;
   sslEnabled: boolean;
   sslPort: string;

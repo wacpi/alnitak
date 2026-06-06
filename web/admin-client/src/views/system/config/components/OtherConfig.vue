@@ -18,6 +18,9 @@
         <n-form-item label="转码使用H.265(10-bit)">
           <n-switch v-model:value="otherForm.useH265"></n-switch>
         </n-form-item>
+        <n-form-item label="转码使用AV1">
+          <n-switch v-model:value="otherForm.useAv1"></n-switch>
+        </n-form-item>
 
         <n-divider title-placement="left">服务器配置</n-divider>
         <n-form-item label="HTTP端口">
@@ -63,6 +66,7 @@ const otherForm = reactive({
   generate1080p60: false,
   useGpu: false,
   useH265: false,
+  useAv1: false,
   // 服务器配置
   serverPort: "9000",
   sslEnabled: false,
@@ -80,6 +84,7 @@ const getConfig = async () => {
     otherForm.generate1080p60 = data.generate1080p60;
     otherForm.useGpu = data.useGpu;
     otherForm.useH265 = data.useH265;
+    otherForm.useAv1 = data.useAv1;
     // 服务器配置
     otherForm.serverPort = data.serverPort || "9000";
     otherForm.sslEnabled = data.sslEnabled || false;
