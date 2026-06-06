@@ -32,6 +32,7 @@ type OtherConfigResp struct {
 	Generate1080p60 bool   `json:"generate1080p60"`
 	UseGpu          bool   `json:"useGpu"`
 	UseH265         bool   `json:"useH265"`
+	UseAv1          bool   `json:"useAv1"`
 
 	// 服务器配置
 	ServerPort   string `json:"serverPort"`

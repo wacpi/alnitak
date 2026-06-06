@@ -134,6 +134,7 @@ func GetOtherConfig() vo.OtherConfigResp {
 		Generate1080p60: global.Config.Transcoding.Generate1080p60,
 		UseGpu:          global.Config.Transcoding.UseGpu,
 		UseH265:         global.Config.Transcoding.UseH265,
+		UseAv1:          global.Config.Transcoding.UseAv1,
 
 		ServerPort:  global.Config.Server.Port,
 		SslEnabled:  global.Config.Server.Ssl.Enabled,
@@ -159,6 +160,7 @@ func SetOtherConfig(otherConfigReq dto.OtherConfigReq) error {
 		Generate1080p60: otherConfigReq.Generate1080p60,
 		UseGpu:          otherConfigReq.UseGpu,
 		UseH265:         otherConfigReq.UseH265,
+		UseAv1:          otherConfigReq.UseAv1,
 	}
 	global.Config.Server = config.Server{
 		Port: otherConfigReq.ServerPort,
@@ -174,6 +176,7 @@ func SetOtherConfig(otherConfigReq dto.OtherConfigReq) error {
 	viper.Set("user.prefix", otherConfigReq.Prefix)
 	viper.Set("transcoding.use_gpu", otherConfigReq.UseGpu)
 	viper.Set("transcoding.use_h265", otherConfigReq.UseH265)
+	viper.Set("transcoding.use_av1", otherConfigReq.UseAv1)
 	viper.Set("transcoding.generate_1080p60", otherConfigReq.Generate1080p60)
 	viper.Set("server.port", otherConfigReq.ServerPort)
 	viper.Set("server.ssl.enabled", otherConfigReq.SslEnabled)

@@ -40,6 +40,7 @@ const (
 	TimeBase60fps      = "60000/1001"
 	DefaultVideoCodec  = "avc1.640028"
 	DefaultHEVCCodec   = "hvc1.1.6.L150.B0"
+	DefaultAV1Codec    = "av01.0.08M.08"
 	DefaultAudioCodec  = "mp4a.40.2"
 )
 
@@ -306,9 +307,10 @@ func (s *TranscodeService) encodeVideoWithFallback(
 ) error {
 	useGpu := global.Config.Transcoding.UseGpu && s.isGPUAvailable()
 	useHevc := global.Config.Transcoding.UseH265
-	utils.InfoLog(fmt.Sprintf("【开始视频编码】%s 使用GPU=%v H.265=%v", qualityName, useGpu, useHevc), "transcoding")
+	useAv1 := global.Config.Transcoding.UseAv1
+	utils.InfoLog(fmt.Sprintf("【开始视频编码】%s 使用GPU=%v AV1=%v H.265=%v", qualityName, useGpu, useAv1, useHevc), "transcoding")
 
-	err := s.runVideoEncodeTask(ctx, info.VideoID, info.ResourceID, info.InputFile, videoFile, t.Resolution, t.BitrateRate, t.FPS, qualityName, info.Duration, useGpu, useHevc, cancel)
+	err := s.runVideoEncodeTask(ctx, info.VideoID, info.ResourceID, info.InputFile, videoFile, t.Resolution, t.BitrateRate, t.FPS, qualityName, info.Duration, useGpu, useAv1, useHevc, cancel)
 
 	if useGpu && err != nil && (strings.Contains(err.Error(), "GPU error") || strings.Contains(err.Error(), "nvenc")) {
 		s.handleGPUFailure()
@@ -316,7 +318,7 @@ func (s *TranscodeService) encodeVideoWithFallback(
 			return ctx.Err()
 		}
 		utils.InfoLog(fmt.Sprintf("【GPU降级CPU编码】%s", qualityName), "transcoding")
-		return s.runVideoEncodeTask(ctx, info.VideoID, info.ResourceID, info.InputFile, videoFile, t.Resolution, t.BitrateRate, t.FPS, qualityName, info.Duration, false, useHevc, cancel)
+		return s.runVideoEncodeTask(ctx, info.VideoID, info.ResourceID, info.InputFile, videoFile, t.Resolution, t.BitrateRate, t.FPS, qualityName, info.Duration, false, useAv1, useHevc, cancel)
 	} else if useGpu && err == nil {
 		s.recordGPUSuccess()
 	}
@@ -334,9 +336,12 @@ func (s *TranscodeService) saveIndexRecord(ctx context.Context, info *dto.Transc
 	}
 
 	var videoCodec string
-	if global.Config.Transcoding.UseH265 {
+	switch {
+	case global.Config.Transcoding.UseAv1:
+		videoCodec = DefaultAV1Codec
+	case global.Config.Transcoding.UseH265:
 		videoCodec = DefaultHEVCCodec
-	} else {
+	default:
 		videoCodec = DefaultVideoCodec
 		if c, err := probeH264Avc1CodecString(videoFilePath); err == nil {
 			videoCodec = c
@@ -719,7 +724,7 @@ func (s *TranscodeService) GetTranscodingProcessCount(videoID uint) int {
 // 输出时长使用与音轨相同的 -t，见 ffmpegOutputDurationArgs。
 func (s *TranscodeService) runVideoEncodeTask(
 	ctx context.Context, videoID, resourceID uint, inputFile, outputFile, quality, rate, fps, progressQuality string,
-	totalDuration float64, useGpu bool, useHevc bool, cancelFunc context.CancelFunc,
+	totalDuration float64, useGpu bool, useAv1 bool, useHevc bool, cancelFunc context.CancelFunc,
 ) error {
 	fpsFloat := parseFPS(fps)
 	gopSize := int(math.Round(fpsFloat * 2))
@@ -750,6 +755,13 @@ func (s *TranscodeService) runVideoEncodeTask(
 	// 保留 B 帧；首帧展示时刻相对 t=0 常延后约 2 帧（参见 ffprobe stream start_time）。
 	// 音轨侧用 adelay 注入等量前置静声与视频首画对齐（ffmpeg 滤镜 adelay）。
 	switch {
+	case useGpu && useAv1:
+		// AV1 GPU (NVENC) - RTX 40 系列+
+		args = append(args,
+			"-c:v", "av1_nvenc", "-cq", "30", "-preset", "p6", "-rc", "vbr",
+			"-profile:v", "main", "-pix_fmt", "yuv420p", "-bf", "2",
+			"-b_ref_mode", "middle", "-multipass", "qres",
+		)
 	case useGpu && useHevc:
 		// H.265 10-bit GPU (NVENC) + multipass 预分析
 		args = append(args,
@@ -763,6 +775,12 @@ func (s *TranscodeService) runVideoEncodeTask(
 			"-c:v", "h264_nvenc", "-cq", "23", "-preset", "p4", "-rc", "vbr",
 			"-profile:v", "high", "-pix_fmt", "yuv420p", "-bf", "2", "-b_ref_mode", "middle",
 			"-forced-idr", "1",
+		)
+	case !useGpu && useAv1:
+		// AV1 CPU (SVT-AV1)
+		args = append(args,
+			"-c:v", "libsvtav1", "-preset", "6", "-crf", "30", "-tag:v", "av01",
+			"-pix_fmt", "yuv420p",
 		)
 	case !useGpu && useHevc:
 		// H.265 10-bit CPU (libx265) + slow preset + 心理视觉优化
