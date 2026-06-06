@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"errors"
+	"strings"
 
 	"interastral-peace.com/alnitak/internal/global"
 	"interastral-peace.com/alnitak/internal/resp"
@@ -12,6 +13,13 @@ import (
 	"github.com/golang-jwt/jwt/v4"
 )
 
+func trimBearer(token string) string {
+	if len(token) > 7 && strings.EqualFold(token[:7], "Bearer ") {
+		return token[7:]
+	}
+	return token
+}
+
 func Auth() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		// 读取验证token
@@ -21,6 +29,7 @@ func Auth() gin.HandlerFunc {
 			ctx.Abort()
 			return
 		}
+		tokenString = trimBearer(tokenString)
 		// 验证并解析token
 		_, claims, err := jwt_parse.ParseToken(tokenString)
 		if err != nil {
@@ -79,6 +88,7 @@ func OptionalAuth() gin.HandlerFunc {
 			ctx.Next()
 			return
 		}
+		tokenString = trimBearer(tokenString)
 		_, claims, err := jwt_parse.ParseToken(tokenString)
 		if err == nil && claims.TokenType == 0 {
 			ctx.Set("userId", claims.UserId)

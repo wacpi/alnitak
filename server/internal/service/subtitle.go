@@ -199,9 +199,6 @@ func CreateSubtitleTrack(ctx *gin.Context, resourceShortID, lang, label string, 
 		return err
 	}
 	label = strings.TrimSpace(label)
-	if label == "" {
-		label = lang
-	}
 	if len(label) > 64 {
 		return errors.New("字幕显示名过长")
 	}
@@ -294,11 +291,12 @@ func UpdateSubtitleTrack(ctx *gin.Context, trackID uint, req UpdateSubtitleTrack
 	}
 
 	updates := map[string]interface{}{}
-	if req.Label != "" && strings.TrimSpace(req.Label) != track.Label {
-		if len(strings.TrimSpace(req.Label)) > 64 {
+	trimmedLabel := strings.TrimSpace(req.Label)
+	if trimmedLabel != track.Label {
+		if len(trimmedLabel) > 64 {
 			return errors.New("字幕显示名过长")
 		}
-		updates["label"] = strings.TrimSpace(req.Label)
+		updates["label"] = trimmedLabel
 	}
 	if req.IsDefault != nil {
 		updates["is_default"] = *req.IsDefault

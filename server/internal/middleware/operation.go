@@ -64,7 +64,7 @@ func OperationRecord() gin.HandlerFunc {
 			body, _ = json.Marshal(&m)
 		}
 
-		claims, _ := jwt.GetTokenClaims(c.GetHeader("Authorization"))
+		claims, _ := jwt.GetTokenClaims(trimBearer(c.GetHeader("Authorization")))
 		if claims != nil && claims.UserId != 0 {
 			userId = int(claims.UserId)
 		}

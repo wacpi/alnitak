@@ -58,13 +58,13 @@ func (m *MinIOStorage) initMinIOClient(config Config) (*s3.Client, error) {
 		return aws.Endpoint{
 			URL:               config.Endpoint,
 			HostnameImmutable: true,
-			SigningRegion:     "us-east-1",
+			SigningRegion:     "auto",
 		}, nil
 	})
 
 	cfg := aws.Config{
 		Credentials:                 credentials.NewStaticCredentialsProvider(config.KeyID, config.KeySecret, ""),
-		Region:                      "us-east-1",
+		Region:                      "auto",
 		EndpointResolverWithOptions: resolver,
 	}
 
