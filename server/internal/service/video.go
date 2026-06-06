@@ -1488,6 +1488,7 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 	if len(resources) == 0 {
 		return errors.New("该视频没有可转码的资源")
 	}
+	utils.InfoLog(fmt.Sprintf("【重新转码】VideoID=%d, 找到%d个资源记录", videoId, len(resources)), "transcoding")
 
 	// ========== 第1步：为每个分P查找原始文件 ==========
 	// 注意：同一个 FileID 可能对应多个分P（秒传/复用场景）。
@@ -1511,22 +1512,34 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 		if resource.FileID != 0 {
 			if err := global.Mysql.Where("id = ?", resource.FileID).First(&vf).Error; err == nil && vf.DirName != "" {
 				found = true
+				utils.InfoLog(fmt.Sprintf("【重新转码】通过FileID找到文件 resourceID=%d, FileID=%d, DirName=%s", resource.ID, resource.FileID, vf.DirName), "transcoding")
+			} else {
+				utils.ErrorLog("【重新转码】通过FileID查找失败", "transcoding", fmt.Sprintf("resourceID=%d, FileID=%d, err=%v", resource.ID, resource.FileID, err))
 			}
+		} else {
+			utils.InfoLog(fmt.Sprintf("【重新转码】resourceID=%d 的 FileID=0，跳过方式1", resource.ID), "transcoding")
 		}
 
 		// 方式2：通过 VideoIndexFile.DirName 查找
 		if !found {
 			var indexFile model.VideoIndexFile
 			if err := global.Mysql.Unscoped().Where("resource_id = ?", resource.ID).First(&indexFile).Error; err == nil && indexFile.DirName != "" {
+				utils.InfoLog(fmt.Sprintf("【重新转码】找到VideoIndexFile resourceID=%d, DirName=%s", resource.ID, indexFile.DirName), "transcoding")
 				if foundVF, err := findVideoFileByDirName(global.Mysql, indexFile.DirName); err == nil && foundVF != nil && foundVF.DirName != "" {
 					vf = *foundVF
 					found = true
+					utils.InfoLog(fmt.Sprintf("【重新转码】通过DirName找到VideoFile resourceID=%d, DirName=%s", resource.ID, indexFile.DirName), "transcoding")
+				} else {
+					utils.ErrorLog("【重新转码】通过DirName查找VideoFile失败", "transcoding", fmt.Sprintf("resourceID=%d, DirName=%s, err=%v", resource.ID, indexFile.DirName, err))
 				}
+			} else {
+				utils.ErrorLog("【重新转码】查找VideoIndexFile失败", "transcoding", fmt.Sprintf("resourceID=%d, err=%v", resource.ID, err))
 			}
 		}
 
 		if !found {
-			continue // 静默跳过，避免大量重复的错误日志
+			utils.ErrorLog("【重新转码】所有查找方式均失败，跳过此分P", "transcoding", fmt.Sprintf("resourceID=%d", resource.ID))
+			continue
 		}
 
 		// 检查源文件是否存在

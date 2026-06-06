@@ -32,6 +32,7 @@ type OtherConfigReq struct {
 	Prefix          string `json:"prefix"`
 	Generate1080p60 bool   `json:"generate1080p60"`
 	UseGpu          bool   `json:"useGpu"`
+	UseH265         bool   `json:"useH265"`
 
 	// 服务器配置
 	ServerPort  string `json:"serverPort"`
