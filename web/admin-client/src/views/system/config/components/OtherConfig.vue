@@ -21,6 +21,9 @@
         <n-form-item label="转码使用AV1">
           <n-switch v-model:value="otherForm.useAv1"></n-switch>
         </n-form-item>
+        <n-alert type="info" style="margin-bottom: 16px;">
+          编码优先级：AV1 &gt; H.265 &gt; H.264。AV1 开启时 H.265 自动关闭。
+        </n-alert>
 
         <n-divider title-placement="left">服务器配置</n-divider>
         <n-form-item label="HTTP端口">
@@ -53,7 +56,7 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeMount, reactive } from "vue";
+import { onBeforeMount, reactive, watch } from "vue";
 import { statusCode } from "@/utils/status-code";
 import { getOtherConfigAPI, setOtherConfigAPI } from "@/api/config";
 import { NInput, NSwitch, NForm, NFormItem, NButton, NDivider, NScrollbar, NAlert, useMessage } from "naive-ui";
@@ -104,6 +107,10 @@ const setConfig = async () => {
     message.error(res.data.msg || "修改失败");
   }
 }
+
+// AV1 与 H.265 互斥：优先级 AV1 > H.265 > H.264
+watch(() => otherForm.useAv1, (val) => { if (val) otherForm.useH265 = false; });
+watch(() => otherForm.useH265, (val) => { if (val) otherForm.useAv1 = false; });
 
 onBeforeMount(() => {
   getConfig();
