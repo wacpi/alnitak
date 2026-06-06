@@ -751,11 +751,11 @@ func (s *TranscodeService) runVideoEncodeTask(
 	// 音轨侧用 adelay 注入等量前置静声与视频首画对齐（ffmpeg 滤镜 adelay）。
 	switch {
 	case useGpu && useHevc:
-		// H.265 10-bit GPU (NVENC)
+		// H.265 10-bit GPU (NVENC) + multipass 预分析
 		args = append(args,
 			"-c:v", "hevc_nvenc", "-cq", "24", "-preset", "p6", "-rc", "vbr",
 			"-profile:v", "main10", "-pix_fmt", "yuv420p10le", "-bf", "2", "-b_ref_mode", "middle",
-			"-forced-idr", "1",
+			"-forced-idr", "1", "-multipass", "qres",
 		)
 	case useGpu && !useHevc:
 		// H.264 8-bit GPU (NVENC)
@@ -765,10 +765,11 @@ func (s *TranscodeService) runVideoEncodeTask(
 			"-forced-idr", "1",
 		)
 	case !useGpu && useHevc:
-		// H.265 10-bit CPU (libx265)
+		// H.265 10-bit CPU (libx265) + slow preset + 心理视觉优化
 		args = append(args,
-			"-c:v", "libx265", "-preset", "medium", "-crf", "24", "-tag:v", "hvc1",
-			"-pix_fmt", "yuv420p10le", "-x265-params", "profile=main10",
+			"-c:v", "libx265", "-preset", "slow", "-tag:v", "hvc1",
+			"-pix_fmt", "yuv420p10le",
+			"-x265-params", "profile=main10:aq-mode=3:aq-strength=0.8:deblock=-1,-1:no-sao=1",
 		)
 	default:
 		// H.264 8-bit CPU (libx264) — 默认回退
