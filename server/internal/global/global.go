@@ -33,6 +33,15 @@ func GetOssUrlFrom(objectKey string, cfg config.Storage) string {
 	return buildOssURL(objectKey, cfg)
 }
 
+// GetBackupOssUrl 生成备用 OSS 的访问 URL（用于播放层容灾）。
+// 仅公开 bucket 支持；无备用 OSS 或私有 bucket 时返回空。
+func GetBackupOssUrl(objectKey string) string {
+	if StorageBackup == nil {
+		return ""
+	}
+	return GetOssUrlFrom(objectKey, Config.Storage.Backup.ToStorageConfig(Config.Storage))
+}
+
 func buildOssURL(objectKey string, cfg config.Storage) string {
 	if cfg.Private {
 		if cfg.Bucket == Config.Storage.Bucket && cfg.Endpoint == Config.Storage.Endpoint {

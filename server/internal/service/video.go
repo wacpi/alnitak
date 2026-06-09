@@ -159,14 +159,30 @@ func getMediaFileURL(dirName, fileName, key string) string {
 	return global.GetOssUrl("video/" + dirName + "/" + fileName)
 }
 
+// getMediaFileURLWithBackup 同 getMediaFileURL，但 useBackup=true 时优先使用备用 OSS URL。
+// 备用 OSS 未配置或本地存储时回退到主 URL。
+func getMediaFileURLWithBackup(dirName, fileName, key string, useBackup bool) string {
+	if !useBackup {
+		return getMediaFileURL(dirName, fileName, key)
+	}
+	if global.Config.Storage.OssType == "local" {
+		return getMediaFileURL(dirName, fileName, key)
+	}
+	backupURL := global.GetBackupOssUrl("video/" + dirName + "/" + fileName)
+	if backupURL == "" {
+		return getMediaFileURL(dirName, fileName, key)
+	}
+	return backupURL
+}
+
 // buildMPDSegmentBase 生成 DASH MPD（SegmentBase 模式，类似B站）
-func buildMPDSegmentBase(file *model.VideoIndexFile, key string) string {
-	// ISO 8601 时长格式
+func buildMPDSegmentBase(file *model.VideoIndexFile, key string, useBackup ...bool) string {
+	backup := len(useBackup) > 0 && useBackup[0]
 	durationStr := formatDuration(file.TotalDuration)
 
 	// 【关键】使用直链并进行 XML 转义
-	videoURL := getMediaFileURL(file.DirName, file.VideoFile, key)
-	audioURL := getMediaFileURL(file.DirName, file.AudioFile, key)
+	videoURL := getMediaFileURLWithBackup(file.DirName, file.VideoFile, key, backup)
+	audioURL := getMediaFileURLWithBackup(file.DirName, file.AudioFile, key, backup)
 	safeVideoURL := xmlEscape(videoURL)
 	safeAudioURL := xmlEscape(audioURL)
 
@@ -217,7 +233,8 @@ func buildMPDSegmentBase(file *model.VideoIndexFile, key string) string {
 }
 
 // buildMPDSegmentBaseUnified 生成包含所有清晰度的统一 DASH MPD（无缝切换）
-func buildMPDSegmentBaseUnified(files []model.VideoIndexFile, key string) string {
+func buildMPDSegmentBaseUnified(files []model.VideoIndexFile, key string, useBackup ...bool) string {
+	backup := len(useBackup) > 0 && useBackup[0]
 	// 按码率升序排列（dash.js Representation index 0 = 最低画质）
 	sort.Slice(files, func(i, j int) bool {
 		return dashRepresentationLess(files[i], files[j])
@@ -235,7 +252,7 @@ func buildMPDSegmentBaseUnified(files []model.VideoIndexFile, key string) string
 	sb.WriteString(`    <AdaptationSet mimeType="video/mp4" segmentAlignment="true" startWithSAP="1">`)
 	sb.WriteString("\n")
 	for _, file := range files {
-		videoURL := getMediaFileURL(file.DirName, file.VideoFile, key)
+		videoURL := getMediaFileURLWithBackup(file.DirName, file.VideoFile, key, backup)
 		safeVideoURL := xmlEscape(videoURL)
 
 		fmt.Fprintf(&sb, `      <Representation id="%s" bandwidth="%d" width="%d" height="%d" frameRate="%.3f" codecs="%s">`,
@@ -254,7 +271,7 @@ func buildMPDSegmentBaseUnified(files []model.VideoIndexFile, key string) string
 
 	// ========== 音频 AdaptationSet（音频共享，取第一条记录） ==========
 	audio := files[0]
-	audioURL := getMediaFileURL(audio.DirName, audio.AudioFile, key)
+	audioURL := getMediaFileURLWithBackup(audio.DirName, audio.AudioFile, key, backup)
 	safeAudioURL := xmlEscape(audioURL)
 
 	sb.WriteString(`    <AdaptationSet mimeType="audio/mp4" segmentAlignment="true" startWithSAP="1">`)
@@ -298,10 +315,29 @@ func dashRepresentationLess(a, b model.VideoIndexFile) bool {
 }
 
 // buildPlayURLJSON 生成类似B站的 playurl JSON 格式
-func buildPlayURLJSON(file *model.VideoIndexFile, key string) string {
+// 当配置了备用 OSS 且不是 backup 模式本身时，同时返回 backupUrl（B站风格多源容灾）。
+func buildPlayURLJSON(file *model.VideoIndexFile, key string, useBackup ...bool) string {
+	backup := len(useBackup) > 0 && useBackup[0]
 	// 【关键】使用直链而不是 API 端点，让 player 可以直接加载
-	videoURL := getMediaFileURL(file.DirName, file.VideoFile, key)
-	audioURL := getMediaFileURL(file.DirName, file.AudioFile, key)
+	videoURL := getMediaFileURLWithBackup(file.DirName, file.VideoFile, key, backup)
+	audioURL := getMediaFileURLWithBackup(file.DirName, file.AudioFile, key, backup)
+
+	// 非 backup 模式且配置了备用 OSS 时，计算 backupUrl（B站风格的多源容灾）
+	backupVideoURL := ""
+	backupAudioURL := ""
+	if !backup && global.StorageBackup != nil {
+		backupVideoURL = getMediaFileURLWithBackup(file.DirName, file.VideoFile, key, true)
+		backupAudioURL = getMediaFileURLWithBackup(file.DirName, file.AudioFile, key, true)
+	}
+
+	backupVideoJSON := ""
+	backupAudioJSON := ""
+	if backupVideoURL != "" {
+		backupVideoJSON = fmt.Sprintf(`, "backupUrl": "%s"`, xmlEscape(backupVideoURL))
+	}
+	if backupAudioURL != "" {
+		backupAudioJSON = fmt.Sprintf(`, "backupUrl": "%s"`, xmlEscape(backupAudioURL))
+	}
 
 	json := fmt.Sprintf(`{
   "code": 0,
@@ -324,7 +360,7 @@ func buildPlayURLJSON(file *model.VideoIndexFile, key string) string {
         "SegmentBase": {
           "Initialization": "%s",
           "indexRange": "%s"
-        }
+        }%s
       }],
       "audio": [{
         "id": "audio",
@@ -335,16 +371,16 @@ func buildPlayURLJSON(file *model.VideoIndexFile, key string) string {
         "SegmentBase": {
           "Initialization": "%s",
           "indexRange": "%s"
-        }
+        }%s
       }]
     }
   }
 }`,
-		file.Quality, file.TotalDuration, file.TotalDuration,
-		file.Quality, videoURL, file.VideoBandwidth, file.VideoCodec, file.Width, file.Height, file.FrameRate,
-		file.VideoInitRange, file.VideoIndexRange,
-		audioURL, file.AudioBandwidth, file.AudioCodec,
-		file.AudioInitRange, file.AudioIndexRange,
+		xmlEscape(file.Quality), file.TotalDuration, file.TotalDuration,
+		xmlEscape(file.Quality), xmlEscape(videoURL), file.VideoBandwidth, xmlEscape(file.VideoCodec), file.Width, file.Height, file.FrameRate,
+		file.VideoInitRange, file.VideoIndexRange, backupVideoJSON,
+		xmlEscape(audioURL), file.AudioBandwidth, xmlEscape(file.AudioCodec),
+		file.AudioInitRange, file.AudioIndexRange, backupAudioJSON,
 	)
 
 	return json
@@ -486,7 +522,8 @@ func decodeSidxBox(reader io.ReaderAt, boxOffset, boxSize int64) ([]sidxEntry, e
 // buildM3U8MasterSegmentBase 为 SegmentBase 模式生成 HLS v7 主播放列表（Master Playlist）
 // Safari/iOS 通过此清单实现音视频分离播放
 // format=m3u8 返回主清单，内部引用 m3u8video / m3u8audio 子清单
-func buildM3U8MasterSegmentBase(file *model.VideoIndexFile, resourceId uint, key string) string {
+func buildM3U8MasterSegmentBase(file *model.VideoIndexFile, resourceId uint, key string, useBackup ...bool) string {
+	backup := len(useBackup) > 0 && useBackup[0]
 	var sb strings.Builder
 
 	sb.WriteString("#EXTM3U\n")
@@ -496,8 +533,14 @@ func buildM3U8MasterSegmentBase(file *model.VideoIndexFile, resourceId uint, key
 	// 【关键】构建子清单的完整 URL
 	baseURL := getLocalBaseURL()
 
+	// 备份后缀：通知子清单生成时也使用备用 OSS URL
+	backupSuffix := ""
+	if backup {
+		backupSuffix = "&backup=true"
+	}
+
 	// 音频组：引用音频子清单
-	audioURI := fmt.Sprintf("/api/v1/video/getVideoFile?resourceId=%d&quality=%s&format=m3u8audio&key=%s", resourceId, file.Quality, key)
+	audioURI := fmt.Sprintf("/api/v1/video/getVideoFile?resourceId=%d&quality=%s&format=m3u8audio&key=%s%s", resourceId, file.Quality, key, backupSuffix)
 	if baseURL != "" {
 		audioURI = baseURL + audioURI
 	}
@@ -507,7 +550,7 @@ func buildM3U8MasterSegmentBase(file *model.VideoIndexFile, resourceId uint, key
 	sb.WriteString("\n")
 
 	// 视频流：引用视频子清单
-	videoURI := fmt.Sprintf("/api/v1/video/getVideoFile?resourceId=%d&quality=%s&format=m3u8video&key=%s", resourceId, file.Quality, key)
+	videoURI := fmt.Sprintf("/api/v1/video/getVideoFile?resourceId=%d&quality=%s&format=m3u8video&key=%s%s", resourceId, file.Quality, key, backupSuffix)
 	if baseURL != "" {
 		videoURI = baseURL + videoURI
 	}
@@ -520,24 +563,26 @@ func buildM3U8MasterSegmentBase(file *model.VideoIndexFile, resourceId uint, key
 }
 
 // buildM3U8VideoSegmentBase 为视频流生成 HLS v7 媒体播放列表（从文件实时解析 sidx）
-func buildM3U8VideoSegmentBase(file *model.VideoIndexFile, key string) (string, error) {
+func buildM3U8VideoSegmentBase(file *model.VideoIndexFile, key string, useBackup ...bool) (string, error) {
+	backup := len(useBackup) > 0 && useBackup[0]
 	videoPath := "./upload/video/" + file.DirName + "/" + file.VideoFile
 	entries, err := parseSidxBox(videoPath)
 	if err != nil {
 		return "", fmt.Errorf("parse video sidx failed: %w", err)
 	}
-	streamURL := getMediaFileURL(file.DirName, file.VideoFile, key)
+	streamURL := getMediaFileURLWithBackup(file.DirName, file.VideoFile, key, backup)
 	return buildByteRangeM3U8(entries, streamURL, file.VideoInitRange), nil
 }
 
 // buildM3U8AudioSegmentBase 为音频流生成 HLS v7 媒体播放列表（从文件实时解析 sidx）
-func buildM3U8AudioSegmentBase(file *model.VideoIndexFile, key string) (string, error) {
+func buildM3U8AudioSegmentBase(file *model.VideoIndexFile, key string, useBackup ...bool) (string, error) {
+	backup := len(useBackup) > 0 && useBackup[0]
 	audioPath := "./upload/video/" + file.DirName + "/" + file.AudioFile
 	entries, err := parseSidxBox(audioPath)
 	if err != nil {
 		return "", fmt.Errorf("parse audio sidx failed: %w", err)
 	}
-	streamURL := getMediaFileURL(file.DirName, file.AudioFile, key)
+	streamURL := getMediaFileURLWithBackup(file.DirName, file.AudioFile, key, backup)
 	return buildByteRangeM3U8(entries, streamURL, file.AudioInitRange), nil
 }
 
@@ -744,7 +789,10 @@ func GetVideoFileManage(ctx *gin.Context, resourceId uint, quality, format strin
 }
 
 // getVideoFileInternal 获取视频文件的公共逻辑（DASH MPD / HLS M3U8 / JSON）
+// 支持 backup=true 查询参数：生成的 manifest 中所有媒体 URL 指向备用 OSS（播放容灾）。
 func getVideoFileInternal(ctx *gin.Context, resourceId uint, quality, format string) (string, error) {
+	useBackup := ctx.Query("backup") == "true"
+
 	// ========== HLS 子清单请求（m3u8video / m3u8audio） ==========
 	if format == "m3u8video" || format == "m3u8audio" {
 		existingKey := ctx.Query("key")
@@ -762,9 +810,9 @@ func getVideoFileInternal(ctx *gin.Context, resourceId uint, quality, format str
 		}
 
 		if format == "m3u8video" {
-			return buildM3U8VideoSegmentBase(&file, existingKey)
+			return buildM3U8VideoSegmentBase(&file, existingKey, useBackup)
 		}
-		return buildM3U8AudioSegmentBase(&file, existingKey)
+		return buildM3U8AudioSegmentBase(&file, existingKey, useBackup)
 	}
 
 	// ========== 常规请求 ==========
@@ -786,7 +834,7 @@ func getVideoFileInternal(ctx *gin.Context, resourceId uint, quality, format str
 			return "", errors.New("无SegmentBase资源")
 		}
 		cache.SetVideoSlice(key, sbFiles[0].DirName)
-		return buildMPDSegmentBaseUnified(sbFiles, key), nil
+		return buildMPDSegmentBaseUnified(sbFiles, key, useBackup), nil
 	}
 
 	// 从 VideoIndexFile 元数据动态生成
@@ -801,12 +849,12 @@ func getVideoFileInternal(ctx *gin.Context, resourceId uint, quality, format str
 	// B站风格：SegmentBase 模式（音视频分离）
 	if file.IsSegmentBase() {
 		if format == "m3u8" {
-			return buildM3U8MasterSegmentBase(&file, resourceId, key), nil
+			return buildM3U8MasterSegmentBase(&file, resourceId, key, useBackup), nil
 		}
 		if format == "dash" || format == "mpd" {
-			return buildMPDSegmentBase(&file, key), nil
+			return buildMPDSegmentBase(&file, key, useBackup), nil
 		}
-		return buildPlayURLJSON(&file, key), nil
+		return buildPlayURLJSON(&file, key, useBackup), nil
 	}
 
 	// 兼容模式：SegmentList 切片模式

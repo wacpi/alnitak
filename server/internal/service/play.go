@@ -14,6 +14,15 @@ import (
 	"interastral-peace.com/alnitak/pkg/playtoken"
 )
 
+// PlayURLsResult 播放 URL 结果，包含主备音视频直链。
+type PlayURLsResult struct {
+	VideoURL    string `json:"video"`
+	AudioURL    string `json:"audio"`
+	Expires     int64  `json:"expires"`
+	BackupVideo string `json:"backupVideo,omitempty"` // 备用 OSS 视频 URL（B站风格多源容灾）
+	BackupAudio string `json:"backupAudio,omitempty"` // 备用 OSS 音频 URL
+}
+
 const playGrantTTL = 8 * time.Minute
 const streamSliceTTL = 2 * time.Hour
 
@@ -39,36 +48,37 @@ func IssuePlayGrantForResource(ctx *gin.Context, resourceShortID string) (token 
 }
 
 // GetPlayURLs 校验 grant 后返回默认清晰度下音视频分离的直链（带 st）。
-func GetPlayURLs(ctx *gin.Context, resourceShortID, grantToken, quality string) (videoURL, audioURL string, expires int64, err error) {
+// 配置了备用 OSS 时同时返回 backupVideo/backupAudio（B站风格多源容灾）。
+func GetPlayURLs(ctx *gin.Context, resourceShortID, grantToken, quality string) (result PlayURLsResult, err error) {
 	if err := checkPlayAccess(ctx); err != nil {
-		return "", "", 0, err
+		return result, err
 	}
 	claims, err := playtoken.ParsePlayGrant(grantToken)
 	if err != nil {
-		return "", "", 0, errors.New("播放凭证无效")
+		return result, errors.New("播放凭证无效")
 	}
 	if claims.ResourceShortID != resourceShortID {
-		return "", "", 0, errors.New("播放凭证与资源不匹配")
+		return result, errors.New("播放凭证与资源不匹配")
 	}
 
 	var res model.Resource
 	if err := global.Mysql.Where("short_id = ?", resourceShortID).First(&res).Error; err != nil || res.ID == 0 {
-		return "", "", 0, errors.New("资源不存在")
+		return result, errors.New("资源不存在")
 	}
 	if res.Vid != claims.VideoID {
-		return "", "", 0, errors.New("播放凭证已失效")
+		return result, errors.New("播放凭证已失效")
 	}
 	var v model.Video
 	if err := global.Mysql.Where("id = ?", res.Vid).First(&v).Error; err != nil || v.ID == 0 {
-		return "", "", 0, errors.New("视频不存在")
+		return result, errors.New("视频不存在")
 	}
 	if v.Status != global.AUDIT_APPROVED || res.Status != global.AUDIT_APPROVED {
-		return "", "", 0, errors.New("内容不可播放")
+		return result, errors.New("内容不可播放")
 	}
 
 	var files []model.VideoIndexFile
 	if err := global.Mysql.Where("resource_id = ?", res.ID).Find(&files).Error; err != nil || len(files) == 0 {
-		return "", "", 0, errors.New("播放索引未就绪")
+		return result, errors.New("播放索引未就绪")
 	}
 	var candidates []model.VideoIndexFile
 	for _, f := range files {
@@ -77,7 +87,7 @@ func GetPlayURLs(ctx *gin.Context, resourceShortID, grantToken, quality string) 
 		}
 	}
 	if len(candidates) == 0 {
-		return "", "", 0, errors.New("当前资源不支持该播放方式")
+		return result, errors.New("当前资源不支持该播放方式")
 	}
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i].VideoBandwidth > candidates[j].VideoBandwidth
@@ -93,7 +103,7 @@ func GetPlayURLs(ctx *gin.Context, resourceShortID, grantToken, quality string) 
 			}
 		}
 		if !found {
-			return "", "", 0, errors.New("清晰度不存在")
+			return result, errors.New("清晰度不存在")
 		}
 	} else {
 		file = candidates[0]
@@ -102,16 +112,32 @@ func GetPlayURLs(ctx *gin.Context, resourceShortID, grantToken, quality string) 
 	exp := time.Now().Add(streamSliceTTL).Unix()
 	vTok, err := playtoken.IssueStreamToken(file.DirName, file.VideoFile, streamSliceTTL)
 	if err != nil {
-		return "", "", 0, err
+		return result, err
 	}
 	aTok, err := playtoken.IssueStreamToken(file.DirName, file.AudioFile, streamSliceTTL)
 	if err != nil {
-		return "", "", 0, err
+		return result, err
 	}
 	base := publicAPIBase(ctx)
-	videoURL = base + "/api/v1/video/stream/" + url.PathEscape(file.VideoFile) + "?st=" + url.QueryEscape(vTok)
-	audioURL = base + "/api/v1/video/stream/" + url.PathEscape(file.AudioFile) + "?st=" + url.QueryEscape(aTok)
-	return videoURL, audioURL, exp, nil
+
+	dir := file.DirName
+	result = PlayURLsResult{
+		VideoURL: base + "/api/v1/video/stream/" + url.PathEscape(file.VideoFile) + "?st=" + url.QueryEscape(vTok),
+		AudioURL: base + "/api/v1/video/stream/" + url.PathEscape(file.AudioFile) + "?st=" + url.QueryEscape(aTok),
+		Expires:  exp,
+	}
+
+	// B站风格：配置了备用 OSS 时附带 backup URL，播放器可在主 URL 不可用时降级到备用 OSS 直连
+	if global.StorageBackup != nil {
+		if bv := global.GetBackupOssUrl("video/" + dir + "/" + file.VideoFile); bv != "" {
+			result.BackupVideo = bv
+		}
+		if ba := global.GetBackupOssUrl("video/" + dir + "/" + file.AudioFile); ba != "" {
+			result.BackupAudio = ba
+		}
+	}
+
+	return result, nil
 }
 
 func publicAPIBase(ctx *gin.Context) string {
