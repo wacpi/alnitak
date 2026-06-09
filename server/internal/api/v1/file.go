@@ -195,24 +195,35 @@ func GetVideoStream(ctx *gin.Context) {
 // 获取图片文件
 func GetImgFile(ctx *gin.Context) {
 	file := ctx.Param("file")
+	useBackup := ctx.Query("backup") == "true"
 
 	// 使用本地存储
 	if viper.GetString("storage.oss_type") == "local" {
-		// 设置缓存头，告知浏览器缓存一天
 		ctx.Header("Cache-Control", "public, max-age=86400, must-revalidate")
 		ctx.File("./upload/image/" + file)
 		return
 	}
 
-	// OSS 存储：重定向到公开URL
-	redirect := global.GetOssUrl("image/" + file)
-
-	// 开发模式下打印重定向信息
-	if global.Config.Log.Mode == "dev" {
-		fmt.Println("redirect", redirect, "image/"+file)
+	// OSS 存储：重定向到 OSS URL
+	var redirect string
+	if useBackup {
+		redirect = global.GetBackupOssUrl("image/" + file)
+		if redirect == "" {
+			// 没有配置备用 OSS，降级到主 OSS
+			redirect = global.GetOssUrl("image/" + file)
+		}
+	} else {
+		redirect = global.GetOssUrl("image/" + file)
 	}
 
-	// 设置缓存头，告知浏览器缓存5小时（与OSS签名过期时间一致）
+	if global.Config.Log.Mode == "dev" {
+		prefix := "primary"
+		if useBackup {
+			prefix = "backup"
+		}
+		fmt.Println(prefix, "redirect", redirect, "image/"+file)
+	}
+
 	ctx.Header("Cache-Control", "public, max-age=18000, must-revalidate")
 	ctx.Redirect(http.StatusFound, redirect)
 }
