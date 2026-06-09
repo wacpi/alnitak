@@ -12,4 +12,5 @@ type Storage struct {
 	Private       bool   `mapstructure:"private" json:"private" yaml:"private"`
 	UseSSL        bool   `mapstructure:"use_ssl" json:"use_ssl" yaml:"use_ssl"` // OSS是否使用HTTPS
 	UploadMp4File bool   `mapstructure:"upload_mp4_file" json:"upload_mp4_file" yaml:"upload_mp4_file"`
+	UploadTimeout int    `mapstructure:"upload_timeout" json:"upload_timeout" yaml:"upload_timeout"` // 上传超时（秒），0=默认30s
 }

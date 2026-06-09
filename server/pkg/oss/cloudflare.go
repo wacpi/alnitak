@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"time"
 
@@ -62,10 +63,16 @@ func (m *MinIOStorage) initMinIOClient(config Config) (*s3.Client, error) {
 		}, nil
 	})
 
+	httpClient := &http.Client{}
+	if config.Timeout > 0 {
+		httpClient.Timeout = time.Duration(config.Timeout) * time.Second
+	}
+
 	cfg := aws.Config{
 		Credentials:                 credentials.NewStaticCredentialsProvider(config.KeyID, config.KeySecret, ""),
 		Region:                      "auto",
 		EndpointResolverWithOptions: resolver,
+		HTTPClient:                  httpClient,
 	}
 
 	// Force path style for MinIO compatibility

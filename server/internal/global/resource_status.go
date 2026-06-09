@@ -30,6 +30,8 @@ func ResourceStatusName(status int) string {
 		return "rejected"
 	case PROCESSING_FAIL:
 		return "process_failed"
+	case UPLOAD_FAILED:
+		return "upload_failed"
 	default:
 		return "unknown"
 	}

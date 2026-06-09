@@ -825,6 +825,7 @@ var authApiDesc = map[string]string{
 	"GET|/api/v1/video/getResourceQualityManage": "获取视频资源支持的分辨率信息（后台管理）",
 	"GET|/api/v1/video/getVideoFileManage":       "获取视频文件URL（后台管理）",
 	"POST|/api/v1/video/reTranscodeVideo":        "重新转码视频（后台管理）",
+	"POST|/api/v1/video/reUploadVideo":              "重新上传OSS（后台管理）",
 	"POST|/api/v1/video/subtitle/upload":         "上传分P字幕",
 	"PUT|/api/v1/video/subtitle/:id":             "更新分P字幕",
 	"DELETE|/api/v1/video/subtitle/:id":          "删除分P字幕",

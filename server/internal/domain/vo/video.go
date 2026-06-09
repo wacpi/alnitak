@@ -56,6 +56,7 @@ type UploadVideoResp struct {
 	Duration            int                       `json:"duration"`
 	TranscodingProgress float64                   `json:"transcodingProgress,omitempty" gorm:"-"`
 	TranscodingDetails  []TranscodingProgressItem `json:"transcodingDetails,omitempty" gorm:"-"`
+	UploadProgress      *UploadProgressInfo       `json:"uploadProgress,omitempty" gorm:"-"`
 }
 
 type AllVideoResp struct {
@@ -81,6 +82,7 @@ type VideoInfoManageResp struct {
 	Author              UserInfoResp              `json:"author" gorm:"-"`
 	TranscodingProgress float64                   `json:"transcodingProgress,omitempty" gorm:"-"`
 	TranscodingDetails  []TranscodingProgressItem `json:"transcodingDetails,omitempty" gorm:"-"`
+	UploadProgress      *UploadProgressInfo       `json:"uploadProgress,omitempty" gorm:"-"`
 }
 
 type TranscodingProgressItem struct {
@@ -89,6 +91,12 @@ type TranscodingProgressItem struct {
 	Quality       string  `json:"quality"`
 	Progress      float64 `json:"progress"`
 	Status        string  `json:"status"` // processing/success/fail
+}
+
+type UploadProgressInfo struct {
+	OssType  string  `json:"ossType"`  // aliyun/minio/cloudflare/local
+	Progress float64 `json:"progress"` // 0-100
+	Status   string  `json:"status"`   // uploading/success/fail/local
 }
 
 type ReviewListResp struct {

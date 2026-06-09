@@ -48,11 +48,20 @@ func (a *Aliyun) init(config Config) error {
 }
 
 func (a *Aliyun) initOssClinet(config Config) (*oss.Client, error) {
-	if config.Domain == "" {
-		return oss.New(config.Endpoint, config.KeyID, config.KeySecret)
-	} else {
-		return oss.New(config.Domain, config.KeyID, config.KeySecret, oss.UseCname(true))
+	opts := make([]oss.ClientOption, 0)
+	if config.Domain != "" {
+		opts = append(opts, oss.UseCname(true))
 	}
+	if config.Timeout > 0 {
+		opts = append(opts, oss.Timeout(int64(config.Timeout), int64(config.Timeout)))
+	}
+
+	endpoint := config.Endpoint
+	if config.Domain != "" {
+		endpoint = config.Domain
+	}
+
+	return oss.New(endpoint, config.KeyID, config.KeySecret, opts...)
 }
 
 // 获取文件

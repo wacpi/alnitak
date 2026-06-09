@@ -9,6 +9,9 @@ const (
 	maxGpuFailCountThreshold = 3
 
 	ossUploadMaxConcurrency = 10
-	ossUploadRetryDelay     = 500 * time.Millisecond
+	ossUploadMaxRetries     = 3
 )
+
+// ossUploadBackoff 指数退避：1s, 2s, 4s
+var ossUploadBackoff = []time.Duration{1 * time.Second, 2 * time.Second, 4 * time.Second}
 

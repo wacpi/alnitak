@@ -36,6 +36,7 @@ func InitStorage(c config.Storage) Storage {
 		Domain:    c.Domain,
 		Private:   c.Private,
 		UseSSL:    c.UseSSL,
+		Timeout:   c.UploadTimeout,
 	}
 
 	s, err := initOss(c.OssType, config)

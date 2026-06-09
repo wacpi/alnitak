@@ -51,6 +51,7 @@ const (
 // StorageUploader 抽象存储接口，屏蔽具体 OSS 实现，便于 Mock 测试
 type StorageUploader interface {
 	PutObjectFromFile(objectKey, filePath string) error
+	DeleteObject(objectKey string) error
 }
 
 type TranscodingTarget struct {
@@ -73,6 +74,11 @@ type resourceTranscodingProgress struct {
 	VideoID    uint
 	ResourceID uint
 	Details    map[string]vo.TranscodingProgressItem
+
+	// 上传阶段进度
+	UploadOSS      string  // aliyun/minio/cloudflare/local
+	UploadProgress float64 // 0-100
+	UploadStatus   string  // "" / uploading / success / fail / local
 }
 
 // TranscodeService 转码服务核心实例 (Orchestrator)
@@ -134,7 +140,7 @@ func GetTranscoder() *TranscodeService {
 
 func ResetGPUState() { GetTranscoder().ResetGPUState() }
 
-func GetVideoTranscodingProgress(videoID uint) (float64, []vo.TranscodingProgressItem) {
+func GetVideoTranscodingProgress(videoID uint) (float64, []vo.TranscodingProgressItem, *vo.UploadProgressInfo) {
 	return GetTranscoder().GetVideoTranscodingProgress(videoID)
 }
 
@@ -236,7 +242,8 @@ func (s *TranscodeService) ProcessVideo(ctx context.Context, info *dto.Transcodi
 	if global.Config.Storage.OssType != "local" {
 		if err := s.uploadToOSS(ctx, info); err != nil {
 			utils.ErrorLog("【OSS上传流程失败】", "transcoding", err.Error())
-			_ = s.completeTransaction(ctx, info, global.PROCESSING_FAIL)
+			// 转码成功但上传失败 → 标记 UPLOAD_FAILED（保留产物，可重试上传）
+			s.markUploadFailed(ctx, info)
 			return
 		}
 	} else {
@@ -437,15 +444,60 @@ func (s *TranscodeService) completeTransaction(ctx context.Context, info *dto.Tr
 	return nil
 }
 
+// markUploadFailed 在转码成功但上传 OSS 失败时调用。
+// 与 completeTransaction(PROCESSING_FAIL) 不同，它只标记资源状态为 UPLOAD_FAILED，
+// 不改变 video 状态，并保留转码产物在磁盘上以便后续重试上传。
+func (s *TranscodeService) markUploadFailed(ctx context.Context, info *dto.TranscodingInfo) {
+	defer s.clearProgress(info.ResourceID)
+	if err := s.db.WithContext(ctx).
+		Model(&model.Resource{}).
+		Where("id = ? and status = ?", info.ResourceID, global.VIDEO_PROCESSING).
+		Update("status", global.UPLOAD_FAILED).Error; err != nil {
+		utils.ErrorLog("【标记上传失败】", "transcoding", err.Error())
+	}
+	// 不更新 video 表状态，保持 VIDEO_PROCESSING 以便前端在「处理中」列表可见
+}
+
+type uploadTaskResult struct {
+	fileName  string
+	objectKey string
+	success   bool
+}
+
 func (s *TranscodeService) uploadToOSS(ctx context.Context, info *dto.TranscodingInfo) error {
 	files, err := os.ReadDir(info.OutputDir)
 	if err != nil {
 		return err
 	}
 
-	tasks := make(chan os.DirEntry, len(files))
-	results := make(chan bool, len(files))
+	// 过滤出需要上传的文件
+	var uploadEntries []os.DirEntry
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+		if file.Name() == "upload"+info.Suffix && !global.Config.Storage.UploadMp4File {
+			continue
+		}
+		uploadEntries = append(uploadEntries, file)
+	}
 
+	totalFiles := len(uploadEntries)
+	if totalFiles == 0 {
+		s.setUploadProgress(info.ResourceID, 100, "local", "local")
+		return nil
+	}
+
+	ossType := global.Config.Storage.OssType
+	if ossType == "" {
+		ossType = "local"
+	}
+	s.setUploadProgress(info.ResourceID, 0, "uploading", ossType)
+
+	tasks := make(chan os.DirEntry, totalFiles)
+	results := make(chan uploadTaskResult, totalFiles)
+
+	var completed atomic.Int32
 	var wg sync.WaitGroup
 	for i := 0; i < ossUploadMaxConcurrency; i++ {
 		wg.Add(1)
@@ -453,55 +505,69 @@ func (s *TranscodeService) uploadToOSS(ctx context.Context, info *dto.Transcodin
 			defer wg.Done()
 			for file := range tasks {
 				fileName := file.Name()
-				if fileName == "upload"+info.Suffix && !global.Config.Storage.UploadMp4File {
-					results <- false
-					continue
-				}
-
 				objectKey := "video/" + info.DirName + "/" + fileName
 				filePath := info.OutputDir + fileName
 
-				err := s.uploader.PutObjectFromFile(objectKey, filePath)
-				if err != nil {
-					// 使用 context 感知的非阻塞等待进行重试
-					select {
-					case <-ctx.Done():
-						results <- false
-						return
-					case <-time.After(ossUploadRetryDelay):
-						err = s.uploader.PutObjectFromFile(objectKey, filePath)
+				var lastErr error
+				for attempt := 0; attempt <= ossUploadMaxRetries; attempt++ {
+					if attempt > 0 {
+						select {
+						case <-ctx.Done():
+							results <- uploadTaskResult{fileName: fileName, objectKey: objectKey, success: false}
+							return
+						case <-time.After(ossUploadBackoff[attempt-1]):
+						}
+					}
+					lastErr = s.uploader.PutObjectFromFile(objectKey, filePath)
+					if lastErr == nil {
+						break
 					}
 				}
 
-				if err != nil {
-					utils.ErrorLog(fmt.Sprintf("【OSS重试后仍失败】%s", fileName), "oss", err.Error())
-					results <- false
+				if lastErr != nil {
+					utils.ErrorLog(fmt.Sprintf("【OSS上传失败】%s (重试%d次)", fileName, ossUploadMaxRetries), "oss", lastErr.Error())
+					results <- uploadTaskResult{fileName: fileName, objectKey: objectKey, success: false}
 				} else {
-					results <- true
+					done := completed.Add(1)
+					s.setUploadProgress(info.ResourceID, float64(done)/float64(totalFiles)*100, "uploading", "")
+					results <- uploadTaskResult{fileName: fileName, objectKey: objectKey, success: true}
 				}
 			}
 		}()
 	}
 
-	for _, file := range files {
-		if !file.IsDir() {
-			tasks <- file
-		}
+	for _, file := range uploadEntries {
+		tasks <- file
 	}
 	close(tasks)
 	wg.Wait()
 	close(results)
 
-	successCount := 0
-	for success := range results {
-		if success {
-			successCount++
+	var uploaded []string
+	var failedCount int
+	for r := range results {
+		if r.success {
+			uploaded = append(uploaded, r.objectKey)
+		} else {
+			failedCount++
 		}
 	}
 
-	if successCount == 0 {
-		return fmt.Errorf("OSS全部上传失败")
+	if failedCount > 0 {
+		s.setUploadProgress(info.ResourceID, 0, "fail", "")
+		// 回滚：删除所有已成功上传的文件，防止 OSS 残留孤儿文件
+		for _, key := range uploaded {
+			if key == "" {
+				continue
+			}
+			if err := s.uploader.DeleteObject(key); err != nil {
+				utils.ErrorLog(fmt.Sprintf("【OSS回滚删除失败】%s", key), "oss", err.Error())
+			}
+		}
+		return fmt.Errorf("OSS上传部分失败: %d个文件失败, 已回滚%d个已上传文件", failedCount, len(uploaded))
 	}
+
+	s.setUploadProgress(info.ResourceID, 100, "success", "")
 	return nil
 }
 
@@ -592,19 +658,39 @@ func (s *TranscodeService) markQualityFailed(resourceID uint, quality string) {
 	s.updateProgress(resourceID, quality, 0, "fail")
 }
 
+func (s *TranscodeService) setUploadProgress(resourceID uint, pct float64, status, ossType string) {
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	state, ok := s.progress[resourceID]
+	if !ok {
+		return
+	}
+	if pct < 0 {
+		pct = 0
+	} else if pct > 100 {
+		pct = 100
+	}
+	state.UploadProgress = pct
+	state.UploadStatus = status
+	if ossType != "" {
+		state.UploadOSS = ossType
+	}
+}
+
 func (s *TranscodeService) clearProgress(resourceID uint) {
 	s.progressMu.Lock()
 	defer s.progressMu.Unlock()
 	delete(s.progress, resourceID)
 }
 
-func (s *TranscodeService) GetVideoTranscodingProgress(videoID uint) (float64, []vo.TranscodingProgressItem) {
+func (s *TranscodeService) GetVideoTranscodingProgress(videoID uint) (float64, []vo.TranscodingProgressItem, *vo.UploadProgressInfo) {
 	s.progressMu.RLock()
 	defer s.progressMu.RUnlock()
 
 	details := make([]vo.TranscodingProgressItem, 0)
 	var totalProgress float64
 	var totalCount int
+	var uploadInfo *vo.UploadProgressInfo
 
 	for _, state := range s.progress {
 		if state.VideoID != videoID {
@@ -615,9 +701,16 @@ func (s *TranscodeService) GetVideoTranscodingProgress(videoID uint) (float64, [
 			totalProgress += item.Progress
 			totalCount++
 		}
+		if state.UploadStatus != "" {
+			uploadInfo = &vo.UploadProgressInfo{
+				OssType:  state.UploadOSS,
+				Progress: state.UploadProgress,
+				Status:   state.UploadStatus,
+			}
+		}
 	}
 	if totalCount == 0 {
-		return 0, details
+		return 0, details, uploadInfo
 	}
 
 	sort.Slice(details, func(i, j int) bool {
@@ -637,7 +730,7 @@ func (s *TranscodeService) GetVideoTranscodingProgress(videoID uint) (float64, [
 		}
 		return details[i].Quality > details[j].Quality
 	})
-	return totalProgress / float64(totalCount), details
+	return totalProgress / float64(totalCount), details, uploadInfo
 }
 
 func (s *TranscodeService) registerProcess(videoID, resourceID uint, cmd *exec.Cmd, cancelFunc context.CancelFunc, outputDir string) {
@@ -799,11 +892,20 @@ func (s *TranscodeService) runVideoEncodeTask(
 		)
 	}
 
-	args = append(args,
-		"-b:v", targetRate, "-maxrate", maxrate, "-bufsize", bufsize,
-		"-r", fps, "-g", gopSizeStr, "-keyint_min", gopSizeStr,
-		"-threads", strconv.Itoa(threads),
-	)
+	// SVT-AV1 CRF 模式不接受 -b:v 目标码率，否则报错：
+	// "Target Bitrate only supported when --rc is 1/2 (VBR/CBR). Current --rc: 0"
+	if !useGpu && useAv1 {
+		args = append(args,
+			"-r", fps, "-g", gopSizeStr, "-keyint_min", gopSizeStr,
+			"-threads", strconv.Itoa(threads),
+		)
+	} else {
+		args = append(args,
+			"-b:v", targetRate, "-maxrate", maxrate, "-bufsize", bufsize,
+			"-r", fps, "-g", gopSizeStr, "-keyint_min", gopSizeStr,
+			"-threads", strconv.Itoa(threads),
+		)
+	}
 
 	if useGpu {
 		args = append(args,

@@ -865,6 +865,10 @@ func GetUploadVideoList(ctx *gin.Context, page, pageSize int, category string) (
 		if snapshot, ok := progressMap[videos[i].ID]; ok {
 			videos[i].TranscodingProgress = snapshot.Overall
 			videos[i].TranscodingDetails = snapshot.Details
+			videos[i].UploadProgress = snapshot.UploadInfo
+			if videos[i].UploadProgress != nil {
+				videos[i].UploadProgress.OssType = "" // 用户端不暴露 OSS 类型
+			}
 		}
 	}
 
@@ -889,8 +893,9 @@ func applyVideoCategoryFilter(db *gorm.DB, category string) *gorm.DB {
 }
 
 type videoProgressSnapshot struct {
-	Overall float64
-	Details []vo.TranscodingProgressItem
+	Overall      float64
+	Details      []vo.TranscodingProgressItem
+	UploadInfo   *vo.UploadProgressInfo
 }
 
 func isTranscodingStatus(status int) bool {
@@ -905,15 +910,15 @@ func collectVideoProgressSnapshots(videoIDs []uint) map[uint]videoProgressSnapsh
 
 	resourceIDSet := make(map[uint]struct{})
 	for _, videoID := range videoIDs {
-		overall, details := GetVideoTranscodingProgress(videoID)
+		overall, details, uploadInfo := GetVideoTranscodingProgress(videoID)
 		if len(details) == 0 {
-			progressMap[videoID] = videoProgressSnapshot{Overall: overall, Details: details}
+			progressMap[videoID] = videoProgressSnapshot{Overall: overall, Details: details, UploadInfo: uploadInfo}
 			continue
 		}
 		for _, item := range details {
 			resourceIDSet[item.ResourceID] = struct{}{}
 		}
-		progressMap[videoID] = videoProgressSnapshot{Overall: overall, Details: details}
+		progressMap[videoID] = videoProgressSnapshot{Overall: overall, Details: details, UploadInfo: uploadInfo}
 	}
 
 	if len(resourceIDSet) == 0 {
@@ -1242,6 +1247,7 @@ func GetProcessingVideoList(videoListReq dto.VideoListReq) (total int64, videos 
 		if snapshot, ok := progressMap[videos[i].ID]; ok {
 			videos[i].TranscodingProgress = snapshot.Overall
 			videos[i].TranscodingDetails = snapshot.Details
+			videos[i].UploadProgress = snapshot.UploadInfo
 		}
 	}
 
@@ -1769,6 +1775,78 @@ func deleteOldTranscodedFilesLocal(dirName string) {
 	if deletedCount > 0 {
 		utils.InfoLog(fmt.Sprintf("【本地清理】目录 %s 清理完成, 删除 %d 个文件", dirName, deletedCount), "transcoding")
 	}
+}
+
+// ReUploadVideo 重新上传转码产物到 OSS。
+// 当资源状态为 UPLOAD_FAILED（转码成功但上传失败）时调用，
+// 重跑 uploadToOSS，成功后走 completeTransaction 流转状态。
+func ReUploadVideo(ctx *gin.Context, videoId uint) error {
+	// 查找视频
+	var video model.Video
+	global.Mysql.Where("id = ?", videoId).First(&video)
+	if video.ID == 0 {
+		return errors.New("视频不存在")
+	}
+
+	// 查找该视频下所有上传失败的资源
+	var failedResources []model.Resource
+	global.Mysql.Where("vid = ? AND status = ?", videoId, global.UPLOAD_FAILED).Find(&failedResources)
+	if len(failedResources) == 0 {
+		return errors.New("该视频没有上传失败的资源")
+	}
+
+	// 同步执行重传（调用方已开 goroutine 则无需再开）
+	s := GetTranscoder()
+	for _, resource := range failedResources {
+		utils.InfoLog(fmt.Sprintf("【重新上传OSS】开始 ResourceID=%d, VideoID=%d", resource.ID, videoId), "video")
+
+		// 通过 FileID 查找 VideoFile 获取 DirName 和 suffix
+		var vf model.VideoFile
+		if err := global.Mysql.Where("id = ?", resource.FileID).First(&vf).Error; err != nil {
+			utils.ErrorLog("【重新上传OSS】查找视频文件失败", "video", fmt.Sprintf("resourceID=%d, err=%v", resource.ID, err))
+			continue
+		}
+		if vf.DirName == "" {
+			utils.ErrorLog("【重新上传OSS】VideoFile.DirName 为空", "video", fmt.Sprintf("resourceID=%d", resource.ID))
+			continue
+		}
+
+		suffix := utils.GetFileSuffix(vf.OriginalName)
+		sourceDir := vf.DirName
+		outputDir := "./upload/video/" + sourceDir + "/"
+
+		// 检查目录是否存在
+		if _, err := os.Stat(outputDir); os.IsNotExist(err) {
+			utils.ErrorLog("【重新上传OSS】输出目录不存在", "video", outputDir)
+			continue
+		}
+
+		// 将资源状态设为转码中（上传中）
+		global.Mysql.Model(&model.Resource{}).Where("id = ?", resource.ID).Update("status", global.VIDEO_PROCESSING)
+
+		info := &dto.TranscodingInfo{
+			VideoID:    videoId,
+			ResourceID: resource.ID,
+			DirName:    sourceDir,
+			OutputDir:  outputDir,
+			Suffix:     suffix,
+		}
+
+		if err := s.uploadToOSS(ctx, info); err != nil {
+			utils.ErrorLog("【重新上传OSS】上传失败", "video", fmt.Sprintf("resourceID=%d, err=%v", resource.ID, err))
+			s.markUploadFailed(ctx, info)
+			continue
+		}
+
+		// 上传成功 → 调用 completeTransaction 流转状态
+		if err := s.completeTransaction(ctx, info, global.WAITING_REVIEW); err != nil {
+			utils.ErrorLog("【重新上传OSS】状态流转失败", "video", fmt.Sprintf("resourceID=%d, err=%v", resource.ID, err))
+		} else {
+			utils.InfoLog(fmt.Sprintf("【重新上传OSS】成功 ResourceID=%d", resource.ID), "video")
+		}
+	}
+
+	return nil
 }
 
 // 通过视频ID查询视频

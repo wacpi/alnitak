@@ -380,3 +380,19 @@ func ReTranscodeVideo(ctx *gin.Context) {
 
 	resp.OkWithMessage(ctx, "已触发重新转码")
 }
+
+func ReUploadVideo(ctx *gin.Context) {
+	vid := utils.StringToUint(ctx.Query("vid"))
+
+	if vid == 0 {
+		resp.FailWithMessage(ctx, "视频ID不能为空")
+		return
+	}
+
+	if err := service.ReUploadVideo(ctx, vid); err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+
+	resp.OkWithMessage(ctx, "已触发重新上传")
+}

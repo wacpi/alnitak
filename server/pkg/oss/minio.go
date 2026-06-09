@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"time"
 
@@ -67,6 +69,18 @@ func (m *MinIO) initMinIOClient(config Config) (*minio.Client, error) {
 	options := minio.Options{
 		Creds:  credentials.NewStaticV4(config.KeyID, config.KeySecret, ""),
 		Secure: config.UseSSL, // 是否使用HTTPS连接
+	}
+	if config.Timeout > 0 {
+		options.Transport = &http.Transport{
+			DialContext: (&net.Dialer{
+				Timeout:   120 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: time.Duration(config.Timeout) * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		}
 	}
 	client, err := minio.New(config.Endpoint, &options)
 	if err != nil {

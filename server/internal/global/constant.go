@@ -20,6 +20,8 @@ const (
 	REVIEW_FAILED = 2000
 	// 视频处理失败
 	PROCESSING_FAIL = 3000
+	// 转码成功，上传 OSS 失败（可重试上传，无需重新转码）
+	UPLOAD_FAILED = 3001
 )
 
 // 用户关系
