@@ -17,7 +17,7 @@ import Wplayer from 'wplayer-next';
 import { ref, shallowRef, onBeforeMount, watch, onMounted, onBeforeUnmount, computed } from 'vue';
 import { sendDanmakuAPI } from "@/api/danmaku";
 import DanmakuSend from "./components/DanmakuSend.vue";
-import { getResourceQualityApi, getVideoFileUrl, getVideoFileUrlDash, getVideoFileUrlDashUnified } from "@/api/video";
+import { getResourceQualityApi, getVideoFileUrl, getVideoFileUrlDash, getVideoFileUrlDashUnified, postPlayGrantAPI, getPlayUrlsAPI } from "@/api/video";
 import { addHistoryAPI } from "@/api/history";
 import { useAuthStore } from "@/stores/auth-store";
 import {
@@ -31,6 +31,7 @@ import {
   type PlaybackState,
 } from "@/utils/hls-player";
 import { fetchAndApplySubtitles } from "@/utils/subtitle-tracks";
+import { selectBestLine, appendParamToQualities } from "@/utils/line-select";
 
 // ===== 组件属性定义 =====
 const props = withDefaults(defineProps<{
@@ -68,6 +69,13 @@ const defaultQuality = ref('');
 const hlsPlayerState: HlsPlayerState = { instance: null, videoElement: null, playPromise: null };
 const dash = shallowRef<any>(null);
 const hasEnded = ref(false);
+
+// ===== PlayURL 授权 & 备用 OSS URL =====
+const playGrantToken = ref<string>('');
+const playGrantExpires = ref<number>(0);
+const backupVideoUrl = ref<string>('');
+const backupAudioUrl = ref<string>('');
+const selectedLineLabel = ref<'primary' | 'backup'>('primary');
 
 // ===== DASH 统一 MPD 模式状态 =====
 let dashUnifiedMode = false;
@@ -120,22 +128,30 @@ const options: PlayerOptionsType = {
             {
               maxBufferLength: 30,
               maxMaxBufferLength: 60,
-              onError: (_event, data) => {
-                if (data.fatal && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-                  hlsRetryCount++;
-                  if (hlsRetryCount >= MAX_HLS_RETRY) {
-                    const backupUrl = origUrl + (origUrl.includes('?') ? '&' : '?') + 'backup=true';
-                    console.log('[HLS] 主 OSS 多次失败，切换到备用 OSS:', backupUrl);
-                    hlsRetryCount = 0;
-                    if (hlsPlayerState.instance) {
-                      hlsPlayerState.instance.loadSource(backupUrl);
-                    }
-                    if (savedTime > 0) {
-                      video.currentTime = savedTime;
+                onError: (_event, data) => {
+                  if (data.fatal && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+                    hlsRetryCount++;
+                    if (hlsRetryCount >= MAX_HLS_RETRY) {
+                      // 方式 1：&backup=true MPD（保持画质切换）
+                      const backupUrl = origUrl + (origUrl.includes('?') ? '&' : '?') + 'backup=true';
+                      console.log('[HLS] 主 OSS 多次失败，切 &backup=true MPD:', backupUrl);
+                      // 方式 2：PlayURL 直连备用 OSS URL（单文件）
+                      if (backupVideoUrl.value) {
+                        console.log('[HLS] PlayURL 备用 OSS 直链可用:', {
+                          backupVideo: backupVideoUrl.value,
+                          backupAudio: backupAudioUrl.value,
+                        });
+                      }
+                      hlsRetryCount = 0;
+                      if (hlsPlayerState.instance) {
+                        hlsPlayerState.instance.loadSource(backupUrl);
+                      }
+                      if (savedTime > 0) {
+                        video.currentTime = savedTime;
+                      }
                     }
                   }
-                }
-              },
+                },
             }
           );
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
@@ -288,8 +304,16 @@ const options: PlayerOptionsType = {
           if (!dashBackupRetried && e?.error === 'download') {
             dashBackupRetried = true;
             const savedDashTime = video.currentTime;
+            // 方式 1：通过 &backup=true 获取新的备用 MPD（所有清晰度指向备用 OSS，保持画质切换）
             const backupUrl = origDashUrl + (origDashUrl.includes('?') ? '&' : '?') + 'backup=true';
-            console.log('[DASH] 主 OSS 下载失败，切换到备用 OSS:', backupUrl);
+            console.log('[DASH] 主 OSS 下载失败，切 &backup=true MPD:', backupUrl);
+            // 方式 2：PlayURL 直连备用 OSS URL（单文件，不通过 MPD）
+            if (backupVideoUrl.value) {
+              console.log('[DASH] PlayURL 备用 OSS 直链可用:', {
+                backupVideo: backupVideoUrl.value,
+                backupAudio: backupAudioUrl.value,
+              });
+            }
             const oldDash = dash.value;
             if (oldDash) oldDash.reset();
             dash.value = dashjs.MediaPlayer().create();
@@ -648,6 +672,8 @@ const getQualityDisplayName = (qualityStr: string): string => {
   return qualityStr.split('_')[0] || qualityStr;
 }
 
+
+
 // 视频播放信息缓存
 const videoPlayInfoCache = new Map<string, any>();
 
@@ -728,6 +754,44 @@ const loadResource = async (part: number) => {
         return { name, url: getVideoFileUrl(rid, item, requestTs) }
       })
       options.video.type = 'customHls'
+    }
+
+    // ===== PlayURL 授权 + 备用 OSS URL（B站风格多源容灾） =====
+    const resourceShortId = getCurrentResourceShortId()
+    if (resourceShortId) {
+      try {
+        const grantRes = await postPlayGrantAPI(resourceShortId)
+        if (grantRes.data.code === statusCode.OK) {
+          const token = grantRes.data.data.token
+          playGrantToken.value = token
+          playGrantExpires.value = grantRes.data.data.expires
+
+          const playRes = await getPlayUrlsAPI(resourceShortId, token)
+          if (playRes.data.code === statusCode.OK) {
+            backupVideoUrl.value = playRes.data.data.backupVideo || ''
+            backupAudioUrl.value = playRes.data.data.backupAudio || ''
+            if (import.meta.dev) {
+              console.log('[video-player] 备用 OSS URL:', {
+                backupVideo: backupVideoUrl.value,
+                backupAudio: backupAudioUrl.value,
+              })
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[video-player] PlayURL grant 获取失败（不影响主播放）:', e)
+      }
+    }
+
+    // ===== 延迟检测 & 自动线路选择 =====
+    const firstQualityUrl = options.video.quality?.[0]?.url
+    if (firstQualityUrl && backupVideoUrl.value) {
+      selectedLineLabel.value = await selectBestLine(
+        firstQualityUrl, backupVideoUrl.value, import.meta.dev,
+      )
+      if (selectedLineLabel.value === 'backup') {
+        appendParamToQualities(options.video.quality, 'backup=true')
+      }
     }
   }
 }
@@ -1009,7 +1073,13 @@ defineExpose({
   uploadHistory,
   setDanmaku,
   addDanmaku,
-  setOnEnded
+  setOnEnded,
+  // 备用 OSS URL（供父组件/embed-player 使用）
+  backupVideoUrl,
+  backupAudioUrl,
+  playGrantToken,
+  // 当前选择的播放线路（'primary' | 'backup'）
+  selectedLineLabel,
 })
 </script>
 

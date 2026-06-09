@@ -8,7 +8,8 @@ import Artplayer from 'artplayer';
 import Hls from 'hls.js';
 import * as dashjs from 'dashjs';
 import artplayerPluginDanmuku from 'artplayer-plugin-danmuku';
-import { getResourceQualityApi, getVideoFileUrl, getVideoFileUrlDash, getVideoFileUrlDashUnified } from '@/api/video';
+import { getResourceQualityApi, getVideoFileUrl, getVideoFileUrlDash, getVideoFileUrlDashUnified, postPlayGrantAPI, getPlayUrlsAPI } from '@/api/video';
+import { selectBestLine, appendParamToQualities } from '@/utils/line-select';
 import { getDanmakuAPI } from '@/api/danmaku';
 import {
   createHlsPlayer,
@@ -32,6 +33,11 @@ let player: any = null;
 let dashPlayer: any = null;
 let hlsPlayerState: HlsPlayerState = { instance: null, videoElement: null, playPromise: null };
 let originalDanmaku: DanmakuType[] = [];
+
+// 备用 OSS 线路状态
+const backupVideoUrl = ref<string>('');
+const backupAudioUrl = ref<string>('');
+const selectedLineLabel = ref<'primary' | 'backup'>('primary');
 
 // DASH 统一 MPD 模式状态
 let dashUnifiedMode = false;
@@ -276,6 +282,41 @@ const initPlayer = async () => {
     qualities = getQualities(res.data.data.quality, rid, serverSupportsDash, serverSupportsDash ? qualityOrderFromServer : []);
   } else {
     qualities = [{ default: true, html: '默认', url: resource.url, type: 'm3u8' }];
+  }
+
+  // ===== PlayURL 授权 + 备用 OSS URL（B站风格多源容灾） =====
+  const resourceShortId = typeof resource.shortId === 'string' ? resource.shortId : undefined;
+  if (resourceShortId) {
+    try {
+      const grantRes = await postPlayGrantAPI(resourceShortId);
+      if (grantRes.data.code === 200) {
+        const token = grantRes.data.data.token;
+        const playRes = await getPlayUrlsAPI(resourceShortId, token);
+        if (playRes.data.code === 200) {
+          backupVideoUrl.value = playRes.data.data.backupVideo || '';
+          backupAudioUrl.value = playRes.data.data.backupAudio || '';
+          if (import.meta.dev) {
+            console.log('[art.vue] 备用 OSS URL:', {
+              backupVideo: backupVideoUrl.value,
+              backupAudio: backupAudioUrl.value,
+            });
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[art.vue] PlayURL grant 获取失败（不影响主播放）:', e);
+    }
+  }
+
+  // ===== 延迟检测 & 自动线路选择 =====
+  const firstQualityUrl = qualities[0]?.url;
+  if (firstQualityUrl && backupVideoUrl.value) {
+    selectedLineLabel.value = await selectBestLine(
+      firstQualityUrl, backupVideoUrl.value, import.meta.dev,
+    );
+    if (selectedLineLabel.value === 'backup') {
+      appendParamToQualities(qualities, 'backup=true');
+    }
   }
 
   await loadDanmaku();
