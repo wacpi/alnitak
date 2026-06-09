@@ -83,6 +83,14 @@ func UploadImg(ctx *gin.Context, file *multipart.FileHeader) (string, error) {
 			utils.ErrorLog("图片上传到OSS失败", "upload", err.Error())
 			return "", errors.New("文件上传失败")
 		}
+		// 异步上传到备用OSS（多源容灾）
+		if global.StorageBackup != nil {
+			go func() {
+				if err := global.StorageBackup.PutObjectFromFile(objectKey, filePath); err != nil {
+					utils.ErrorLog("图片上传到备用OSS失败", "upload", err.Error())
+				}
+			}()
+		}
 	}
 
 	// 记录到数据库
@@ -717,6 +725,14 @@ func initVideo(userId uint, videoPath, title string) (uint, error) {
 		if err := global.Storage.PutObjectFromFile(objectKey, filePath); err != nil {
 			_ = os.Remove(filePath)
 			return 0, err
+		}
+		// 异步上传到备用OSS（多源容灾）
+		if global.StorageBackup != nil {
+			go func() {
+				if err := global.StorageBackup.PutObjectFromFile(objectKey, filePath); err != nil {
+					utils.ErrorLog("封面上传到备用OSS失败", "upload", err.Error())
+				}
+			}()
 		}
 	}
 	// 去掉后缀名并截断过长标题

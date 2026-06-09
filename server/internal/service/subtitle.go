@@ -107,6 +107,12 @@ func deleteSubtitleObject(objectKey, localPath string) error {
 			utils.ErrorLog("删除字幕对象失败", "subtitle", err.Error())
 			return err
 		}
+		// 同时删除备用OSS
+		if global.StorageBackup != nil {
+			if err := global.StorageBackup.DeleteObject(objectKey); err != nil {
+				utils.ErrorLog("删除备用OSS字幕对象失败", "subtitle", err.Error())
+			}
+		}
 	}
 	return nil
 }
@@ -152,6 +158,14 @@ func writeSubtitleVTTFile(objectKey string, vtt []byte) (localPath string, err e
 			_ = os.Remove(localPath)
 			utils.ErrorLog("字幕上传到对象存储失败", "subtitle", err.Error())
 			return "", errors.New("上传字幕失败")
+		}
+		// 异步上传到备用OSS（多源容灾）
+		if global.StorageBackup != nil {
+			go func() {
+				if err := global.StorageBackup.PutObjectFromFile(objectKey, localPath); err != nil {
+					utils.ErrorLog("字幕后备OSS上传失败", "subtitle", err.Error())
+				}
+			}()
 		}
 	}
 	return localPath, nil

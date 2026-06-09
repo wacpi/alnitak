@@ -26,7 +26,30 @@ type Storage interface {
 }
 
 func InitStorage(c config.Storage) Storage {
-	config := Config{
+	clientConfig := buildOssConfig(c)
+
+	s, err := initOss(c.OssType, clientConfig)
+	if err != nil {
+		utils.ErrorLog("oss初始化失败", "oss", err.Error())
+		panic(err)
+	}
+
+	return s
+}
+
+// InitBackupStorage 初始化备用 OSS 实例（多源容灾），忽略 OssType=local 或配置为空。
+// 继承主配置的 Private/UseSSL/UploadTimeout。
+func InitBackupStorage(primary config.Storage) Storage {
+	if primary.Backup == nil || primary.Backup.OssType == "" || primary.Backup.OssType == "local" {
+		return nil
+	}
+
+	merged := primary.Backup.ToStorageConfig(primary)
+	return InitStorage(merged)
+}
+
+func buildOssConfig(c config.Storage) Config {
+	return Config{
 		KeyID:     c.KeyId,
 		KeySecret: c.KeySecret,
 		Bucket:    c.Bucket,
@@ -38,14 +61,6 @@ func InitStorage(c config.Storage) Storage {
 		UseSSL:    c.UseSSL,
 		Timeout:   c.UploadTimeout,
 	}
-
-	s, err := initOss(c.OssType, config)
-	if err != nil {
-		utils.ErrorLog("oss初始化失败", "oss", err.Error())
-		panic(err)
-	}
-
-	return s
 }
 
 func initOss(ossName string, config Config) (Storage, error) {

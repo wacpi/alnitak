@@ -1736,6 +1736,12 @@ func deleteOldTranscodedFilesFromOSS(dirName string) {
 		} else {
 			deletedCount++
 		}
+		// 同时删除备用OSS
+		if global.StorageBackup != nil {
+			if err := global.StorageBackup.DeleteObject(objectKey); err != nil {
+				utils.ErrorLog(fmt.Sprintf("【备用OSS清理】删除文件失败: %s", objectKey), "transcoding", err.Error())
+			}
+		}
 	}
 
 	utils.InfoLog(fmt.Sprintf("【OSS清理】目录 %s 清理完成, 删除 %d/%d 个文件", dirName, deletedCount, len(objectKeys)), "transcoding")
@@ -1843,6 +1849,10 @@ func ReUploadVideo(ctx *gin.Context, videoId uint) error {
 			utils.ErrorLog("【重新上传OSS】状态流转失败", "video", fmt.Sprintf("resourceID=%d, err=%v", resource.ID, err))
 		} else {
 			utils.InfoLog(fmt.Sprintf("【重新上传OSS】成功 ResourceID=%d", resource.ID), "video")
+			// 异步上传到备用 OSS（多源容灾，不影响主流程）
+			if global.StorageBackup != nil {
+				go s.uploadToBackup(info)
+			}
 		}
 	}
 

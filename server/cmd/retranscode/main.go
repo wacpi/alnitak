@@ -38,6 +38,8 @@ func main() {
 	if global.Config.Storage.OssType != "local" {
 		global.Storage = oss.InitStorage(global.Config.Storage)
 	}
+	// 初始化备用OSS（多源容灾）
+	global.StorageBackup = oss.InitBackupStorage(global.Config.Storage)
 
 	initialize.InitSnowflake()
 

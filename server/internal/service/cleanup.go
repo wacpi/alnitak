@@ -329,6 +329,12 @@ func (r *CleanupResult) cleanOrphanedImages(dryRun bool) {
 				if err := global.Storage.DeleteObject(objectKey); err != nil {
 					r.Errors = append(r.Errors, "删除OSS图片失败: "+objectKey+" - "+err.Error())
 				}
+				// 同时删除备用OSS
+				if global.StorageBackup != nil {
+					if err := global.StorageBackup.DeleteObject(objectKey); err != nil {
+						r.Errors = append(r.Errors, "删除备用OSS图片失败: "+objectKey+" - "+err.Error())
+					}
+				}
 			}
 			// 删除本地文件
 			if err := os.Remove(localPath); err != nil {
@@ -424,6 +430,16 @@ func deleteVideoFromOSS(localDir string, errors *[]string) {
 			utils.ErrorLog(errMsg, "cleanup", err.Error())
 			if errors != nil {
 				*errors = append(*errors, errMsg)
+			}
+		}
+		// 同时删除备用OSS
+		if global.StorageBackup != nil {
+			if err := global.StorageBackup.DeleteObject(objectKey); err != nil {
+				errMsg := "删除备用OSS文件失败: " + objectKey + " - " + err.Error()
+				utils.ErrorLog(errMsg, "cleanup", err.Error())
+				if errors != nil {
+					*errors = append(*errors, errMsg)
+				}
 			}
 		}
 		return nil

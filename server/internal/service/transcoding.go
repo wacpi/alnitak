@@ -255,6 +255,12 @@ func (s *TranscodeService) ProcessVideo(ctx context.Context, info *dto.Transcodi
 	if err := s.completeTransaction(ctx, info, global.WAITING_REVIEW); err != nil {
 		utils.ErrorLog("【业务收尾落库失败】", "transcoding", err.Error())
 	}
+
+	// 5. 异步上传到备用 OSS（多源容灾，不影响主流程）
+	if global.StorageBackup != nil {
+		utils.InfoLog(fmt.Sprintf("【备用OSS上传】触发异步上传 VideoID=%d, DirName=%s", info.VideoID, info.DirName), "transcoding")
+		go s.uploadToBackup(info)
+	}
 }
 
 func (s *TranscodeService) processSingleQuality(
@@ -569,6 +575,51 @@ func (s *TranscodeService) uploadToOSS(ctx context.Context, info *dto.Transcodin
 
 	s.setUploadProgress(info.ResourceID, 100, "success", "")
 	return nil
+}
+
+// uploadToBackup 异步上传转码产物到备用 OSS（多源容灾）。
+// 不影响主流程，失败仅记录日志。
+func (s *TranscodeService) uploadToBackup(info *dto.TranscodingInfo) {
+	backup := global.StorageBackup
+	if backup == nil {
+		return
+	}
+
+	files, err := os.ReadDir(info.OutputDir)
+	if err != nil {
+		utils.ErrorLog("【备用OSS上传】读取目录失败", "transcoding", err.Error())
+		return
+	}
+
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+		if file.Name() == "upload"+info.Suffix && !global.Config.Storage.UploadMp4File {
+			continue
+		}
+
+		fileName := file.Name()
+		objectKey := "video/" + info.DirName + "/" + fileName
+		filePath := info.OutputDir + fileName
+
+		var lastErr error
+		for attempt := 0; attempt <= ossUploadMaxRetries; attempt++ {
+			if attempt > 0 {
+				time.Sleep(ossUploadBackoff[attempt-1])
+			}
+			lastErr = backup.PutObjectFromFile(objectKey, filePath)
+			if lastErr == nil {
+				break
+			}
+		}
+
+		if lastErr != nil {
+			utils.ErrorLog(fmt.Sprintf("【备用OSS上传失败】%s (重试%d次)", fileName, ossUploadMaxRetries), "oss", lastErr.Error())
+		} else {
+			utils.InfoLog(fmt.Sprintf("【备用OSS上传成功】%s", fileName), "transcoding")
+		}
+	}
 }
 
 // ==============================================================================
