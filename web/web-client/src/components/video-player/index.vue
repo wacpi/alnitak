@@ -103,10 +103,15 @@ const options: PlayerOptionsType = {
           volume: playbackState.currentTime > 0 ? playbackState.volume : savedVolumeState.volume,
           muted: playbackState.currentTime > 0 ? playbackState.muted : savedVolumeState.muted,
         };
+        const savedTime = video.currentTime; // 备份切换前保存进度
 
         setupVolumePersistence(video);
 
         if (Hls.isSupported()) {
+          let hlsRetryCount = 0;
+          const MAX_HLS_RETRY = 3; // 连续 N 次网络错误后切备用 OSS
+          const origUrl = video.src;
+
           createHlsPlayer(
             video,
             video.src,
@@ -115,6 +120,22 @@ const options: PlayerOptionsType = {
             {
               maxBufferLength: 30,
               maxMaxBufferLength: 60,
+              onError: (_event, data) => {
+                if (data.fatal && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+                  hlsRetryCount++;
+                  if (hlsRetryCount >= MAX_HLS_RETRY) {
+                    const backupUrl = origUrl + (origUrl.includes('?') ? '&' : '?') + 'backup=true';
+                    console.log('[HLS] 主 OSS 多次失败，切换到备用 OSS:', backupUrl);
+                    hlsRetryCount = 0;
+                    if (hlsPlayerState.instance) {
+                      hlsPlayerState.instance.loadSource(backupUrl);
+                    }
+                    if (savedTime > 0) {
+                      video.currentTime = savedTime;
+                    }
+                  }
+                }
+              },
             }
           );
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
@@ -258,8 +279,33 @@ const options: PlayerOptionsType = {
           }, DASH_END_FALLBACK_DELAY_MS);
         });
 
+        // DASH 备用 OSS 容灾：主 OSS 下载失败时切换 backup MPD
+        let dashBackupRetried = false;
+        const origDashUrl = video.src;
         dash.value.on('error', (e: any) => {
           console.error('[DASH] 播放错误:', e);
+          // error === 'download' 表示 Manifest/SIDX/Content/Init 段下载失败，可切备用 OSS
+          if (!dashBackupRetried && e?.error === 'download') {
+            dashBackupRetried = true;
+            const savedDashTime = video.currentTime;
+            const backupUrl = origDashUrl + (origDashUrl.includes('?') ? '&' : '?') + 'backup=true';
+            console.log('[DASH] 主 OSS 下载失败，切换到备用 OSS:', backupUrl);
+            const oldDash = dash.value;
+            if (oldDash) oldDash.reset();
+            dash.value = dashjs.MediaPlayer().create();
+            // 复用相同 settings
+            dash.value.updateSettings({
+              streaming: {
+                buffer: { bufferTimeDefault: 12, bufferTimeAtTopQuality: 30, bufferTimeAtTopQualityLongForm: 60, bufferPruningInterval: 10, bufferToKeep: 20 },
+                abr: { autoSwitchBitrate: { video: false, audio: false } },
+              },
+              debug: { logLevel: import.meta.dev ? 3 : 0 },
+            });
+            dash.value.initialize(video, backupUrl, false);
+            if (savedDashTime > 0) {
+              dash.value.seek(savedDashTime);
+            }
+          }
         });
       },
     },
