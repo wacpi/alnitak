@@ -27,19 +27,21 @@ func GetOssUrl(objectKey string) string {
 	return buildOssURL(objectKey, Config.Storage)
 }
 
-// GetOssUrlFrom 根据指定存储配置生成 OSS 访问 URL。
-// 私有 bucket 场景暂仅支持主 Storage（GetOssUrl），此函数为公开 bucket 备份源生成 URL。
-func GetOssUrlFrom(objectKey string, cfg config.Storage) string {
-	return buildOssURL(objectKey, cfg)
-}
-
 // GetBackupOssUrl 生成备用 OSS 的访问 URL（用于播放层容灾）。
-// 仅公开 bucket 支持；无备用 OSS 或私有 bucket 时返回空。
+// 公开 bucket: 直接拼接 URL
+// 私有 bucket: 通过 StorageBackup SDK 生成预签名 URL
+// 无备用 OSS 时返回空。
 func GetBackupOssUrl(objectKey string) string {
 	if StorageBackup == nil {
 		return ""
 	}
-	return GetOssUrlFrom(objectKey, Config.Storage.Backup.ToStorageConfig(Config.Storage))
+	backupCfg := Config.Storage.Backup.ToStorageConfig(Config.Storage)
+	if backupCfg.Private {
+		// 私有 bucket：通过备份 OSS SDK 实例生成预签名 URL
+		return StorageBackup.GetObjectUrl(objectKey)
+	}
+	// 公开 bucket：直接拼接
+	return buildOssURL(objectKey, backupCfg)
 }
 
 func buildOssURL(objectKey string, cfg config.Storage) string {
