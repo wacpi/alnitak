@@ -9,7 +9,6 @@ import Hls from 'hls.js';
 import * as dashjs from 'dashjs';
 import artplayerPluginDanmuku from 'artplayer-plugin-danmuku';
 import { getResourceQualityApi, getVideoFileUrl, getVideoFileUrlDash, getVideoFileUrlDashUnified, postPlayGrantAPI, getPlayUrlsAPI } from '@/api/video';
-import { selectBestLine, appendParamToQualities } from '@/utils/line-select';
 import { getDanmakuAPI } from '@/api/danmaku';
 import {
   createHlsPlayer,
@@ -37,7 +36,6 @@ let originalDanmaku: DanmakuType[] = [];
 // 备用 OSS 线路状态
 const backupVideoUrl = ref<string>('');
 const backupAudioUrl = ref<string>('');
-const selectedLineLabel = ref<'primary' | 'backup'>('primary');
 
 // DASH 统一 MPD 模式状态
 let dashUnifiedMode = false;
@@ -305,17 +303,6 @@ const initPlayer = async () => {
       }
     } catch (e) {
       console.warn('[art.vue] PlayURL grant 获取失败（不影响主播放）:', e);
-    }
-  }
-
-  // ===== 延迟检测 & 自动线路选择 =====
-  const firstQualityUrl = qualities[0]?.url;
-  if (firstQualityUrl && backupVideoUrl.value) {
-    selectedLineLabel.value = await selectBestLine(
-      firstQualityUrl, backupVideoUrl.value, import.meta.dev,
-    );
-    if (selectedLineLabel.value === 'backup') {
-      appendParamToQualities(qualities, 'backup=true');
     }
   }
 

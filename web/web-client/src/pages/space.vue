@@ -7,7 +7,7 @@
       </div>
       <div class="space-header">
         <button class="upload-btn" @click="uploadCoverClick">上传封面图片</button>
-        <img class="cover" v-if="userInfo?.spaceCover" :src="getResourceUrl(userInfo.spaceCover)" alt="用户封面图" />
+        <oss-image class="cover" v-if="userInfo?.spaceCover" :src="userInfo.spaceCover" alt="用户封面图" />
         <div class="header-inner">
           <common-avatar :url="userInfo?.avatar" :size="60" :iconSize="36"></common-avatar>
           <div class="header-info">

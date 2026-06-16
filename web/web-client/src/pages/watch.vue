@@ -33,7 +33,7 @@
             </div>
           </div>
           <div class="pgc-info-card" v-if="isPGCPage && pgcInfo">
-            <img class="pgc-cover" :src="getResourceUrl(pgcInfo.cover)" alt="封面" />
+            <oss-image class="pgc-cover" :src="pgcInfo.cover" alt="封面" />
             <div class="pgc-meta">
               <div class="pgc-name">{{ pgcInfo.title }}</div>
               <div class="pgc-sub">

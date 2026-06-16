@@ -6,12 +6,12 @@
       <div class="carousel-item" :style="`width: ${data.itemWidth}% `" v-for="(item, i) in data.playList" :key="i">
         <template v-if="item.url">
           <a :href="item.url" target="_blank" class="carousel-link">
-        <img class="carousel-img" :src="getResourceUrl(item.img)" :alt="item.title" />
+        <oss-image class="carousel-img" :src="item.img" :alt="item.title" />
         <div class="carousel-mask" :style="`background-color: ${item.color}`"></div>
           </a>
         </template>
         <template v-else>
-          <img class="carousel-img" :src="getResourceUrl(item.img)" :alt="item.title" />
+<oss-image class="carousel-img" :src="item.img" :alt="item.title" />
           <div class="carousel-mask" :style="`background-color: ${item.color}`"></div>
         </template>
       </div>

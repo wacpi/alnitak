@@ -1,7 +1,29 @@
 <template>
-  <!-- 播放器容器和弹幕发送区 -->
+    <!-- 播放器容器和弹幕发送区 -->
   <div class="player-container">
     <div class="player" id="dplayer"></div>
+    <!-- 音轨选择器（仅多音轨时显示） -->
+    <div v-if="audioTracks.length > 1" class="audio-track-selector"
+         @mouseenter="showAudioMenu = true" @mouseleave="showAudioMenu = false">
+      <button class="audio-track-btn" :title="`音轨: ${currentAudioLang || '默认'}`">
+        <svg class="audio-track-icon" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+          <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8.5v7a4.5 4.5 0 0 0 2.5-3.5zM14 3.23v2.06a7.5 7.5 0 0 1 0 13.42v2.06A9.5 9.5 0 0 0 14 3.23z"/>
+        </svg>
+        <span class="audio-track-text">{{ currentAudioLang || '音轨' }}</span>
+      </button>
+      <transition name="audio-fade">
+        <div v-if="showAudioMenu" class="audio-track-dropdown">
+          <div class="audio-track-dropdown-title">音轨切换</div>
+          <div v-for="track in audioTracks" :key="track.language"
+               class="audio-track-option"
+               :class="{ selected: track.language === currentAudioLang }"
+               @click="switchAudioTrack(track.language)">
+            <span class="audio-track-option-label">{{ track.title || track.language }}</span>
+            <span v-if="track.isDefault" class="audio-track-option-badge">默认</span>
+          </div>
+        </div>
+      </transition>
+    </div>
     <div class="danmaku-send">
       <danmaku-send ref="danmakuSendRef" @send="sendDanmaku" @change-show="changeShow" @opacity-change="opacityChange"
         @set-filter="filterDanmaku" :is-logged-in="isLoggedIn"></danmaku-send>
@@ -17,7 +39,7 @@ import Wplayer from 'wplayer-next';
 import { ref, shallowRef, onBeforeMount, watch, onMounted, onBeforeUnmount, computed } from 'vue';
 import { sendDanmakuAPI } from "@/api/danmaku";
 import DanmakuSend from "./components/DanmakuSend.vue";
-import { getResourceQualityApi, getVideoFileUrl, getVideoFileUrlDash, getVideoFileUrlDashUnified, postPlayGrantAPI, getPlayUrlsAPI } from "@/api/video";
+import { getResourceQualityApi, getVideoFileUrl, getVideoFileUrlDash, getVideoFileUrlDashUnified, postPlayGrantAPI, getPlayUrlsAPI, getAudioTracksAPI } from "@/api/video";
 import { addHistoryAPI } from "@/api/history";
 import { useAuthStore } from "@/stores/auth-store";
 import {
@@ -31,7 +53,7 @@ import {
   type PlaybackState,
 } from "@/utils/hls-player";
 import { fetchAndApplySubtitles } from "@/utils/subtitle-tracks";
-import { selectBestLine, appendParamToQualities } from "@/utils/line-select";
+
 
 // ===== 组件属性定义 =====
 const props = withDefaults(defineProps<{
@@ -77,6 +99,13 @@ const backupVideoUrl = ref<string>('');
 const backupAudioUrl = ref<string>('');
 const selectedLineLabel = ref<'primary' | 'backup'>('primary');
 
+// ===== 多音轨支持 =====
+const audioTracks = ref<AudioTrackInfo[]>([]);
+const currentAudioLang = ref<string>('');
+const showAudioMenu = ref(false);
+/** dash.js 原生 AudioTrack 对象引用，用于切换 */
+let dashNativeAudioTracks: any[] = [];
+
 // ===== DASH 统一 MPD 模式状态 =====
 let dashUnifiedMode = false;
 let dashQualityMap: Map<string, number> = new Map(); // 清晰度显示名 → dash.js Representation 索引
@@ -116,8 +145,7 @@ const options: PlayerOptionsType = {
         setupVolumePersistence(video);
 
         if (Hls.isSupported()) {
-          let hlsRetryCount = 0;
-          const MAX_HLS_RETRY = 3; // 连续 N 次网络错误后切备用 OSS
+          let hlsBackupRetried = false; // 是否已切备用 OSS（跨 video 元素重置）
           const origUrl = video.src;
 
           createHlsPlayer(
@@ -129,26 +157,17 @@ const options: PlayerOptionsType = {
               maxBufferLength: 30,
               maxMaxBufferLength: 60,
                 onError: (_event, data) => {
-                  if (data.fatal && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-                    hlsRetryCount++;
-                    if (hlsRetryCount >= MAX_HLS_RETRY) {
-                      // 方式 1：&backup=true MPD（保持画质切换）
-                      const backupUrl = origUrl + (origUrl.includes('?') ? '&' : '?') + 'backup=true';
-                      console.log('[HLS] 主 OSS 多次失败，切 &backup=true MPD:', backupUrl);
-                      // 方式 2：PlayURL 直连备用 OSS URL（单文件）
-                      if (backupVideoUrl.value) {
-                        console.log('[HLS] PlayURL 备用 OSS 直链可用:', {
-                          backupVideo: backupVideoUrl.value,
-                          backupAudio: backupAudioUrl.value,
-                        });
-                      }
-                      hlsRetryCount = 0;
-                      if (hlsPlayerState.instance) {
-                        hlsPlayerState.instance.loadSource(backupUrl);
-                      }
-                      if (savedTime > 0) {
-                        video.currentTime = savedTime;
-                      }
+                  if (!hlsBackupRetried && data.fatal && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+                    hlsBackupRetried = true;
+                    selectedLineLabel.value = 'backup';
+
+                    const backupUrl = origUrl + (origUrl.includes('?') ? '&' : '?') + 'backup=true';
+                    console.log('[HLS] 主 OSS 网络错误，切 &backup=true:', backupUrl);
+                    if (hlsPlayerState.instance) {
+                      hlsPlayerState.instance.loadSource(backupUrl);
+                    }
+                    if (savedTime > 0) {
+                      video.currentTime = savedTime;
                     }
                   }
                 },
@@ -215,6 +234,28 @@ const options: PlayerOptionsType = {
             if (dashIndex !== undefined) {
               dash.value.setRepresentationForTypeByIndex('video', dashIndex, true);
             }
+          }
+
+          // 读取 dash.js 原生音频轨（MPD 中多个 audio AdaptationSet 对应多音轨）
+          try {
+            const nativeTracks = dash.value.getTracksFor('audio');
+            if (nativeTracks && nativeTracks.length > 1) {
+              dashNativeAudioTracks = nativeTracks;
+              // 映射为 AudioTrackInfo 提供给 UI
+              const mapped: AudioTrackInfo[] = nativeTracks.map((t: any) => ({
+                language: t.lang || '',
+                title: t.label || t.lang || (t.roles && t.roles[0]) || '',
+                isDefault: false,
+              }));
+              // 标记默认轨
+              const defaultTrack = nativeTracks.find((t: any) => t.defaultSelected);
+              if (defaultTrack) {
+                currentAudioLang.value = defaultTrack.lang || '';
+              }
+              audioTracks.value = mapped;
+            }
+          } catch (e) {
+            console.warn('[DASH] 读取音轨信息失败:', e);
           }
         });
 
@@ -303,17 +344,11 @@ const options: PlayerOptionsType = {
           // error === 'download' 表示 Manifest/SIDX/Content/Init 段下载失败，可切备用 OSS
           if (!dashBackupRetried && e?.error === 'download') {
             dashBackupRetried = true;
+            selectedLineLabel.value = 'backup';
             const savedDashTime = video.currentTime;
-            // 方式 1：通过 &backup=true 获取新的备用 MPD（所有清晰度指向备用 OSS，保持画质切换）
+            // 通过 &backup=true 获取新的备用 MPD（所有清晰度指向备用 OSS，保持画质切换）
             const backupUrl = origDashUrl + (origDashUrl.includes('?') ? '&' : '?') + 'backup=true';
             console.log('[DASH] 主 OSS 下载失败，切 &backup=true MPD:', backupUrl);
-            // 方式 2：PlayURL 直连备用 OSS URL（单文件，不通过 MPD）
-            if (backupVideoUrl.value) {
-              console.log('[DASH] PlayURL 备用 OSS 直链可用:', {
-                backupVideo: backupVideoUrl.value,
-                backupAudio: backupAudioUrl.value,
-              });
-            }
             const oldDash = dash.value;
             if (oldDash) oldDash.reset();
             dash.value = dashjs.MediaPlayer().create();
@@ -770,6 +805,18 @@ const loadResource = async (part: number) => {
           if (playRes.data.code === statusCode.OK) {
             backupVideoUrl.value = playRes.data.data.backupVideo || ''
             backupAudioUrl.value = playRes.data.data.backupAudio || ''
+            // 读取后端返回的音轨列表（仅非 DASH 模式使用，DASH 模式从 dash.js 直接读取）
+            if (playRes.data.data.audioTracks && playRes.data.data.audioTracks.length > 0) {
+              // 非 DASH 模式：从 API 获取音轨列表
+              if (!dashUnifiedMode && audioTracks.value.length === 0) {
+                audioTracks.value = playRes.data.data.audioTracks
+                const def = playRes.data.data.audioTracks.find((t: AudioTrackInfo) => t.isDefault)
+                if (def) currentAudioLang.value = def.language
+              }
+              if (import.meta.dev) {
+                console.log('[video-player] 可用音轨:', playRes.data.data.audioTracks)
+              }
+            }
             if (import.meta.dev) {
               console.log('[video-player] 备用 OSS URL:', {
                 backupVideo: backupVideoUrl.value,
@@ -780,17 +827,6 @@ const loadResource = async (part: number) => {
         }
       } catch (e) {
         console.warn('[video-player] PlayURL grant 获取失败（不影响主播放）:', e)
-      }
-    }
-
-    // ===== 延迟检测 & 自动线路选择 =====
-    const firstQualityUrl = options.video.quality?.[0]?.url
-    if (firstQualityUrl && backupVideoUrl.value) {
-      selectedLineLabel.value = await selectBestLine(
-        firstQualityUrl, backupVideoUrl.value, import.meta.dev,
-      )
-      if (selectedLineLabel.value === 'backup') {
-        appendParamToQualities(options.video.quality, 'backup=true')
       }
     }
   }
@@ -812,6 +848,35 @@ const supportsDashJs = (): boolean => {
     (window as any).MediaSource ||
     (window as any).ManagedMediaSource
   );
+}
+
+// ===== 音轨切换 =====
+const switchAudioTrack = (lang: string) => {
+  showAudioMenu.value = false
+  if (lang === currentAudioLang.value) return
+
+  // DASH 模式：通过 dash.js 原生 API 无缝切换
+  if (dash.value && dashNativeAudioTracks.length > 0) {
+    const target = dashNativeAudioTracks.find((t: any) => t.lang === lang)
+    if (target) {
+      try {
+        dash.value.setCurrentTrack(target)
+        currentAudioLang.value = lang
+        if (player) {
+          player.notice(`已切换音轨: ${target.label || lang}`, 2000, undefined, 'switch-audio')
+        }
+        if (import.meta.dev) {
+          console.log('[DASH] 切换音轨:', lang, target)
+        }
+      } catch (e) {
+        console.warn('[DASH] 切换音轨失败:', e)
+      }
+      return
+    }
+  }
+
+  // HLS / 降级模式：暂不支持无刷新切换（dash.js 未就绪时）
+  console.warn('[video-player] 非 DASH 模式暂不支持无刷新切换音轨')
 }
 
 // ===== 弹幕相关方法 =====
@@ -1080,6 +1145,10 @@ defineExpose({
   playGrantToken,
   // 当前选择的播放线路（'primary' | 'backup'）
   selectedLineLabel,
+  // 多音轨
+  audioTracks,
+  currentAudioLang,
+  switchAudioTrack,
 })
 </script>
 
@@ -1123,5 +1192,107 @@ defineExpose({
       display: none;
     }
   }
+}
+
+// ===== 音轨选择器 =====
+.audio-track-selector {
+  position: absolute;
+  bottom: 48px;
+  right: 80px;
+  z-index: 25;
+  user-select: none;
+
+  .audio-track-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    background: rgba(0, 0, 0, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 4px;
+    color: #fff;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.2s;
+    white-space: nowrap;
+
+    &:hover {
+      background: rgba(0, 0, 0, 0.8);
+    }
+
+    .audio-track-icon {
+      flex-shrink: 0;
+    }
+
+    .audio-track-text {
+      max-width: 60px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+  }
+
+  .audio-track-dropdown {
+    position: absolute;
+    bottom: 100%;
+    right: 0;
+    margin-bottom: 6px;
+    min-width: 140px;
+    background: rgba(30, 30, 30, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 6px;
+    padding: 4px 0;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+
+    .audio-track-dropdown-title {
+      padding: 6px 14px;
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.5);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      margin-bottom: 2px;
+    }
+
+    .audio-track-option {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 14px;
+      font-size: 13px;
+      color: #ddd;
+      cursor: pointer;
+      transition: background 0.15s;
+
+      &:hover {
+        background: rgba(255, 255, 255, 0.1);
+        color: #fff;
+      }
+
+      &.selected {
+        color: var(--wplayer-theme, #00a1d6);
+        font-weight: 500;
+      }
+
+      .audio-track-option-label {
+        flex: 1;
+      }
+
+      .audio-track-option-badge {
+        font-size: 10px;
+        opacity: 0.5;
+        margin-left: 8px;
+        padding: 1px 5px;
+        border: 1px solid currentColor;
+        border-radius: 3px;
+      }
+    }
+  }
+}
+
+.audio-fade-enter-active,
+.audio-fade-leave-active {
+  transition: opacity 0.15s ease;
+}
+.audio-fade-enter-from,
+.audio-fade-leave-to {
+  opacity: 0;
 }
 </style>

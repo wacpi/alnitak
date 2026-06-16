@@ -22,7 +22,7 @@
             <div class="drag-handle">⠿</div>
             <div class="item-index">P{{ index + 1 }}</div>
             <div class="item-cover">
-              <img v-if="element.cover" :src="getResourceUrl(element.cover)" alt="封面">
+              <oss-image v-if="element.cover" :src="element.cover" alt="封面" />
             </div>
             <div class="item-info">
               <span class="item-title">{{ element.title }}</span>
@@ -44,7 +44,7 @@
           <div v-for="v in myVideos" :key="v.vid" class="add-video-item" :class="{ 'is-disabled': v.inOtherPlaylist }">
             <el-checkbox v-model="v.checked" :disabled="v.inPlaylist || v.inOtherPlaylist"></el-checkbox>
             <div class="add-cover">
-              <img v-if="v.cover" :src="getResourceUrl(v.cover)" alt="封面">
+              <oss-image v-if="v.cover" :src="v.cover" alt="封面" />
             </div>
             <div class="add-info">
               <span class="add-title">{{ v.title }}</span>

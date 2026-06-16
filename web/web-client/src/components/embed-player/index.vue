@@ -1,5 +1,27 @@
 <template>
-  <div id="wplayer" ref="playerContainer"></div>
+  <div class="embed-player-wrapper">
+    <div id="wplayer" ref="playerContainer"></div>
+    <!-- 音轨选择器（仅多音轨时显示） -->
+    <div v-if="audioTracks.length > 1" class="embed-audio-track-selector"
+         @mouseenter="showAudioMenu = true" @mouseleave="showAudioMenu = false">
+      <button class="audio-track-btn" :title="`音轨: ${currentAudioLang || '默认'}`">
+        <svg class="audio-track-icon" viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+          <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8.5v7a4.5 4.5 0 0 0 2.5-3.5zM14 3.23v2.06a7.5 7.5 0 0 1 0 13.42v2.06A9.5 9.5 0 0 0 14 3.23z"/>
+        </svg>
+        <span class="audio-track-text">{{ currentAudioLang || '音轨' }}</span>
+      </button>
+      <div v-if="showAudioMenu" class="audio-track-dropdown">
+        <div class="audio-track-dropdown-title">音轨切换</div>
+        <div v-for="track in audioTracks" :key="track.language"
+             class="audio-track-option"
+             :class="{ selected: track.language === currentAudioLang }"
+             @click="switchAudioTrack(track.language)">
+          <span class="audio-track-option-label">{{ track.title || track.language }}</span>
+          <span v-if="track.isDefault" class="audio-track-option-badge">默认</span>
+        </div>
+      </div>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -37,6 +59,12 @@ let dashQualityMap: Map<string, number> = new Map();
 
 // HLS 清晰度切换时保存播放状态
 let lastPlaybackState: { time: number; playing: boolean } = { time: 0, playing: false };
+
+// ===== 多音轨支持 =====
+const audioTracks = ref<AudioTrackInfo[]>([]);
+const currentAudioLang = ref<string>('');
+const showAudioMenu = ref(false);
+let dashNativeAudioTracks: any[] = [];
 
 const setDanmaku = (data: DanmakuType[]) => {
   originalDanmaku = Array.isArray(data) ? data : [];
@@ -296,6 +324,28 @@ const initPlayer = async () => {
               }
             });
           }
+
+          // 读取 dash.js 原生音频轨
+          dashPlayer.on('streamInitialized', () => {
+            try {
+              const nativeTracks = dashPlayer.getTracksFor('audio');
+              if (nativeTracks && nativeTracks.length > 1) {
+                dashNativeAudioTracks = nativeTracks;
+                const mapped: AudioTrackInfo[] = nativeTracks.map((t: any) => ({
+                  language: t.lang || '',
+                  title: t.label || t.lang || (t.roles && t.roles[0]) || '',
+                  isDefault: false,
+                }));
+                const defaultTrack = nativeTracks.find((t: any) => t.defaultSelected);
+                if (defaultTrack) {
+                  currentAudioLang.value = defaultTrack.lang || '';
+                }
+                audioTracks.value = mapped;
+              }
+            } catch (e) {
+              console.warn('[embed-player] 读取音轨信息失败:', e);
+            }
+          });
         },
       },
     },
@@ -362,6 +412,27 @@ const initPlayer = async () => {
   await loadDanmaku();
 };
 
+// ===== 音轨切换 =====
+const switchAudioTrack = (lang: string) => {
+  showAudioMenu.value = false
+  if (lang === currentAudioLang.value || !dashPlayer) return
+
+  if (dashNativeAudioTracks.length > 0) {
+    const target = dashNativeAudioTracks.find((t: any) => t.lang === lang)
+    if (target) {
+      try {
+        dashPlayer.setCurrentTrack(target)
+        currentAudioLang.value = lang
+        if (player) {
+          player.notice(`已切换音轨: ${target.label || lang}`, 2000, undefined, 'switch-audio')
+        }
+      } catch (e) {
+        console.warn('[embed-player] 切换音轨失败:', e)
+      }
+    }
+  }
+}
+
 onMounted(() => {
   nextTick(() => {
     if (props.videoInfo?.resources?.length) {
@@ -398,6 +469,12 @@ watch(
 </script>
 
 <style scoped>
+.embed-player-wrapper {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+}
+
 #wplayer {
   height: 100vh;
   width: 100vw;
@@ -406,6 +483,99 @@ watch(
 
   :deep(.wplayer-subtitles-quick.wplayer-subtitles-quick-disabled) {
     opacity: 0.72 !important;
+  }
+}
+
+// ===== 音轨选择器 =====
+.embed-audio-track-selector {
+  position: absolute;
+  bottom: 52px;
+  right: 80px;
+  z-index: 25;
+  user-select: none;
+
+  .audio-track-btn {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    padding: 3px 8px;
+    background: rgba(0, 0, 0, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 4px;
+    color: #fff;
+    font-size: 11px;
+    cursor: pointer;
+    transition: background 0.2s;
+    white-space: nowrap;
+
+    &:hover {
+      background: rgba(0, 0, 0, 0.8);
+    }
+
+    .audio-track-icon {
+      flex-shrink: 0;
+    }
+
+    .audio-track-text {
+      max-width: 50px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+  }
+
+  .audio-track-dropdown {
+    position: absolute;
+    bottom: 100%;
+    right: 0;
+    margin-bottom: 6px;
+    min-width: 130px;
+    background: rgba(30, 30, 30, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 6px;
+    padding: 4px 0;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+
+    .audio-track-dropdown-title {
+      padding: 6px 14px;
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.5);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      margin-bottom: 2px;
+    }
+
+    .audio-track-option {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 14px;
+      font-size: 13px;
+      color: #ddd;
+      cursor: pointer;
+      transition: background 0.15s;
+
+      &:hover {
+        background: rgba(255, 255, 255, 0.1);
+        color: #fff;
+      }
+
+      &.selected {
+        color: var(--wplayer-theme, #00a1d6);
+        font-weight: 500;
+      }
+
+      .audio-track-option-label {
+        flex: 1;
+      }
+
+      .audio-track-option-badge {
+        font-size: 10px;
+        opacity: 0.5;
+        margin-left: 8px;
+        padding: 1px 5px;
+        border: 1px solid currentColor;
+        border-radius: 3px;
+      }
+    }
   }
 }
 </style> 

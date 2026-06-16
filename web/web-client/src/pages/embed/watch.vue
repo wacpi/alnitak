@@ -5,7 +5,7 @@
         <div class="player-info-overlay" v-if="videoInfo" v-show="infoOverlayVisible" @mouseenter="showOverlay" @mouseleave="hideOverlay">
           <a class="title-link" :href="videoLink" target="_blank">{{ displayedTitle }}</a>
           <div class="up-info">
-            <img class="avatar" :src="getResourceUrl(videoInfo.author.avatar)" :alt="videoInfo.author.name" />
+            <oss-image class="avatar" :src="videoInfo.author.avatar" :alt="videoInfo.author.name" />
             <a class="up-name" :href="userLink" target="_blank">{{ videoInfo.author.name }}</a>
           </div>
         </div>

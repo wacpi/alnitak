@@ -14,7 +14,7 @@
     <div class="video-card" v-for="item in videoList" :key="item.vid">
       <div class="card-box">
         <nuxt-link class="cover-box" :to="`/watch?v=${item.shortId || String(item.vid)}`">
-          <img :src="getResourceUrl(item.cover)" alt="封面" />
+          <oss-image :src="item.cover" alt="封面" />
           <span class="duration">{{ toDuration(item.duration) }}</span>
         </nuxt-link>
         <div class="info">

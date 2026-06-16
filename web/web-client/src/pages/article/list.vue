@@ -30,7 +30,7 @@
                     </div>
                   </div>
                 </div>
-                <img v-if="item.cover" class="cover" :src="getResourceUrl(item.cover)" alt="封面">
+                <oss-image v-if="item.cover" class="cover" :src="item.cover" alt="封面" />
               </nuxt-link>
             </li>
           </ul>

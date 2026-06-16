@@ -13,7 +13,7 @@
           <li class="video-item" v-for="(item, index) in playlistList" :key="item.id">
             <div class="item-left">
               <div class="cover">
-                <img v-if="item.cover" :src="getResourceUrl(item.cover)" alt="封面">
+                <oss-image v-if="item.cover" :src="item.cover" alt="封面" />
               </div>
             </div>
             <div class="item-center">

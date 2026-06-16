@@ -4,7 +4,7 @@
     <ul ref="videoListRef" class="video-list">
       <li class="video-item" v-for="item in videoList" :key="item.vid">
         <nuxt-link class="cover" :to="item.status === reviewCode.AUDIT_APPROVED ? `/watch?v=${item.shortId || String(item.vid)}` : ''">
-          <img class="img" :src="getResourceUrl(item.cover)" />
+          <oss-image class="img" :src="item.cover" alt="封面" />
         </nuxt-link>
         <nuxt-link class="title" :to="item.status === reviewCode.AUDIT_APPROVED ? `/watch?v=${item.shortId || String(item.vid)}` : ''">
           {{ item.title }}

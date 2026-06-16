@@ -1,0 +1,3 @@
+
+[43m[30m WARN [39m[49m You might need [36mNODE_TLS_REJECT_UNAUTHORIZED=0[39m environment variable to make https work.
+

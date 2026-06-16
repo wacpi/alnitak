@@ -1,5 +1,6 @@
 import { getSubtitleListAPI } from '@/api/subtitle';
 import { statusCode } from '@/utils/status-code';
+import { initNetworkLine } from './network-line';
 
 const LANG_CODE_TO_LABEL: Record<string, string> = {
   'zh-Hans': '简体中文',
@@ -144,8 +145,9 @@ function isCrossOriginResolved(resolved: string): boolean {
 }
 
 /**
- * Chrome 禁止跨源直接把 https://…oss…/subtitle.x?vtt 塞进 <track src>（報 Unsafe attempt），
- * /api/subtitle 再 302 到 OSS 时跟随后仍会跨源。此处统一 fetch 正文后 blob: ，与頁面同源。
+ * 将字幕 VTT 内容转为 blob: URL 供 <track> 同源加载。
+ * Chrome 禁止直接在 <track src> 中填入跨源 OSS URL，因此先 fetch 正文再转 blob。
+ * 跨源时不传凭证（omit），同源代理路径保留凭证（include）。
  */
 async function hydrateSubtitleSrcForTrack(url: string, blobCollector: string[]): Promise<string> {
   const resolved = resolveSubtitleSrc(url);
@@ -174,28 +176,53 @@ async function hydrateSubtitleSrcForTrack(url: string, blobCollector: string[]):
 export async function hydrateTracksToWPlayerConfig(
   tracks: SubtitleTrackItemType[],
   blobCollector: string[],
+  selectedLine?: 'primary' | 'backup',
 ): Promise<WPlayerSubtitleConfigItem[]> {
   const out: WPlayerSubtitleConfigItem[] = [];
   for (const t of tracks) {
-    try {
-      const src = await hydrateSubtitleSrcForTrack(t.url, blobCollector);
-      out.push({
-        src,
-        label: t.label || LANG_CODE_TO_LABEL[t.lang] || t.lang,
-        srclang: t.lang,
-        default: !!t.isDefault,
-        kind: 'subtitles',
-      });
-      subLog('hydrate:ok', {
-        lang: t.lang,
-        label: t.label,
-        blobPrefix: src.slice(0, 48),
-      });
-    } catch (e) {
+    let lastErr: unknown;
+    // 按线路优先级尝试：先按 selectedLine，失败后自动降级到另一条
+    const fetchCandidates: { url: string; label: string }[] = [];
+    if (selectedLine === 'backup' && t.backupUrl) {
+      fetchCandidates.push({ url: t.backupUrl, label: 'backup' });
+      fetchCandidates.push({ url: t.url, label: 'primary' });
+    } else {
+      fetchCandidates.push({ url: t.url, label: 'primary' });
+      if (t.backupUrl) fetchCandidates.push({ url: t.backupUrl, label: 'backup' });
+    }
+    for (const candidate of fetchCandidates) {
+      try {
+        const src = await hydrateSubtitleSrcForTrack(candidate.url, blobCollector);
+        out.push({
+          src,
+          label: t.label || LANG_CODE_TO_LABEL[t.lang] || t.lang,
+          srclang: t.lang,
+          default: !!t.isDefault,
+          kind: 'subtitles',
+        });
+        subLog('hydrate:ok', {
+          lang: t.lang,
+          label: t.label,
+          via: candidate.label,
+          blobPrefix: src.slice(0, 48),
+        });
+        lastErr = undefined;
+        break;
+      } catch (e) {
+        lastErr = e;
+        subWarn('hydrate:retry', {
+          lang: t.lang,
+          via: candidate.label,
+          url: resolveSubtitleSrc(candidate.url).slice(0, 160),
+          err: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+    if (lastErr) {
       subWarn('hydrate:fail', {
         lang: t.lang,
         url: resolveSubtitleSrc(t.url).slice(0, 160),
-        err: e instanceof Error ? e.message : String(e),
+        err: lastErr instanceof Error ? lastErr.message : String(lastErr),
       });
     }
   }
@@ -229,7 +256,8 @@ export async function fetchSubtitleTracksForArtplayer(resourceShortId: string): 
     if (!rawTracks.length) {
       return { tracks: [], revoke };
     }
-    const config = await hydrateTracksToWPlayerConfig(rawTracks, blobCollector);
+    const line = await initNetworkLine();
+    const config = await hydrateTracksToWPlayerConfig(rawTracks, blobCollector, line);
     if (!config.length) {
       revoke();
       return { tracks: [], revoke: () => {} };
@@ -363,8 +391,9 @@ export async function fetchAndApplySubtitles(
     const tracks = (res.data.data?.tracks as SubtitleTrackItemType[]) ?? [];
     subLog('fetch:list:ok', { seq, trackCount: tracks.length, langs: tracks.map((t) => t.lang) });
 
+    const line = await initNetworkLine();
     const blobBatch: string[] = [];
-    const config = await hydrateTracksToWPlayerConfig(tracks, blobBatch);
+    const config = await hydrateTracksToWPlayerConfig(tracks, blobBatch, line);
 
     if (seq !== subtitleApplySeq) {
       revokeUrls(blobBatch);

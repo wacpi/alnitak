@@ -2,7 +2,7 @@
   <div class="upload-cover">
     <client-only>
       <el-upload drag multiple action="#" :show-file-list="false" :auto-upload="false" :before-upload="beforeUploadCover" @change="fileChange">
-        <img v-if="currentCover" :src="getResourceUrl(currentCover)" class="cover" alt="封面" />
+        <oss-image v-if="currentCover" :src="currentCover" class="cover" alt="封面" />
         <el-progress v-else-if="uploading" type="circle" :percentage="percent" />
         <div class="upload-tips" v-else>
           <div class="tips-icon">

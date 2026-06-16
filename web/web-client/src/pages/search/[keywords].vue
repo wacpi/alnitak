@@ -64,7 +64,7 @@
           <ul class="pgc-search-list">
             <li v-for="item in pgcList.slice(0, 3)" :key="item.pgc_id" class="pgc-search-item">
               <div class="pgc-link" @click="openPGC(item)">
-                <img v-if="item.cover" class="cover" :src="getResourceUrl(item.cover)" alt="封面">
+                <oss-image v-if="item.cover" class="cover" :src="item.cover" alt="封面" />
                 <div class="meta">
                   <div class="title-row">{{ item.title }}</div>
                   <div class="desc">{{ item.desc || '暂无简介' }}</div>
@@ -102,7 +102,7 @@
                   <span v-if="item.tags" class="tags">{{ item.tags }}</span>
                 </div>
               </div>
-              <img v-if="item.cover" class="cover" :src="getResourceUrl(item.cover)" alt="封面">
+              <oss-image v-if="item.cover" class="cover" :src="item.cover" alt="封面" />
             </nuxt-link>
           </li>
         </ul>
@@ -127,7 +127,7 @@
         <ul class="pgc-search-list">
           <li v-for="item in pgcList" :key="item.pgc_id" class="pgc-search-item">
             <div class="pgc-link" @click="openPGC(item)">
-              <img v-if="item.cover" class="cover" :src="getResourceUrl(item.cover)" alt="封面">
+              <oss-image v-if="item.cover" class="cover" :src="item.cover" alt="封面" />
               <div class="meta">
                 <div class="title-row">{{ item.title }}</div>
                 <div class="desc">{{ item.desc || '暂无简介' }}</div>

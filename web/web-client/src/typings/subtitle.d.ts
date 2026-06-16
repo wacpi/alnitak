@@ -4,6 +4,7 @@ interface SubtitleTrackItemType {
   lang: string;
   label: string;
   url: string;
+  backupUrl?: string;
   isDefault: boolean;
 }
 
