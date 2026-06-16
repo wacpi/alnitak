@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -1795,17 +1796,17 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 
 		utils.InfoLog(fmt.Sprintf("【重新转码】VideoID=%d, 提交%d个分P转码任务", videoId, len(tasks)), "transcoding")
 
-		// 串行转码：等上一个分P完成后再启动下一个
-		for i, task := range tasks {
-			utils.InfoLog(fmt.Sprintf("【重新转码】开始第 %d/%d 个分P: ResourceID=%d, DirName=%s",
-				i+1, len(tasks), task.info.ResourceID, task.info.DirName), "transcoding")
-
-			VideoTransCoding(task.info)
-
-			utils.InfoLog(fmt.Sprintf("【重新转码】第 %d/%d 个分P完成: ResourceID=%d",
-				i+1, len(tasks), task.info.ResourceID), "transcoding")
+		// 通过 GetCurrentTranscoder 分发转码任务：
+		//   mode=local  → LocalTranscoder.Enqueue (goroutine，进程内执行)
+		//   mode=remote → RemoteTranscoder.Enqueue (推 Redis Stream，Worker 池消费)
+		// 所有分P同时提交，local 模式下 semaphore 限制并发，remote 模式下 Worker 池调度。
+		for _, task := range tasks {
+			if err := GetCurrentTranscoder().Enqueue(context.Background(), task.info); err != nil {
+				utils.ErrorLog("【重新转码】提交任务失败", "transcoding",
+					fmt.Sprintf("ResourceID=%d, err=%v", task.info.ResourceID, err))
+			}
 		}
-		utils.InfoLog(fmt.Sprintf("【重新转码完成】VideoID=%d, 共%d个分P", videoId, len(tasks)), "transcoding")
+		utils.InfoLog(fmt.Sprintf("【重新转码提交完成】VideoID=%d, 共%d个分P", videoId, len(tasks)), "transcoding")
 	}()
 
 	return nil
