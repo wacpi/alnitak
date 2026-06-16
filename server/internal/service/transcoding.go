@@ -1459,6 +1459,17 @@ func ProcessVideoInfo(input string) (*dto.TranscodingInfo, error) {
 	ti.Height = videoStream.Height
 	ti.CodecName = videoStream.CodecName
 
+	// 【HDR/10-bit 检测】探测源视频位深，在转码为 8-bit 时告警
+	if is10BitPixelFormat(videoStream.PixFmt) {
+		isTarget8Bit := !global.Config.Transcoding.UseAv1 && !global.Config.Transcoding.UseH265
+		if isTarget8Bit {
+			utils.InfoLog(fmt.Sprintf("【HDR告警】源视频为 %s (%s)，但转码目标为 8-bit H.264，HDR/10-bit 色彩信息将丢失",
+				videoStream.CodecName, videoStream.PixFmt), "transcoding")
+		} else {
+			utils.InfoLog(fmt.Sprintf("【HDR检测】源视频为 %s (%s)，转码目标支持高位深，保留 HDR", videoStream.CodecName, videoStream.PixFmt), "transcoding")
+		}
+	}
+
 	// 【多音轨】取第一个音轨作为默认音频参数（向后兼容）
 	var primaryAudio *global.Streams
 	if len(audioStreams) > 0 {
@@ -1895,4 +1906,17 @@ func parseProgressQualitySortKey(quality string) (w, h, f, b int) {
 		f, _ = strconv.Atoi(parts[2])
 	}
 	return
+}
+
+// is10BitPixelFormat 判断 ffprobe pix_fmt 是否为 10-bit 及以上位深
+func is10BitPixelFormat(pixFmt string) bool {
+	switch pixFmt {
+	case "yuv420p10le", "yuv422p10le", "yuv444p10le",
+		"yuv420p12le", "yuv422p12le", "yuv444p12le",
+		"yuva420p10le", "yuva422p10le", "yuva444p10le",
+		"gbrp10le", "gbrp12le",
+		"rgb10le", "rgb12le":
+		return true
+	}
+	return false
 }
