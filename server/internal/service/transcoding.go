@@ -1,9 +1,7 @@
 package service
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -23,6 +21,7 @@ import (
 	"interastral-peace.com/alnitak/internal/domain/dto"
 	"interastral-peace.com/alnitak/internal/domain/model"
 	"interastral-peace.com/alnitak/internal/domain/vo"
+	"interastral-peace.com/alnitak/internal/ffmpeg"
 	"interastral-peace.com/alnitak/internal/global"
 	"interastral-peace.com/alnitak/utils"
 )
@@ -103,7 +102,32 @@ type TranscodeService struct {
 var (
 	defaultTranscoder *TranscodeService
 	initOnce          sync.Once
+
+	currentTranscoderInstance Transcoder
+	transcoderInitOnce        sync.Once
 )
+
+// GetCurrentTranscoder 按 config 返回当前转码后端。
+//   - mode=local（默认）: 返回 LocalTranscoder，封装现有 TranscodeService
+//   - mode=remote:        返回 RemoteTranscoder，通过 Redis + OSS 与 Worker 通信
+//     （Phase 4 实现，当前返回桩，Enqueue 返回 ErrRemoteNotImplemented）
+func GetCurrentTranscoder() Transcoder {
+	transcoderInitOnce.Do(func() {
+		mode := global.Config.Transcoding.Mode
+		if mode == "" {
+			mode = "local"
+		}
+		switch mode {
+		case "remote":
+			utils.InfoLog("【转码模式】remote（远程 Worker 池）", "transcoding")
+			currentTranscoderInstance = NewRemoteTranscoder()
+		default:
+			utils.InfoLog("【转码模式】local（本地进程内转码）", "transcoding")
+			currentTranscoderInstance = NewLocalTranscoder()
+		}
+	})
+	return currentTranscoderInstance
+}
 
 // GetTranscoder 获取单例模式的 TranscodeService
 func GetTranscoder() *TranscodeService {
@@ -138,14 +162,21 @@ func GetTranscoder() *TranscodeService {
 // 第三部分：对外暴露的包级函数 (保持原有 API 兼容)
 // ==============================================================================
 
+// VideoTransCoding 同步启动转码（阻塞至完成）。
+//  - mode=local:  内部调用 ProcessVideo，行为与重构前一致
+//  - mode=remote: 通过接口 Enqueue + 轮询等待（Phase 4 实现）
+//
+// 调用方需要异步时自行加 go 关键字，如 upload.go/resource.go 已改为
+// GetCurrentTranscoder().Enqueue()。
+func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
+	GetTranscoder().ProcessVideo(context.Background(), transcodingInfo)
+}
+
+// GetCurrentTranscoder 见上方定义。
 func ResetGPUState() { GetTranscoder().ResetGPUState() }
 
 func GetVideoTranscodingProgress(videoID uint) (float64, []vo.TranscodingProgressItem, *vo.UploadProgressInfo) {
 	return GetTranscoder().GetVideoTranscodingProgress(videoID)
-}
-
-func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
-	GetTranscoder().ProcessVideo(context.Background(), transcodingInfo)
 }
 
 func StopTranscodingAndCleanup(videoID uint) error {
@@ -329,7 +360,7 @@ func (s *TranscodeService) processSingleQuality(
 			audioFilePath := info.OutputDir + audioFileName
 
 			// 当前帧率用于计算 B 帧偏移（使用首个 quality 的 fps 即可，所有 quality 共享）
-			leadMs := bFramePresentationLeadMs(t.FPS)
+			leadMs := ffmpeg.BFramePresentationLeadMs(t.FPS)
 			err := audioTrackTasks[i].DoOrWait(subCtx, func() error {
 				utils.InfoLog(fmt.Sprintf("【编码音频】%s 语言=%s 码率=%dk", audioFileName, stream.Language, stream.BitRate/1000), "transcoding")
 				return encodeAudioTrack(subCtx, info.InputFile, audioFilePath,
@@ -351,7 +382,7 @@ func (s *TranscodeService) processSingleQuality(
 		audioFile := info.OutputDir + "audio.m4s"
 		err := singleAudioTask.DoOrWait(subCtx, func() error {
 			utils.InfoLog(fmt.Sprintf("【编码音频】audio.m4s (码率=%dk)", info.AudioBitRate/1000), "transcoding")
-			leadMs := bFramePresentationLeadMs(t.FPS)
+			leadMs := ffmpeg.BFramePresentationLeadMs(t.FPS)
 			return encodeAudioOnly(subCtx, info.InputFile, audioFile, info.AudioBitRate, info.AudioSampleRate, info.AudioChannels, info.Duration, leadMs)
 		})
 		if err != nil {
@@ -828,6 +859,19 @@ func (s *TranscodeService) clearProgress(resourceID uint) {
 	delete(s.progress, resourceID)
 }
 
+// getResourceProgress 返回指定 resource 的进度快照（读锁安全）。
+// 供 LocalTranscoder 及内部使用；返回 nil 表示未找到。
+func (s *TranscodeService) getResourceProgress(resourceID uint) *resourceTranscodingProgress {
+	s.progressMu.RLock()
+	defer s.progressMu.RUnlock()
+	state, ok := s.progress[resourceID]
+	if !ok {
+		return nil
+	}
+	// 返回浅拷贝，调用方不应修改字段
+	return state
+}
+
 func (s *TranscodeService) GetVideoTranscodingProgress(videoID uint) (float64, []vo.TranscodingProgressItem, *vo.UploadProgressInfo) {
 	s.progressMu.RLock()
 	defer s.progressMu.RUnlock()
@@ -959,27 +1003,15 @@ func (s *TranscodeService) GetTranscodingProcessCount(videoID uint) int {
 // 第七部分：FFmpeg 指令动态拼接 (解决严重代码重复与CPU饥饿问题)
 // ==============================================================================
 
-// runVideoEncodeTask 动态合并构建 CPU 与 GPU 编码指令，消除 DRY 违规。
-// 帧率模式使用 -fps_mode cfr（FFmpeg 文档：-vsync 已弃用，宜用 -fps_mode）。
-// 输出时长使用与音轨相同的 -t，见 ffmpegOutputDurationArgs。
+// runVideoEncodeTask 执行视频编码：参数构建委托 ffmpeg.VideoEncodeArgs，
+// 进程管理与 GPU 错误检测在本地处理。
 func (s *TranscodeService) runVideoEncodeTask(
 	ctx context.Context, videoID, resourceID uint, inputFile, outputFile, quality, rate, fps, progressQuality string,
 	totalDuration float64, useGpu bool, useAv1 bool, useHevc bool, cancelFunc context.CancelFunc,
 ) error {
-	fpsFloat := parseFPS(fps)
-	gopSize := int(math.Round(fpsFloat * 2))
-	if gopSize < 1 {
-		gopSize = 60
-	}
-	gopSizeStr := strconv.Itoa(gopSize)
-	targetRate, maxrate, bufsize := buildRateControlParams(rate)
-	// fps 过滤器强制精确 CFR（修复 59.94 源→30 输出时 avg_fps 漂移到 28.5 的问题）
-	scaleFilter := fmt.Sprintf("fps=%s,scale=%s:flags=lanczos", fps, quality)
+	args := ffmpeg.VideoEncodeArgs(inputFile, quality, rate, fps, totalDuration, useGpu, useAv1, useHevc)
 
-	// 【核心修复】防止 FFmpeg 默认吃光所有 CPU 引发 OS 上下文切换风暴
-	// CPU编码与GPU编码采用不同的线程策略：
-	// - GPU编码：NVENC硬件编码几乎不占CPU，给2~4线程足矣
-	// - CPU编码：预留2核给系统/OS，其余分配给FFmpeg；用maxConcur除避免竞态堆积
+	// CPU/GPU 线程分配：GPU 固定 4 线程；CPU 预留 2 核给系统，其余按 maxConcur 平分
 	numCPU := runtime.NumCPU()
 	threads := 4
 	if !useGpu {
@@ -990,121 +1022,20 @@ func (s *TranscodeService) runVideoEncodeTask(
 		if threads > 8 {
 			threads = 8
 		}
-	} // GPU编码固定4线程，CPU动态分配
-
-	args := []string{
-		"-i", inputFile,
-		"-filter_complex", fmt.Sprintf("[0:v]setpts=PTS-STARTPTS,%s", scaleFilter),
-		"-an",
 	}
+	args = append(args, "-progress", "pipe:1", "-nostats",
+		"-threads", strconv.Itoa(threads),
+		"-y", outputFile)
 
-	// 保留 B 帧；首帧展示时刻相对 t=0 常延后约 2 帧（参见 ffprobe stream start_time）。
-	// 音轨侧用 adelay 注入等量前置静声与视频首画对齐（ffmpeg 滤镜 adelay）。
-	switch {
-	case useGpu && useAv1:
-		// AV1 GPU (NVENC) - RTX 40 系列+
-		args = append(args,
-			"-c:v", "av1_nvenc", "-cq", "30", "-preset", "p6", "-rc", "vbr",
-			"-profile:v", "main", "-pix_fmt", "yuv420p", "-bf", "2",
-			"-b_ref_mode", "middle", "-multipass", "qres",
-		)
-	case useGpu && useHevc:
-		// H.265 10-bit GPU (NVENC) + multipass 预分析
-		args = append(args,
-			"-c:v", "hevc_nvenc", "-cq", "24", "-preset", "p6", "-rc", "vbr",
-			"-profile:v", "main10", "-pix_fmt", "yuv420p10le", "-bf", "2", "-b_ref_mode", "middle",
-			"-forced-idr", "1", "-multipass", "qres",
-		)
-	case useGpu && !useHevc:
-		// H.264 8-bit GPU (NVENC)
-		args = append(args,
-			"-c:v", "h264_nvenc", "-cq", "23", "-preset", "p4", "-rc", "vbr",
-			"-profile:v", "high", "-pix_fmt", "yuv420p", "-bf", "2", "-b_ref_mode", "middle",
-			"-forced-idr", "1",
-		)
-	case !useGpu && useAv1:
-		// AV1 CPU (SVT-AV1)
-		args = append(args,
-			"-c:v", "libsvtav1", "-preset", "6", "-crf", "30", "-tag:v", "av01",
-			"-pix_fmt", "yuv420p",
-		)
-	case !useGpu && useHevc:
-		// H.265 10-bit CPU (libx265) + slow preset + 心理视觉优化
-		args = append(args,
-			"-c:v", "libx265", "-preset", "slow", "-tag:v", "hvc1",
-			"-pix_fmt", "yuv420p10le",
-			"-x265-params", "profile=main10:aq-mode=3:aq-strength=0.8:deblock=-1,-1:no-sao=1",
-		)
-	default:
-		// H.264 8-bit CPU (libx264) — 默认回退
-		args = append(args,
-			"-c:v", "libx264", "-preset", "medium", "-crf", "20", "-tune", "film",
-			"-profile:v", "high", "-pix_fmt", "yuv420p", "-bf", "3", "-b_strategy", "2",
-			"-flags", "+cgop", "-sc_threshold", "0",
-			"-refs", "6", "-me_method", "hex", "-subq", "9",
-		)
-	}
-
-	// SVT-AV1 CRF 模式不接受 -b:v 目标码率，否则报错：
-	// "Target Bitrate only supported when --rc is 1/2 (VBR/CBR). Current --rc: 0"
-	if !useGpu && useAv1 {
-		args = append(args,
-			"-r", fps, "-g", gopSizeStr, "-keyint_min", gopSizeStr,
-			"-threads", strconv.Itoa(threads),
-		)
-	} else {
-		args = append(args,
-			"-b:v", targetRate, "-maxrate", maxrate, "-bufsize", bufsize,
-			"-r", fps, "-g", gopSizeStr, "-keyint_min", gopSizeStr,
-			"-threads", strconv.Itoa(threads),
-		)
-	}
-
-	if useGpu {
-		args = append(args,
-			// NVENC：与 CFR GOP 对齐，减少与 -fps_mode cfr 组合的边界抖动（参见 FFmpeg h264_nvenc 文档 strict_gop）
-			"-strict_gop", "1",
-			"-delay", "0",
-		)
-	}
-
-	// cfr：按请求帧率重复/丢桢，与前置 fps 滤镜共同保证恒定帧率（ffmpeg.html「fps_mode / cfr」）
-	args = append(args,
-		"-fps_mode", "cfr",
-		"-progress", "pipe:1", "-nostats",
-		"-f", "mp4",
-		"-frag_duration", FragDurationUs,
-		"-movflags", "+frag_keyframe+empty_moov+default_base_moof+dash+global_sidx+negative_cts_offsets",
-		"-avoid_negative_ts", "make_zero",
-	)
-	if dur := ffmpegOutputDurationArgs(totalDuration); dur != nil {
-		args = append(args, dur...)
-	}
-	args = append(args, "-y", outputFile)
-
-	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	stdout, err := cmd.StdoutPipe()
+	// 执行并报告进度
+	stderr, err := ffmpeg.EncodeVideo(ctx, args, totalDuration, func(pct float64) {
+		s.updateProgress(resourceID, progressQuality, pct, "processing")
+	})
 	if err != nil {
-		return err
-	}
-
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-
-	go watchFFmpegProgress(bufio.NewScanner(stdout), resourceID, progressQuality, totalDuration, s)
-
-	s.registerProcess(videoID, resourceID, cmd, cancelFunc, filepath.Dir(outputFile))
-	defer s.unregisterProcess(videoID, cmd.Process.Pid)
-
-	if err := cmd.Wait(); err != nil {
-		errOut := stderr.String()
-		if useGpu && (strings.Contains(errOut, "No NVENC") || strings.Contains(errOut, "nvenc")) {
-			return fmt.Errorf("GPU error: %s", errOut)
+		if useGpu && (strings.Contains(stderr, "No NVENC") || strings.Contains(stderr, "nvenc")) {
+			return fmt.Errorf("GPU error: %s", stderr)
 		}
-		return fmt.Errorf("encode failed: %w\n%s", err, errOut)
+		return err
 	}
 	return nil
 }
@@ -1114,39 +1045,11 @@ func (s *TranscodeService) runVideoEncodeTask(
 // 输出 -t 使用 durationSec + leadSec，与 ffmpeg「-t 作输出选项」语义一致，为前置静声留出时间轴，
 // 避免原先固定 durationSec 截断导致挤掉末尾约 leadMs 的有效采样。视频轨仅用 durationSec。
 func encodeAudioOnly(ctx context.Context, inputFile, outputFile string, audioBitRate, audioSampleRate, audioChannels int, durationSec float64, presentationLeadMs int) error {
-	bitRateStr := fmt.Sprintf("%dk", audioBitRate/1000)
-	sampleRateStr := strconv.Itoa(audioSampleRate)
-	channelsStr := strconv.Itoa(audioChannels)
-
-	adelayArg := adelayPerChannelArg(presentationLeadMs, audioChannels)
-	audioFilter := fmt.Sprintf("[0:a]asetpts=PTS-STARTPTS,aresample=osr=%s", sampleRateStr)
-	if adelayArg != "" {
-		audioFilter += ",adelay=" + adelayArg
-	}
-	audioFilter += "[aout]"
-	audioOutputDur := durationSec
-	if presentationLeadMs > 0 {
-		audioOutputDur += float64(presentationLeadMs) / 1000.0
-	}
-	command := []string{
-		"-i", inputFile,
-		"-filter_complex", audioFilter,
-		"-map", "[aout]", "-vn", "-c:a", "aac", "-b:a", bitRateStr,
-		"-ar", sampleRateStr, "-ac", channelsStr,
-		"-f", "mp4",
-		"-frag_duration", FragDurationUs,
-		"-movflags", "+frag_keyframe+empty_moov+default_base_moof+dash+global_sidx+negative_cts_offsets",
-		"-avoid_negative_ts", "make_zero",
-	}
-	if dur := ffmpegOutputDurationArgs(audioOutputDur); dur != nil {
-		command = append(command, dur...)
-	}
-	command = append(command, "-y", outputFile)
-	cmd := exec.CommandContext(ctx, "ffmpeg", command...)
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("音频编码失败: %w, stderr: %s", err, stderr.String())
+	args := ffmpeg.AudioEncodeArgs(inputFile, audioBitRate, audioSampleRate, audioChannels, durationSec, presentationLeadMs)
+	args = append(args, "-y", outputFile)
+	err := ffmpeg.EncodeAudio(ctx, args)
+	if err != nil {
+		return fmt.Errorf("音频编码失败: %w", err)
 	}
 	return nil
 }
@@ -1164,39 +1067,11 @@ func audioFileNameForTrack(language string) string {
 
 // encodeAudioTrack 编码指定音轨（通过 streamIndex 选择流），输出唯一文件名。
 func encodeAudioTrack(ctx context.Context, inputFile, outputFile string, streamIndex, audioBitRate, audioSampleRate, audioChannels int, durationSec float64, presentationLeadMs int) error {
-	bitRateStr := fmt.Sprintf("%dk", audioBitRate/1000)
-	sampleRateStr := strconv.Itoa(audioSampleRate)
-	channelsStr := strconv.Itoa(audioChannels)
-
-	adelayArg := adelayPerChannelArg(presentationLeadMs, audioChannels)
-	audioFilter := fmt.Sprintf("[0:a:%d]asetpts=PTS-STARTPTS,aresample=osr=%s", streamIndex, sampleRateStr)
-	if adelayArg != "" {
-		audioFilter += ",adelay=" + adelayArg
-	}
-	audioFilter += "[aout]"
-	audioOutputDur := durationSec
-	if presentationLeadMs > 0 {
-		audioOutputDur += float64(presentationLeadMs) / 1000.0
-	}
-	command := []string{
-		"-i", inputFile,
-		"-filter_complex", audioFilter,
-		"-map", "[aout]", "-vn", "-c:a", "aac", "-b:a", bitRateStr,
-		"-ar", sampleRateStr, "-ac", channelsStr,
-		"-f", "mp4",
-		"-frag_duration", FragDurationUs,
-		"-movflags", "+frag_keyframe+empty_moov+default_base_moof+dash+global_sidx+negative_cts_offsets",
-		"-avoid_negative_ts", "make_zero",
-	}
-	if dur := ffmpegOutputDurationArgs(audioOutputDur); dur != nil {
-		command = append(command, dur...)
-	}
-	command = append(command, "-y", outputFile)
-	cmd := exec.CommandContext(ctx, "ffmpeg", command...)
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("音轨%d编码失败: %w, stderr: %s", streamIndex, err, stderr.String())
+	args := ffmpeg.AudioTrackEncodeArgs(inputFile, streamIndex, audioBitRate, audioSampleRate, audioChannels, durationSec, presentationLeadMs)
+	args = append(args, "-y", outputFile)
+	err := ffmpeg.EncodeAudio(ctx, args)
+	if err != nil {
+		return fmt.Errorf("音轨%d编码失败: %w", streamIndex, err)
 	}
 	return nil
 }
@@ -1277,22 +1152,6 @@ func languageToTitle(lang string) string {
 // 第八部分：辅助工具函数 (纯函数)
 // ==============================================================================
 
-// ffmpegOutputDurationArgs 在写出文件前附加「-t duration」作为**输出选项**。
-// 官方说明见 https://ffmpeg.org/ffmpeg.html 中「-t duration (input/output)」：
-// 作为输出选项时，表示输出时长达到给定值后停止写入。音视频两次编码传入同一 duration
-// 可显著收敛分离封装（fMP4 + DASH）下片尾时长漂移。
-func ffmpegOutputDurationArgs(seconds float64) []string {
-	if seconds <= 0 || math.IsNaN(seconds) || math.IsInf(seconds, 0) {
-		return nil
-	}
-	// 与 ffmpeg 时间语法兼容的十进制秒（去掉无意义尾随 0）
-	s := strings.TrimRight(strings.TrimRight(strconv.FormatFloat(seconds, 'f', 6, 64), "0"), ".")
-	if s == "" {
-		return nil
-	}
-	return []string{"-t", s}
-}
-
 func parseProbDuration(s string) float64 {
 	if s == "" {
 		return 0
@@ -1333,56 +1192,7 @@ func minEncodeDurationSeconds(formatDur string, videoStream, audioStream *global
 	return m
 }
 
-// bFramePresentationLeadMs 按目标帧率估计视频首帧「展示」相对 t=0 的毫秒延迟（与 IPB 下约 2 帧同量纲）。
-func bFramePresentationLeadMs(fps string) int {
-	f := parseFPS(fps)
-	if f <= 0 {
-		return 0
-	}
-	ms := int(math.Round(2000.0 / f))
-	if ms < 1 {
-		return 0
-	}
-	if ms > 200 {
-		return 200
-	}
-	return ms
-}
 
-// adelayPerChannelArg 生成 FFmpeg adelay 的「del0|del1|…」语法（各声道相等）。
-func adelayPerChannelArg(delayMs, channels int) string {
-	if delayMs <= 0 || channels < 1 {
-		return ""
-	}
-	s := strconv.Itoa(delayMs)
-	parts := make([]string, channels)
-	for i := range parts {
-		parts[i] = s
-	}
-	return strings.Join(parts, "|")
-}
-
-func watchFFmpegProgress(scanner *bufio.Scanner, resourceID uint, quality string, totalDuration float64, svc *TranscodeService) {
-	if totalDuration <= 0 {
-		return
-	}
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		if strings.HasPrefix(line, "out_time_ms=") {
-			raw := strings.TrimPrefix(line, "out_time_ms=")
-			if ms, err := strconv.ParseFloat(raw, 64); err == nil {
-				svc.updateProgress(resourceID, quality, (ms/1000000.0)/totalDuration*100, "processing")
-			}
-		} else if strings.HasPrefix(line, "out_time=") {
-			raw := strings.TrimPrefix(line, "out_time=")
-			seconds := parseFfmpegClockToSeconds(raw)
-			svc.updateProgress(resourceID, quality, seconds/totalDuration*100, "processing")
-		}
-	}
-}
 
 // 【修复修复】防止路径穿越引发目录安全隐患
 func cleanupTranscodedFilesInOutputDir(outputDir string) error {
@@ -1551,50 +1361,7 @@ func ProcessVideoInfo(input string) (*dto.TranscodingInfo, error) {
 }
 
 func getMP4InitRange(filePath string) (initRange, indexRange string, err error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return "", "", err
-	}
-	defer file.Close()
-
-	fileInfo, err := file.Stat()
-	if err != nil {
-		return "", "", err
-	}
-	fileSize := fileInfo.Size()
-
-	var moovEnd, sidxStart, sidxEnd int64
-	offset := int64(0)
-	for offset < fileSize {
-		boxSize, boxType, err := readMP4BoxSizeAndType(file, offset, fileSize)
-		if err != nil || boxSize <= 0 {
-			break
-		}
-		switch boxType {
-		case "moov":
-			moovEnd = offset + boxSize
-		case "sidx":
-			sidxStart = offset
-			sidxEnd = offset + boxSize
-		case "moof":
-			goto ParseDone
-		}
-		offset += boxSize
-		if sidxEnd > 0 {
-			break
-		}
-	}
-ParseDone:
-	if moovEnd == 0 {
-		return "", "", fmt.Errorf("moov box not found")
-	}
-	initRange = fmt.Sprintf("0-%d", moovEnd-1)
-	if sidxEnd > 0 {
-		indexRange = fmt.Sprintf("%d-%d", sidxStart, sidxEnd-1)
-	} else {
-		indexRange = fmt.Sprintf("%d-%d", moovEnd, fileSize-1)
-	}
-	return initRange, indexRange, nil
+	return ffmpeg.GetMP4InitRange(filePath)
 }
 
 type qualityPreset struct {
@@ -1784,40 +1551,39 @@ func getTranscodingTarget(videoInfo *dto.TranscodingInfo) []TranscodingTarget {
 	return targets
 }
 
-func getVideoInfo(input string) (info global.VideoInfo, err error) {
-	cmd := exec.Command("ffprobe", "-i", input, "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", "-probesize", "5000000", "-analyzeduration", "5000000")
-	out, err := utils.RunCmd(cmd)
+func getVideoInfo(input string) (global.VideoInfo, error) {
+	result, err := ffmpeg.RunFFprobe(input)
 	if err != nil {
-		return info, err
+		return global.VideoInfo{}, err
 	}
-	err = json.Unmarshal(out.Bytes(), &info)
-	return info, err
-}
-
-func parseFPS(fps string) float64 {
-	if strings.Contains(fps, "/") {
-		parts := strings.Split(fps, "/")
-		if len(parts) == 2 {
-			num, _ := strconv.ParseFloat(parts[0], 64)
-			den, _ := strconv.ParseFloat(parts[1], 64)
-			if den > 0 {
-				return num / den
-			}
+	// 转换 *ffmpeg.ProbeResult → global.VideoInfo
+	vi := global.VideoInfo{
+		Stream: make([]global.Streams, len(result.Streams)),
+		Format: global.Format{
+			BitRate:  result.Format.BitRate,
+			Duration: result.Format.Duration,
+		},
+	}
+	for i, s := range result.Streams {
+		vi.Stream[i] = global.Streams{
+			CodecType:    s.CodecType,
+			CodecName:    s.CodecName,
+			Width:        s.Width,
+			Height:       s.Height,
+			PixFmt:       s.PixFmt,
+			Duration:     s.Duration,
+			RFrameRate:   s.RFrameRate,
+			AvgFrameRate: s.AvgFrameRate,
+			SampleRate:   s.SampleRate,
+			Channels:     s.Channels,
+			BitRate:      s.BitRate,
+			Tags: global.StreamTags{
+				Language: s.Tags.Language,
+				Title:    s.Tags.Title,
+			},
 		}
 	}
-	f, _ := strconv.ParseFloat(fps, 64)
-	return f
-}
-
-func parseFfmpegClockToSeconds(clock string) float64 {
-	parts := strings.Split(clock, ":")
-	if len(parts) != 3 {
-		return 0
-	}
-	h, _ := strconv.ParseFloat(parts[0], 64)
-	m, _ := strconv.ParseFloat(parts[1], 64)
-	s, _ := strconv.ParseFloat(parts[2], 64)
-	return h*3600 + m*60 + s
+	return vi, nil
 }
 
 func ProbeH264Avc1CodecString(filePath string) (string, error) {
@@ -1859,16 +1625,6 @@ func avc1CodecStringFromH264ProfileLevel(profile string, level int) (string, err
 	return fmt.Sprintf("avc1.%s00%s", profileHex, levelHex), nil
 }
 
-func buildRateControlParams(rate string) (string, string, string) {
-	if kbps, err := strconv.Atoi(strings.TrimSuffix(rate, "k")); err == nil && kbps > 0 {
-		maxKbps := int(math.Round(float64(kbps) * 1.4))
-		if maxKbps < kbps {
-			maxKbps = kbps
-		}
-		return rate, fmt.Sprintf("%dk", maxKbps), fmt.Sprintf("%dk", maxKbps*2)
-	}
-	return rate, rate, "4000k"
-}
 
 func parseQualityInfo(quality string) (int, int, int, float64) {
 	w, h, bw, fr := 1920, 1080, 3000000, 30.0

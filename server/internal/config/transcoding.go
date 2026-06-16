@@ -1,6 +1,10 @@
 package config
 
 type Transcoding struct {
+	// Mode 转码执行模式：local（本地进程）| remote（远程 Worker 池）。
+	// 默认 local，切换 remote 前必须部署 transcoder-worker。
+	Mode string `mapstructure:"mode" json:"mode" yaml:"mode"`
+
 	UseGpu            bool `mapstructure:"use_gpu" json:"use_gpu" yaml:"use_gpu"`
 	UseH265           bool `mapstructure:"use_h265" json:"use_h265" yaml:"use_h265"`
 	UseAv1            bool `mapstructure:"use_av1" json:"use_av1" yaml:"use_av1"`

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"errors"
@@ -670,7 +671,7 @@ func CompleteUploadVideo(vid, userId, fileID uint, videoName, title string, skip
 	transcodingInfo.OutputDir = "./upload/video/" + videoName + "/"
 	transcodingInfo.InputFile = transcodingInfo.OutputDir + "upload" + suffix
 	transcodingInfo.Suffix = suffix
-	go VideoTransCoding(transcodingInfo)
+	_ = GetCurrentTranscoder().Enqueue(context.Background(), transcodingInfo)
 
 	return vo.ResourceToResourceResp(resource), nil
 }

@@ -15,6 +15,11 @@ type Redis struct {
 	ctx         context.Context
 }
 
+// RawClient 暴露底层 *redis.Client，供队列/Worker 等高级组件使用。
+func (r *Redis) RawClient() *redis.Client {
+	return r.redisClient
+}
+
 func Init(c config.Redis) *Redis {
 	redisClient := redis.NewClient(&redis.Options{
 		Addr:     fmt.Sprintf("%s:%d", c.Host, c.Port),

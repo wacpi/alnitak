@@ -3,6 +3,7 @@ package service
 import (
 	"testing"
 
+	"interastral-peace.com/alnitak/internal/ffmpeg"
 	"interastral-peace.com/alnitak/internal/global"
 )
 
@@ -161,9 +162,9 @@ func TestParseFPS(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := parseFPS(tt.input)
+			result := ffmpeg.ParseFPS(tt.input)
 			if result != tt.expected {
-				t.Errorf("parseFPS(%q) = %f, want %f", tt.input, result, tt.expected)
+				t.Errorf("ParseFPS(%q) = %f, want %f", tt.input, result, tt.expected)
 			}
 		})
 	}
@@ -183,9 +184,9 @@ func TestParseFfmpegClockToSeconds(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := parseFfmpegClockToSeconds(tt.input)
+			result := ffmpeg.ParseFfmpegClockToSeconds(tt.input)
 			if result != tt.expected {
-				t.Errorf("parseFfmpegClockToSeconds(%q) = %f, want %f",
+				t.Errorf("ParseFfmpegClockToSeconds(%q) = %f, want %f",
 					tt.input, result, tt.expected)
 			}
 		})
@@ -199,16 +200,16 @@ func TestBuildRateControlParams(t *testing.T) {
 		wantMax    string
 		wantBuf    string
 	}{
-		{"8000k", "8000k", "11200k", "22400k"},
-		{"1000k", "1000k", "1400k", "2800k"},
-		{"200k", "200k", "280k", "560k"},
+		{"8000k", "8000k", "9600k", "16000k"},
+		{"1000k", "1000k", "1200k", "2000k"},
+		{"200k", "200k", "240k", "400k"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.rate, func(t *testing.T) {
-			target, maxRate, bufSize := buildRateControlParams(tt.rate)
+			target, maxRate, bufSize := ffmpeg.BuildRateControlParams(tt.rate)
 			if target != tt.wantTarget || maxRate != tt.wantMax || bufSize != tt.wantBuf {
-				t.Errorf("buildRateControlParams(%q) = (%q, %q, %q), want (%q, %q, %q)",
+				t.Errorf("BuildRateControlParams(%q) = (%q, %q, %q), want (%q, %q, %q)",
 					tt.rate, target, maxRate, bufSize, tt.wantTarget, tt.wantMax, tt.wantBuf)
 			}
 		})
@@ -240,14 +241,14 @@ func TestParseBitrateKbps(t *testing.T) {
 }
 
 func TestFfmpegOutputDurationArgs(t *testing.T) {
-	if got := ffmpegOutputDurationArgs(0); got != nil {
+	if got := ffmpeg.FfmpegOutputDurationArgs(0); got != nil {
 		t.Fatalf("expected nil for 0, got %#v", got)
 	}
-	got := ffmpegOutputDurationArgs(120.5)
+	got := ffmpeg.FfmpegOutputDurationArgs(120.5)
 	if len(got) != 2 || got[0] != "-t" || got[1] != "120.5" {
 		t.Fatalf("120.5: got %#v", got)
 	}
-	got = ffmpegOutputDurationArgs(210.043121)
+	got = ffmpeg.FfmpegOutputDurationArgs(210.043121)
 	if len(got) != 2 || got[0] != "-t" || got[1] != "210.043121" {
 		t.Fatalf("210.043121: got %#v", got)
 	}
@@ -265,23 +266,23 @@ func TestMinEncodeDurationSeconds(t *testing.T) {
 }
 
 func TestBFramePresentationLeadMs(t *testing.T) {
-	if bFramePresentationLeadMs("30") != 67 {
-		t.Fatalf("30fps: want 67ms, got %d", bFramePresentationLeadMs("30"))
+	if ffmpeg.BFramePresentationLeadMs("30") != 67 {
+		t.Fatalf("30fps: want 67ms, got %d", ffmpeg.BFramePresentationLeadMs("30"))
 	}
-	if bFramePresentationLeadMs("60000/1001") != 33 {
-		t.Fatalf("59.94: want 33ms, got %d", bFramePresentationLeadMs("60000/1001"))
+	if ffmpeg.BFramePresentationLeadMs("60000/1001") != 33 {
+		t.Fatalf("59.94: want 33ms, got %d", ffmpeg.BFramePresentationLeadMs("60000/1001"))
 	}
 }
 
 func TestAdelayPerChannelArg(t *testing.T) {
-	if adelayPerChannelArg(0, 2) != "" {
+	if ffmpeg.AdelayPerChannelArg(0, 2) != "" {
 		t.Fatal()
 	}
-	if adelayPerChannelArg(67, 2) != "67|67" {
-		t.Fatalf("got %q", adelayPerChannelArg(67, 2))
+	if ffmpeg.AdelayPerChannelArg(67, 2) != "67|67" {
+		t.Fatalf("got %q", ffmpeg.AdelayPerChannelArg(67, 2))
 	}
-	if adelayPerChannelArg(50, 1) != "50" {
-		t.Fatalf("got %q", adelayPerChannelArg(50, 1))
+	if ffmpeg.AdelayPerChannelArg(50, 1) != "50" {
+		t.Fatalf("got %q", ffmpeg.AdelayPerChannelArg(50, 1))
 	}
 }
 

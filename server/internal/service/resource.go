@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
@@ -435,7 +436,7 @@ func ReplaceResource(ctx *gin.Context, replaceReq dto.ReplaceResourceReq) (vo.Re
 	transcodingInfo.OutputDir = "./upload/video/" + newFileInfo.DirName + "/"
 	transcodingInfo.InputFile = transcodingInfo.OutputDir + "upload" + suffix
 	transcodingInfo.Suffix = suffix
-	go VideoTransCoding(transcodingInfo)
+	_ = GetCurrentTranscoder().Enqueue(context.Background(), transcodingInfo)
 
 	// 清除视频信息缓存
 	cache.DelVideoInfo(oldResource.Vid)
