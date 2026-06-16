@@ -14,8 +14,8 @@ const (
 	DefaultAudioCodec  = "mp4a.40.2"
 )
 
-// qualityPreset 分辨率 - 码率对照
-type qualityPreset struct {
+// QualityPreset 分辨率 - 码率对照
+type QualityPreset struct {
 	LongSide   int
 	ShortSide  int
 	BitrateH   string
@@ -24,7 +24,7 @@ type qualityPreset struct {
 	Bitrate60V string
 }
 
-var QualityPresets = []qualityPreset{
+var QualityPresets = []QualityPreset{
 	{1920, 1080, "8000k", "5000k", "12000k", "8000k"},
 	{1280, 720, "5000k", "3000k", "7500k", "5000k"},
 	{854, 480, "2500k", "1500k", "", ""},

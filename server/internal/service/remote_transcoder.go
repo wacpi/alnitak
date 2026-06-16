@@ -4,10 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"gorm.io/gorm"
 	"interastral-peace.com/alnitak/internal/domain/dto"
+	"interastral-peace.com/alnitak/internal/domain/model"
+	"interastral-peace.com/alnitak/internal/ffmpeg"
 	"interastral-peace.com/alnitak/internal/global"
 	"interastral-peace.com/alnitak/utils"
 )
@@ -97,11 +101,112 @@ func (t *RemoteTranscoder) pollProgress(ctx context.Context, info *dto.Transcodi
 				continue
 			}
 			status := statusMap["status"]
-			if status == "completed" || status == "failed" {
-				utils.InfoLog(fmt.Sprintf("【远程转码完成】ResourceID=%d status=%s", info.ResourceID, status), "transcoding")
+			if status == "failed" {
+				utils.InfoLog(fmt.Sprintf("【远程转码失败】ResourceID=%d", info.ResourceID), "transcoding")
+				// 标记资源转码失败
+				GetTranscoder().completeTransaction(ctx, info, global.PROCESSING_FAIL)
+				return
+			}
+			if status == "completed" {
+				utils.InfoLog(fmt.Sprintf("【远程转码完成】ResourceID=%d", info.ResourceID), "transcoding")
+				t.handleRemoteCompletion(ctx, info, statusMap)
 				return
 			}
 		}
+	}
+}
+
+// handleRemoteCompletion Worker 完成后，从 Redis 读取索引数据并创建 DB 记录。
+func (t *RemoteTranscoder) handleRemoteCompletion(ctx context.Context, info *dto.TranscodingInfo, statusMap map[string]string) {
+	svc := GetTranscoder()
+
+	// 1. 从 statusMap 中找出所有 idx_{qualityName} 键，解析索引数据
+	var indexRecords []model.VideoIndexFile
+	for key, val := range statusMap {
+		if !strings.HasPrefix(key, "idx_") {
+			continue
+		}
+		qualityName := strings.TrimPrefix(key, "idx_")
+
+		var idx struct {
+			VideoInitRange  string `json:"vInit"`
+			VideoIndexRange string `json:"vIndex"`
+			AudioInitRange  string `json:"aInit"`
+			AudioIndexRange string `json:"aIndex"`
+			VideoCodec      string `json:"codec"`
+		}
+		if err := json.Unmarshal([]byte(val), &idx); err != nil {
+			utils.ErrorLog("【远程转码】解析索引数据失败", "transcoding",
+				fmt.Sprintf("quality=%s err=%v", qualityName, err))
+			continue
+		}
+
+		width, height, bandwidth, _ := ffmpeg.ParseQualityInfo(qualityName)
+		frameRate := ffmpeg.ParseFPS(qualityName[strings.LastIndex(qualityName, "_")+1:])
+
+		videoCodec := idx.VideoCodec
+		if videoCodec == "" {
+			videoCodec = ffmpeg.DefaultVideoCodec
+		}
+
+		audioCodec := ffmpeg.DefaultAudioCodec
+		audioBitrate := info.AudioBitRate
+		audioSampleRate := info.AudioSampleRate
+
+		indexRecords = append(indexRecords, model.VideoIndexFile{
+			ResourceID:      info.ResourceID,
+			Quality:         qualityName,
+			DirName:         info.DirName,
+			TotalDuration:   info.Duration,
+			VideoFile:       qualityName + "_video.m4s",
+			VideoBandwidth:  bandwidth,
+			VideoCodec:      videoCodec,
+			Width:           width,
+			Height:          height,
+			FrameRate:       frameRate,
+			VideoInitRange:  idx.VideoInitRange,
+			VideoIndexRange: idx.VideoIndexRange,
+			AudioFile:       "audio.m4s",
+			AudioBandwidth:  audioBitrate,
+			AudioCodec:      audioCodec,
+			AudioSampleRate: audioSampleRate,
+			AudioInitRange:  idx.AudioInitRange,
+			AudioIndexRange: idx.AudioIndexRange,
+		})
+	}
+
+	if len(indexRecords) == 0 {
+		utils.ErrorLog("【远程转码】没有有效的索引数据，标记失败", "transcoding",
+			fmt.Sprintf("ResourceID=%d", info.ResourceID))
+		if err := svc.completeTransaction(ctx, info, global.PROCESSING_FAIL); err != nil {
+			utils.ErrorLog("【远程转码】标记失败时事务出错", "transcoding", err.Error())
+		}
+		return
+	}
+
+	// 2. 事务内批量创建 VideoIndexFile 记录（防止部分写入后失败导致脏数据）
+	if err := svc.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for _, rec := range indexRecords {
+			if err := tx.Create(&rec).Error; err != nil {
+				return fmt.Errorf("create index record for %s: %w", rec.Quality, err)
+			}
+		}
+		return nil
+	}); err != nil {
+		utils.ErrorLog("【远程转码】批量创建索引记录失败", "transcoding", err.Error())
+		if err := svc.completeTransaction(ctx, info, global.PROCESSING_FAIL); err != nil {
+			utils.ErrorLog("【远程转码】标记失败时事务出错", "transcoding", err.Error())
+		}
+		return
+	}
+
+	// 3. 多音轨记录（远程模式下音频文件在 OSS 上，暂不创建 AudioTrack 记录）
+	// TODO: 远程模式需要 Worker 同时上报各音轨的 init/index range
+
+	// 4. 完成事务（更新资源状态）
+	utils.InfoLog(fmt.Sprintf("【远程转码】索引创建完成，共 %d 个画质", len(indexRecords)), "transcoding")
+	if err := svc.completeTransaction(ctx, info, global.WAITING_REVIEW); err != nil {
+		utils.ErrorLog("【远程转码】完成事务失败", "transcoding", err.Error())
 	}
 }
 

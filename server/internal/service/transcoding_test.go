@@ -22,20 +22,17 @@ func TestAvc1CodecStringFromH264ProfileLevel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := avc1CodecStringFromH264ProfileLevel(tt.profile, tt.level)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if got != tt.want {
+		got := ffmpeg.Avc1CodecString(tt.profile, tt.level)
+		if got != tt.want {
 				t.Fatalf("codec string = %q, want %q", got, tt.want)
 			}
 		})
 	}
 
 	t.Run("unsupported-profile", func(t *testing.T) {
-		_, err := avc1CodecStringFromH264ProfileLevel("Unknown", 42)
-		if err == nil {
-			t.Fatalf("expected error, got nil")
+		got := ffmpeg.Avc1CodecString("Unknown", 42)
+		if got != "" {
+			t.Fatalf("expected empty string, got %q", got)
 		}
 	})
 }
@@ -61,9 +58,9 @@ func TestGetMaxQualityLevel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := getMaxQualityLevel(tt.width, tt.height)
+			result := ffmpeg.GetMaxQualityLevel(tt.width, tt.height)
 			if result != tt.expected {
-				t.Errorf("getMaxQualityLevel(%d, %d) = %d, want %d",
+				t.Errorf("GetMaxQualityLevel(%d, %d) = %d, want %d",
 					tt.width, tt.height, result, tt.expected)
 			}
 		})
@@ -86,9 +83,9 @@ func TestCalcResolution(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			w, h := calcResolution(tt.srcWidth, tt.srcHeight, tt.targetSS)
+			w, h := ffmpeg.CalcResolution(tt.srcWidth, tt.srcHeight, tt.targetSS)
 			if w != tt.expectedW || h != tt.expectedH {
-				t.Errorf("calcResolution(%d, %d, %d) = (%d, %d), want (%d, %d)",
+				t.Errorf("CalcResolution(%d, %d, %d) = (%d, %d), want (%d, %d)",
 					tt.srcWidth, tt.srcHeight, tt.targetSS, w, h, tt.expectedW, tt.expectedH)
 			}
 		})
@@ -111,9 +108,9 @@ func TestScaleBitrateBySource(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := scaleBitrateBySource(tt.sourceMaxKbps, tt.maxPresetKbps, tt.currentPresetKbps)
+			result := ffmpeg.ScaleBitrateBySource(tt.sourceMaxKbps, tt.maxPresetKbps, tt.currentPresetKbps)
 			if result != tt.expected {
-				t.Errorf("scaleBitrateBySource(%d, %d, %d) = %d, want %d",
+				t.Errorf("ScaleBitrateBySource(%d, %d, %d) = %d, want %d",
 					tt.sourceMaxKbps, tt.maxPresetKbps, tt.currentPresetKbps, result, tt.expected)
 			}
 		})
@@ -137,9 +134,10 @@ func TestParseQualityInfo(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			w, h, bw, fr := parseQualityInfo(tt.input)
+			w, h, bw, frStr := ffmpeg.ParseQualityInfo(tt.input)
+			fr := ffmpeg.ParseFPS(frStr)
 			if w != tt.wantW || h != tt.wantH || bw != tt.wantBW || fr != tt.wantFR {
-				t.Errorf("parseQualityInfo(%q) = (%d, %d, %d, %f), want (%d, %d, %d, %f)",
+				t.Errorf("ParseQualityInfo(%q) = (%d, %d, %d, %f), want (%d, %d, %d, %f)",
 					tt.input, w, h, bw, fr, tt.wantW, tt.wantH, tt.wantBW, tt.wantFR)
 			}
 		})
@@ -231,9 +229,9 @@ func TestParseBitrateKbps(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := parseBitrateKbps(tt.input)
+			result := ffmpeg.ParseBitrateKbps(tt.input)
 			if result != tt.expected {
-				t.Errorf("parseBitrateKbps(%q) = %d, want %d",
+				t.Errorf("ParseBitrateKbps(%q) = %d, want %d",
 					tt.input, result, tt.expected)
 			}
 		})

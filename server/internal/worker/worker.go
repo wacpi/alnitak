@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -47,27 +46,6 @@ const (
 	// XReadGroup 每次批量拉取上限
 	readBatchSize = 10
 )
-
-// =============================================================================
-// 画质预设
-// =============================================================================
-
-// qualityPreset 画质预设（与服务端 qualityPresets 一致）
-type qualityPreset struct {
-	LongSide   int
-	ShortSide  int
-	BitrateH   string
-	BitrateV   string
-	Bitrate60H string
-	Bitrate60V string
-}
-
-var qualityPresets = []qualityPreset{
-	{1920, 1080, "8000k", "5000k", "12000k", "8000k"},
-	{1280, 720, "5000k", "3000k", "7500k", "5000k"},
-	{854, 480, "2500k", "1500k", "", ""},
-	{640, 360, "1000k", "700k", "", ""},
-}
 
 // =============================================================================
 // Worker 主结构
@@ -247,6 +225,12 @@ func (w *Worker) Run(ctx context.Context) error {
 					w.jobsActive.Add(1)
 					w.jobsTotal.Add(1)
 					go func(id string, rawJob string) {
+						defer func() {
+							if r := recover(); r != nil {
+								w.jobsFailed.Add(1)
+								zap.L().Error("Job goroutine panic", zap.String("msgID", id), zap.Any("panic", r))
+							}
+						}()
 						defer func() { <-w.sem }()
 						defer wg.Done()
 						defer w.jobsActive.Add(-1)
@@ -331,6 +315,12 @@ func (w *Worker) recoverPending(ctx context.Context) error {
 		w.jobsActive.Add(1)
 		w.jobsTotal.Add(1)
 		go func(id, raw string) {
+			defer func() {
+				if r := recover(); r != nil {
+					w.jobsFailed.Add(1)
+					zap.L().Error("Recovered job goroutine panic", zap.String("msgID", id), zap.Any("panic", r))
+				}
+			}()
 			defer func() { <-w.sem }()
 			defer w.jobsActive.Add(-1)
 			if err := w.processJob(ctx, raw, id); err != nil {
@@ -406,7 +396,7 @@ func (w *Worker) processJob(ctx context.Context, rawJob, msgID string) error {
 		videoOutput := filepath.Join(os.TempDir(), fmt.Sprintf("alnitak_v_%d_%s.m4s", info.ResourceID, qualityName))
 
 		encWg.Add(1)
-		go func(t qualityTarget, outPath, qName string) {
+		go func(t ffmpeg.TranscodingTarget, outPath, qName string) {
 			defer encWg.Done()
 			if err := w.encodeQuality(jobCtx, &info, t, outPath); err != nil {
 				errCh <- fmt.Errorf("%s: %w", qName, err)
@@ -448,6 +438,23 @@ func (w *Worker) processJob(ctx context.Context, rawJob, msgID string) error {
 			fmt.Sprintf("errors: %s", strings.Join(errs, "; ")))
 	} else {
 		w.writeStatus(statusKey, "encoding_done", 100, "")
+	}
+
+	// 3c. 收集 MP4 init/index 范围（上传前文件仍在本地）
+	for _, target := range targets {
+		qName := target.Resolution + "_" + target.BitrateRate + "_" + target.FpsName
+		videoFile := filepath.Join(os.TempDir(), fmt.Sprintf("alnitak_v_%d_%s.m4s", info.ResourceID, qName))
+
+		var audioFile string
+		if len(audioFiles) > 0 {
+			audioFile = audioFiles[0].LocalPath
+		}
+
+		idx := w.collectQualityIndex(videoFile, audioFile, &info, qName)
+		if idx != nil {
+			data, _ := json.Marshal(idx)
+			_ = w.rdb.HSet(ctx, statusKey, fmt.Sprintf("idx_%s", qName), string(data)).Err()
+		}
 	}
 
 	// 4. 上传转码产物到 OSS
@@ -510,7 +517,7 @@ func (w *Worker) downloadInput(info *dto.TranscodingInfo, localPath string) erro
 
 // uploadOutputs 将转码产物（视频+音频）上传到 OSS。
 // audioFiles 由 encodeAudio 返回，含临时路径与 OSS key。
-func (w *Worker) uploadOutputs(info *dto.TranscodingInfo, targets []qualityTarget, audioFiles []audioFileEntry) error {
+func (w *Worker) uploadOutputs(info *dto.TranscodingInfo, targets []ffmpeg.TranscodingTarget, audioFiles []audioFileEntry) error {
 	// 上传视频文件
 	for _, target := range targets {
 		qName := target.Resolution + "_" + target.BitrateRate + "_" + target.FpsName
@@ -551,14 +558,6 @@ type audioFileEntry struct {
 // 音频编码
 // =============================================================================
 
-// workerAudioFileName 生成音频文件名（与服务端 audioFileNameForTrack 保持一致）。
-func workerAudioFileName(language string) string {
-	if language == "" || language == "und" {
-		return "audio.m4s"
-	}
-	return "audio_" + language + ".m4s"
-}
-
 // encodeAudio 编码音轨（单音轨或多音轨），返回上传条目列表。
 //   - 多音轨模式：每个 AudioStream 独立编码，主音轨（第一条）失败视为整体失败。
 //   - 单音轨模式：使用 info.AudioBitRate / AudioSampleRate / AudioChannels 回退。
@@ -569,7 +568,7 @@ func (w *Worker) encodeAudio(ctx context.Context, info *dto.TranscodingInfo) ([]
 	if len(info.AudioStreams) > 0 {
 		// 多音轨模式
 		for i, stream := range info.AudioStreams {
-			audioFileName := workerAudioFileName(stream.Language)
+			audioFileName := ffmpeg.AudioFileNameForTrack(stream.Language)
 			audioOutput := filepath.Join(os.TempDir(),
 				fmt.Sprintf("alnitak_a_%d_%s.m4s", info.ResourceID, stream.Language))
 
@@ -624,96 +623,131 @@ func (w *Worker) encodeAudio(ctx context.Context, info *dto.TranscodingInfo) ([]
 // 视频编码
 // =============================================================================
 
-// qualityTarget 单画质编码目标
-type qualityTarget struct {
-	Resolution  string // e.g. "1920x1080"
-	BitrateRate string // e.g. "8000k"
-	FPS         string // e.g. "30000/1000"
-	FpsName     string // e.g. "30"
+// computeTargets 计算转码目标列表
+func (w *Worker) computeTargets(info *dto.TranscodingInfo) []ffmpeg.TranscodingTarget {
+	return ffmpeg.GetTranscodingTargets(
+		info.Width, info.Height, info.VideoBitRate,
+		info.FPS30, info.FPS60,
+		w.cfg.Transcoding.Generate1080p60,
+	)
 }
 
-// computeTargets 计算转码目标列表（与服务端 getTranscodingTarget 逻辑一致）
-func (w *Worker) computeTargets(info *dto.TranscodingInfo) []qualityTarget {
-	maxLevel := getMaxQualityLevel(info.Width, info.Height)
-	isPortrait := info.Width < info.Height
-
-	var maxPreset qualityPreset
-	for _, p := range qualityPresets {
-		if p.ShortSide == maxLevel {
-			maxPreset = p
-			break
-		}
-	}
-	if maxPreset.ShortSide == 0 {
-		return nil
-	}
-
-	sourceMaxKbps := info.VideoBitRate / 1000
-	if sourceMaxKbps <= 0 {
-		sourceMaxKbps = parseBitrateKbps(maxPreset.BitrateH)
-	}
-
-	enable60 := w.cfg.Transcoding.Generate1080p60 && info.FPS60 != ""
-
-	var targets []qualityTarget
-	for _, preset := range qualityPresets {
-		if preset.ShortSide > maxLevel {
-			continue
-		}
-		wRes, hRes := calcResolution(info.Width, info.Height, preset.ShortSide)
-		resStr := fmt.Sprintf("%dx%d", wRes, hRes)
-
-		currKbps30 := getPresetBitrateKbps(preset, isPortrait, false)
-		currKbps60 := getPresetBitrateKbps(preset, isPortrait, true)
-
-		if preset.ShortSide == maxLevel && enable60 && currKbps60 > 0 {
-			dynKbps60 := scaleBitrateBySource(sourceMaxKbps, currKbps60, currKbps60)
-			targets = append(targets, qualityTarget{
-				Resolution: resStr, BitrateRate: formatBitrateKbps(dynKbps60),
-				FPS: info.FPS60, FpsName: "60",
-			})
-		}
-		dynKbps30 := scaleBitrateBySource(sourceMaxKbps, currKbps30, currKbps30)
-		targets = append(targets, qualityTarget{
-			Resolution: resStr, BitrateRate: formatBitrateKbps(dynKbps30),
-			FPS: info.FPS30, FpsName: "30",
-		})
-	}
-	return targets
-}
-
-// encodeQuality 执行单画质视频编码
-func (w *Worker) encodeQuality(ctx context.Context, info *dto.TranscodingInfo, target qualityTarget, outputPath string) error {
+// encodeQuality 执行单画质视频编码（含 GPU→CPU 逐级降级）。
+func (w *Worker) encodeQuality(ctx context.Context, info *dto.TranscodingInfo, target ffmpeg.TranscodingTarget, outputPath string) error {
 	useGpu := w.cfg.Transcoding.UseGpu
 	useHevc := w.cfg.Transcoding.UseH265
 	useAv1 := w.cfg.Transcoding.UseAv1
 
-	args := ffmpeg.VideoEncodeArgs(info.InputFile, target.Resolution, target.BitrateRate, target.FPS, info.Duration, useGpu, useAv1, useHevc)
+	return w.doEncodeWithFallback(ctx, info, target, outputPath, useGpu, useAv1, useHevc)
+}
 
-	numCPU := runtime.NumCPU()
-	threads := 4
-	if !useGpu {
-		threads = (numCPU - 2) / w.concurrency
-		if threads < 1 {
-			threads = 1
+// doEncodeWithFallback 执行编码并处理 GPU AV1→H.265→H.264→CPU 逐级降级。
+func (w *Worker) doEncodeWithFallback(ctx context.Context, info *dto.TranscodingInfo, target ffmpeg.TranscodingTarget, outputPath string, useGpu, useAv1, useHevc bool) error {
+	encode := func(gpu, av1, hevc bool) error {
+		args := ffmpeg.VideoEncodeArgs(info.InputFile, target.Resolution, target.BitrateRate, target.FPS, info.Duration, gpu, av1, hevc)
+
+		numCPU := runtime.NumCPU()
+		threads := 4
+		if !gpu {
+			threads = (numCPU - 2) / w.concurrency
+			if threads < 1 {
+				threads = 1
+			}
+			if threads > 8 {
+				threads = 8
+			}
 		}
-		if threads > 8 {
-			threads = 8
+
+		args = append(args, "-progress", "pipe:1", "-nostats",
+			"-threads", strconv.Itoa(threads),
+			"-y", outputPath)
+
+		_, err := ffmpeg.EncodeVideo(ctx, args, info.Duration, func(pct float64) {
+			statusKey := fmt.Sprintf("%s%d", transcodingStatusPrefix, info.ResourceID)
+			qName := target.Resolution + "_" + target.BitrateRate + "_" + target.FpsName
+			_ = w.rdb.HSet(ctx, statusKey,
+				fmt.Sprintf("progress_%s", qName), fmt.Sprintf("%.1f", pct),
+			).Err()
+		})
+		return err
+	}
+
+	err := encode(useGpu, useAv1, useHevc)
+	if useGpu && err != nil && (strings.Contains(err.Error(), "GPU error") || strings.Contains(err.Error(), "nvenc")) {
+		zap.L().Warn("GPU encode failed, attempting fallback",
+			zap.String("quality", target.Resolution+"_"+target.FpsName),
+			zap.Error(err))
+
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		// GPU AV1 → GPU H.265
+		if useAv1 {
+			zap.L().Info("GPU fallback: AV1 → H.265")
+			err = encode(true, false, true)
+			if err == nil {
+				return nil
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+		}
+
+		// GPU H.265 → GPU H.264
+		if useAv1 || useHevc {
+			zap.L().Info("GPU fallback: H.265 → H.264")
+			err = encode(true, false, false)
+			if err == nil {
+				return nil
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+		}
+
+		// GPU H.264 → CPU H.264
+		zap.L().Info("GPU fallback: GPU → CPU")
+		err = encode(false, false, false)
+	}
+	return err
+}
+
+// qualityIndexData 单画质索引信息（存储到 Redis 供服务端创建 VideoIndexFile 记录）。
+type qualityIndexData struct {
+	VideoInitRange  string `json:"vInit"`
+	VideoIndexRange string `json:"vIndex"`
+	AudioInitRange  string `json:"aInit"`
+	AudioIndexRange string `json:"aIndex"`
+	VideoCodec      string `json:"codec"`
+}
+
+// collectQualityIndex 编码完成后从本地文件解析 MP4 init/index range 和编码信息。
+// 文件在 uploadOutputs 删除前仍有效，结果存入 Redis 供服务端后续创建索引记录。
+func (w *Worker) collectQualityIndex(videoFile, audioFile string, info *dto.TranscodingInfo, qualityName string) *qualityIndexData {
+	d := &qualityIndexData{}
+
+	if vInit, vIndex, err := ffmpeg.GetMP4InitRange(videoFile); err == nil {
+		d.VideoInitRange = vInit
+		d.VideoIndexRange = vIndex
+	} else {
+		zap.L().Warn("collect video index failed", zap.String("quality", qualityName), zap.Error(err))
+		return nil
+	}
+
+	if audioFile != "" {
+		if aInit, aIndex, err := ffmpeg.GetMP4InitRange(audioFile); err == nil {
+			d.AudioInitRange = aInit
+			d.AudioIndexRange = aIndex
+		} else {
+			zap.L().Warn("collect audio index failed", zap.String("quality", qualityName), zap.Error(err))
 		}
 	}
 
-	args = append(args, "-progress", "pipe:1", "-nostats",
-		"-threads", strconv.Itoa(threads),
-		"-y", outputPath)
+	// 从已编码文件探测实际 codec（正确处理 GPU 降级场景）
+	d.VideoCodec = ffmpeg.ProbeVideoActualCodec(videoFile)
 
-	_, err := ffmpeg.EncodeVideo(ctx, args, info.Duration, func(pct float64) {
-		statusKey := fmt.Sprintf("%s%d", transcodingStatusPrefix, info.ResourceID)
-		qName := target.Resolution + "_" + target.BitrateRate + "_" + target.FpsName
-		_ = w.rdb.HSet(ctx, statusKey,
-			fmt.Sprintf("progress_%s", qName), fmt.Sprintf("%.1f", pct),
-		).Err()
-	})
-	return err
+	return d
 }
 
 // =============================================================================
@@ -735,94 +769,4 @@ func (w *Worker) handleCancel(ctx context.Context, videoIDStr string) {
 		cancel()
 		zap.L().Info("Cancelled job", zap.Uint64("videoID", videoID))
 	}
-}
-
-// =============================================================================
-// 纯函数：画质/码率计算（与服务端一致）
-// =============================================================================
-
-func getMaxQualityLevel(width, height int) int {
-	shortSide, longSide := width, height
-	if height < width {
-		shortSide, longSide = height, width
-	}
-	if longSide >= 1920 && shortSide >= 1000 {
-		return 1080
-	}
-	if shortSide >= 1080 {
-		return 1080
-	}
-	if shortSide >= 720 {
-		return 720
-	}
-	if shortSide >= 480 {
-		return 480
-	}
-	return 360
-}
-
-func calcResolution(srcWidth, srcHeight, targetShortSide int) (w, h int) {
-	isPortrait := srcWidth < srcHeight
-	srcAspect := float64(srcWidth) / float64(srcHeight)
-	if isPortrait {
-		w = targetShortSide
-		h = int(math.Round(float64(w) / srcAspect))
-	} else {
-		h = targetShortSide
-		w = int(math.Round(float64(h) * srcAspect))
-	}
-	return w &^ 1, h &^ 1
-}
-
-func getPresetBitrateKbps(preset qualityPreset, isPortrait, fps60 bool) int {
-	var bitrate string
-	if fps60 {
-		bitrate = preset.Bitrate60H
-		if isPortrait {
-			bitrate = preset.Bitrate60V
-		}
-		if kbps := parseBitrateKbps(bitrate); kbps > 0 {
-			return kbps
-		}
-	}
-	bitrate = preset.BitrateH
-	if isPortrait {
-		bitrate = preset.BitrateV
-	}
-	return parseBitrateKbps(bitrate)
-}
-
-func scaleBitrateBySource(sourceMaxKbps, maxPresetKbps, currentPresetKbps int) int {
-	if sourceMaxKbps <= 0 {
-		return currentPresetKbps
-	}
-	if maxPresetKbps <= 0 || currentPresetKbps <= 0 {
-		return sourceMaxKbps
-	}
-	if currentPresetKbps >= maxPresetKbps {
-		return sourceMaxKbps
-	}
-	scaled := int(math.Round(float64(sourceMaxKbps) * float64(currentPresetKbps) / float64(maxPresetKbps)))
-	if scaled < 200 {
-		scaled = 200
-	}
-	if scaled > sourceMaxKbps {
-		scaled = sourceMaxKbps
-	}
-	return scaled
-}
-
-func parseBitrateKbps(rate string) int {
-	rate = strings.TrimSpace(strings.TrimSuffix(rate, "k"))
-	if v, err := strconv.Atoi(rate); err == nil && v > 0 {
-		return v
-	}
-	return 0
-}
-
-func formatBitrateKbps(rateKbps int) string {
-	if rateKbps < 1 {
-		rateKbps = 1
-	}
-	return fmt.Sprintf("%dk", rateKbps)
 }

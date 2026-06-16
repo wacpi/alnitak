@@ -3,6 +3,7 @@ package ffmpeg
 import (
 	"fmt"
 	"math"
+	"os/exec"
 	"strconv"
 	"strings"
 )
@@ -148,21 +149,243 @@ func parseQualitySortKey(quality string) (w, h, fps, br int) {
 }
 
 // ============================================================
+// Quality Preset Helpers
+// ============================================================
+
+// GetMaxQualityLevel 根据原始分辨率返回最高支持的画质档位（短边高度）。
+func GetMaxQualityLevel(width, height int) int {
+	shortSide, longSide := width, height
+	if height < width {
+		shortSide, longSide = height, width
+	}
+	if longSide >= 1920 && shortSide >= 1000 {
+		return 1080
+	}
+	if shortSide >= 1080 {
+		return 1080
+	}
+	if shortSide >= 720 {
+		return 720
+	}
+	if shortSide >= 480 {
+		return 480
+	}
+	return 360
+}
+
+// CalcResolution 按目标短边计算等比例缩放后的实际分辨率（偶数对齐）。
+func CalcResolution(srcWidth, srcHeight, targetShortSide int) (w, h int) {
+	isPortrait := srcWidth < srcHeight
+	srcAspect := float64(srcWidth) / float64(srcHeight)
+	if isPortrait {
+		w = targetShortSide
+		h = int(float64(w) / srcAspect)
+	} else {
+		h = targetShortSide
+		w = int(float64(h) * srcAspect)
+	}
+	return w &^ 1, h &^ 1
+}
+
+// GetPresetBitrateKbps 从 preset 中取码率（kbps），优先 60fps 值，fallback 到 30fps。
+func GetPresetBitrateKbps(preset QualityPreset, isPortrait, fps60 bool) int {
+	var bitrate string
+	if fps60 {
+		bitrate = preset.Bitrate60H
+		if isPortrait {
+			bitrate = preset.Bitrate60V
+		}
+		if kbps := ParseBitrateKbps(bitrate); kbps > 0 {
+			return kbps
+		}
+	}
+	bitrate = preset.BitrateH
+	if isPortrait {
+		bitrate = preset.BitrateV
+	}
+	return ParseBitrateKbps(bitrate)
+}
+
+// ScaleBitrateBySource 根据源视频码率缩放预设码率（保留动态范围）。
+func ScaleBitrateBySource(sourceMaxKbps, maxPresetKbps, currentPresetKbps int) int {
+	if sourceMaxKbps <= 0 {
+		return currentPresetKbps
+	}
+	if maxPresetKbps <= 0 || currentPresetKbps <= 0 {
+		return sourceMaxKbps
+	}
+	if currentPresetKbps >= maxPresetKbps {
+		return sourceMaxKbps
+	}
+	scaled := int(math.Round(float64(sourceMaxKbps) * float64(currentPresetKbps) / float64(maxPresetKbps)))
+	if scaled < 200 {
+		scaled = 200
+	}
+	if scaled > sourceMaxKbps {
+		scaled = sourceMaxKbps
+	}
+	return scaled
+}
+
+// GetDefaultVideoBitRateByLevel 按最高画质档位返回默认视频码率（bps）。
+func GetDefaultVideoBitRateByLevel(maxLevel int, isPortrait bool) int {
+	for _, preset := range QualityPresets {
+		if preset.ShortSide == maxLevel {
+			br := preset.BitrateH
+			if isPortrait {
+				br = preset.BitrateV
+			}
+			if kbps := ParseBitrateKbps(br); kbps > 0 {
+				return kbps * 1000
+			}
+		}
+	}
+	return 1000000
+}
+
+// AudioFileNameForTrack 按语言代码生成音轨文件名。
+// "und" 或空返回 "audio.m4s"，否则返回 "audio_{lang}.m4s"。
+func AudioFileNameForTrack(language string) string {
+	if language == "" || language == "und" {
+		return "audio.m4s"
+	}
+	return "audio_" + language + ".m4s"
+}
+
+// GetFpsInfo 从平均帧率解析出 30fps/60fps 的 timebase。
+func GetFpsInfo(avgFrameRate string, enable60 bool) (string, string) {
+	parts := strings.Split(avgFrameRate, "/")
+	if len(parts) == 2 {
+		num, _ := strconv.Atoi(parts[0])
+		den, _ := strconv.Atoi(parts[1])
+		if den == 0 {
+			return TimeBase30fps, ""
+		}
+		fps := float64(num) / float64(den)
+		if fps < 30 {
+			return avgFrameRate, ""
+		}
+		if fps >= 59 {
+			if enable60 {
+				return TimeBase30fps, TimeBase60fps
+			}
+			return TimeBase30fps, ""
+		}
+	}
+	return TimeBase30fps, ""
+}
+
+// ============================================================
 // codec string
 // ============================================================
+
+// TranscodingTarget 转码目标（清晰度档位）
+type TranscodingTarget struct {
+	Resolution  string
+	BitrateRate string
+	FPS         string
+	FpsName     string
+}
+
+// GetTranscodingTargets 根据输入视频参数生成所有转码目标档位。
+func GetTranscodingTargets(width, height, videoBitRate int, fps30, fps60 string, enable60 bool) []TranscodingTarget {
+	targets := make([]TranscodingTarget, 0)
+	maxLevel := GetMaxQualityLevel(width, height)
+	isPortrait := width < height
+
+	var maxPreset QualityPreset
+	for _, p := range QualityPresets {
+		if p.ShortSide == maxLevel {
+			maxPreset = p
+			break
+		}
+	}
+	if maxPreset.ShortSide == 0 {
+		return targets
+	}
+
+	maxPresetKbps30 := GetPresetBitrateKbps(maxPreset, isPortrait, false)
+	maxPresetKbps60 := GetPresetBitrateKbps(maxPreset, isPortrait, true)
+	if maxPresetKbps60 <= 0 {
+		maxPresetKbps60 = maxPresetKbps30
+	}
+
+	sourceMaxKbps := videoBitRate / 1000
+	if sourceMaxKbps <= 0 {
+		sourceMaxKbps = maxPresetKbps30
+	}
+
+	gen60 := enable60 && fps60 != ""
+
+	for _, preset := range QualityPresets {
+		if preset.ShortSide > maxLevel {
+			continue
+		}
+		w, h := CalcResolution(width, height, preset.ShortSide)
+		resStr := fmt.Sprintf("%dx%d", w, h)
+
+		currKbps30 := GetPresetBitrateKbps(preset, isPortrait, false)
+		dynKbps30 := ScaleBitrateBySource(sourceMaxKbps, maxPresetKbps30, currKbps30)
+
+		if preset.ShortSide == maxLevel && gen60 {
+			currKbps60 := GetPresetBitrateKbps(preset, isPortrait, true)
+			dynKbps60 := ScaleBitrateBySource(sourceMaxKbps, maxPresetKbps60, currKbps60)
+			targets = append(targets, TranscodingTarget{Resolution: resStr, BitrateRate: FormatBitrateKbps(dynKbps60), FPS: fps60, FpsName: "60"})
+		}
+		targets = append(targets, TranscodingTarget{Resolution: resStr, BitrateRate: FormatBitrateKbps(dynKbps30), FPS: fps30, FpsName: "30"})
+	}
+	return targets
+}
 
 // Avc1CodecString 从 ffprobe profile+level 生成 avc1 编码字符串。
 func Avc1CodecString(profile string, level int) string {
 	// https://stackoverflow.com/questions/24834877/avc1-codec-string
 	profileMap := map[string]int{
-		"Baseline": 66,
-		"Main":     77,
-		"High":     100,
+		"baseline": 66,
+		"main":     77,
+		"high":     100,
 	}
-	pi, ok := profileMap[profile]
+	pi, ok := profileMap[strings.ToLower(profile)]
 	if !ok {
 		return ""
 	}
-	levelHex := level * 10
-	return fmt.Sprintf("avc1.%02x%02x%02x", pi, byte(levelHex>>8)&0xff, byte(levelHex)&0xff)
+	return fmt.Sprintf("avc1.%02X%02X%02X", pi, 0, level)
+}
+
+// ProbeVideoActualCodec 从已编码的视频文件中探测实际使用的编码器，
+// 返回标准 codec 字符串（avc1.xxx / hvc1.xxx / av01.xxx）。
+// 用于编码降级后正确记录 codec，而非依赖配置。
+func ProbeVideoActualCodec(videoFile string) string {
+	cmd := exec.Command("ffprobe", "-v", "error", "-select_streams", "v:0",
+		"-show_entries", "stream=codec_name,profile,level",
+		"-of", "default=nw=1:nk=1", videoFile)
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return DefaultVideoCodec
+	}
+
+	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+	if len(lines) < 3 {
+		return DefaultVideoCodec
+	}
+
+	codecName := strings.TrimSpace(lines[0])
+	profile := strings.TrimSpace(lines[1])
+	level, _ := strconv.Atoi(strings.TrimSpace(lines[2]))
+
+	switch strings.ToLower(codecName) {
+	case "av1":
+		return DefaultAV1Codec
+	case "hevc", "h265":
+		return DefaultHEVCCodec
+	case "h264", "avc":
+		if cs := Avc1CodecString(profile, level); cs != "" {
+			return cs
+		}
+		return DefaultVideoCodec
+	default:
+		return DefaultVideoCodec
+	}
 }

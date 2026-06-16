@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,37 +26,15 @@ import (
 )
 
 // ==============================================================================
-// 第一部分：全局常量定义
-// ==============================================================================
-
-const (
-	AudioMaxBitrateBps = 320000
-	DefaultAudioSample = 48000
-	DefaultAudioChan   = 2
-	FragDurationUs     = "2000000" // 2秒切片
-	TimeBase30fps      = "30000/1000"
-	TimeBase60fps      = "60000/1001"
-	DefaultVideoCodec  = "avc1.640028"
-	DefaultHEVCCodec   = "hvc1.1.6.L150.B0"
-	DefaultAV1Codec    = "av01.0.08M.08"
-	DefaultAudioCodec  = "mp4a.40.2"
-)
-
-// ==============================================================================
-// 第二部分：接口抽象与核心服务结构 (解决强耦合与可测试性问题)
+// 第一部分：接口抽象与核心服务结构 (解决强耦合与可测试性问题)
+//
+// 常量定义已统一移至 internal/ffmpeg/constant.go
 // ==============================================================================
 
 // StorageUploader 抽象存储接口，屏蔽具体 OSS 实现，便于 Mock 测试
 type StorageUploader interface {
 	PutObjectFromFile(objectKey, filePath string) error
 	DeleteObject(objectKey string) error
-}
-
-type TranscodingTarget struct {
-	Resolution  string
-	BitrateRate string
-	FPS         string
-	FpsName     string
 }
 
 type TranscodingProcess struct {
@@ -104,28 +81,43 @@ var (
 	initOnce          sync.Once
 
 	currentTranscoderInstance Transcoder
-	transcoderInitOnce        sync.Once
+	currentTranscoderMode     string
+	currentTranscoderMu       sync.RWMutex
 )
 
-// GetCurrentTranscoder 按 config 返回当前转码后端。
+// GetCurrentTranscoder 按 config 返回当前转码后端，支持运行时切换。
 //   - mode=local（默认）: 返回 LocalTranscoder，封装现有 TranscodeService
 //   - mode=remote:        返回 RemoteTranscoder，通过 Redis + OSS 与 Worker 通信
-//     （Phase 4 实现，当前返回桩，Enqueue 返回 ErrRemoteNotImplemented）
 func GetCurrentTranscoder() Transcoder {
-	transcoderInitOnce.Do(func() {
-		mode := global.Config.Transcoding.Mode
-		if mode == "" {
-			mode = "local"
-		}
-		switch mode {
-		case "remote":
-			utils.InfoLog("【转码模式】remote（远程 Worker 池）", "transcoding")
-			currentTranscoderInstance = NewRemoteTranscoder()
-		default:
-			utils.InfoLog("【转码模式】local（本地进程内转码）", "transcoding")
-			currentTranscoderInstance = NewLocalTranscoder()
-		}
-	})
+	mode := global.Config.Transcoding.Mode
+	if mode == "" {
+		mode = "local"
+	}
+
+	currentTranscoderMu.RLock()
+	if currentTranscoderInstance != nil && currentTranscoderMode == mode {
+		currentTranscoderMu.RUnlock()
+		return currentTranscoderInstance
+	}
+	currentTranscoderMu.RUnlock()
+
+	currentTranscoderMu.Lock()
+	defer currentTranscoderMu.Unlock()
+
+	// Double check after acquiring write lock
+	if currentTranscoderInstance != nil && currentTranscoderMode == mode {
+		return currentTranscoderInstance
+	}
+
+	switch mode {
+	case "remote":
+		utils.InfoLog("【转码模式】remote（远程 Worker 池）", "transcoding")
+		currentTranscoderInstance = NewRemoteTranscoder()
+	default:
+		utils.InfoLog("【转码模式】local（本地进程内转码）", "transcoding")
+		currentTranscoderInstance = NewLocalTranscoder()
+	}
+	currentTranscoderMode = mode
 	return currentTranscoderInstance
 }
 
@@ -163,8 +155,8 @@ func GetTranscoder() *TranscodeService {
 // ==============================================================================
 
 // VideoTransCoding 同步启动转码（阻塞至完成）。
-//  - mode=local:  内部调用 ProcessVideo，行为与重构前一致
-//  - mode=remote: 通过接口 Enqueue + 轮询等待（Phase 4 实现）
+//   - mode=local:  内部调用 ProcessVideo，行为与重构前一致
+//   - mode=remote: 直接调用 GetTranscoder().ProcessVideo（不经过 RemoteTranscoder）
 //
 // 调用方需要异步时自行加 go 关键字，如 upload.go/resource.go 已改为
 // GetCurrentTranscoder().Enqueue()。
@@ -229,7 +221,7 @@ func (s *SharedTask) DoOrWait(ctx context.Context, taskFn func() error) error {
 // ==============================================================================
 
 func (s *TranscodeService) ProcessVideo(ctx context.Context, info *dto.TranscodingInfo) {
-	targets := getTranscodingTarget(info)
+	targets := ffmpeg.GetTranscodingTargets(info.Width, info.Height, info.VideoBitRate, info.FPS30, info.FPS60, global.Config.Transcoding.Generate1080p60)
 	s.initResourceProgress(info.VideoID, info.ResourceID, targets)
 	defer s.clearProgress(info.ResourceID)
 
@@ -249,7 +241,7 @@ func (s *TranscodeService) ProcessVideo(ctx context.Context, info *dto.Transcodi
 	// 1. 并发处理所有画质分片
 	for _, target := range targets {
 		wg.Add(1)
-		go func(t TranscodingTarget) {
+		go func(t ffmpeg.TranscodingTarget) {
 			defer wg.Done()
 			defer func() {
 				if r := recover(); r != nil {
@@ -324,7 +316,7 @@ func (s *TranscodeService) ProcessVideo(ctx context.Context, info *dto.Transcodi
 }
 
 func (s *TranscodeService) processSingleQuality(
-	ctx context.Context, info *dto.TranscodingInfo, t TranscodingTarget,
+	ctx context.Context, info *dto.TranscodingInfo, t ffmpeg.TranscodingTarget,
 	audioTrackTasks []*SharedTask, singleAudioTask *SharedTask,
 ) error {
 	qualityName := t.Resolution + "_" + t.BitrateRate + "_" + t.FpsName
@@ -356,7 +348,7 @@ func (s *TranscodeService) processSingleQuality(
 	if len(info.AudioStreams) > 0 {
 		// 多音轨模式：每个音轨独立编码，默认音轨失败时整体失败
 		for i, stream := range info.AudioStreams {
-			audioFileName := audioFileNameForTrack(stream.Language)
+			audioFileName := ffmpeg.AudioFileNameForTrack(stream.Language)
 			audioFilePath := info.OutputDir + audioFileName
 
 			// 当前帧率用于计算 B 帧偏移（使用首个 quality 的 fps 即可，所有 quality 共享）
@@ -394,7 +386,7 @@ func (s *TranscodeService) processSingleQuality(
 	// 解析存储
 	audioFile := info.OutputDir + "audio.m4s"
 	if len(info.AudioStreams) > 0 {
-		audioFile = info.OutputDir + audioFileNameForTrack(info.AudioStreams[0].Language)
+		audioFile = info.OutputDir + ffmpeg.AudioFileNameForTrack(info.AudioStreams[0].Language)
 	}
 	if err := s.saveIndexRecord(subCtx, info, qualityName, videoFile, audioFile); err != nil {
 		s.markQualityFailed(info.ResourceID, qualityName)
@@ -407,7 +399,7 @@ func (s *TranscodeService) processSingleQuality(
 
 // encodeVideoWithFallback 动态路由 GPU/CPU 策略
 func (s *TranscodeService) encodeVideoWithFallback(
-	ctx context.Context, info *dto.TranscodingInfo, t TranscodingTarget,
+	ctx context.Context, info *dto.TranscodingInfo, t ffmpeg.TranscodingTarget,
 	videoFile, qualityName string, cancel context.CancelFunc,
 ) error {
 	useGpu := global.Config.Transcoding.UseGpu && s.isGPUAvailable()
@@ -465,20 +457,10 @@ func (s *TranscodeService) saveIndexRecord(ctx context.Context, info *dto.Transc
 		return err
 	}
 
-	var videoCodec string
-	switch {
-	case global.Config.Transcoding.UseAv1:
-		videoCodec = DefaultAV1Codec
-	case global.Config.Transcoding.UseH265:
-		videoCodec = DefaultHEVCCodec
-	default:
-		videoCodec = DefaultVideoCodec
-		if c, err := probeH264Avc1CodecString(videoFilePath); err == nil {
-			videoCodec = c
-		}
-	}
+	// 从已编码文件探测实际 codec（正确处理 GPU 降级场景）
+	videoCodec := ffmpeg.ProbeVideoActualCodec(videoFilePath)
 
-	width, height, bandwidth, frameRate := parseQualityInfo(qualityName)
+	width, height, bandwidth, frameRateStr := ffmpeg.ParseQualityInfo(qualityName)
 
 	indexFile := &model.VideoIndexFile{
 		ResourceID:      info.ResourceID,
@@ -490,12 +472,12 @@ func (s *TranscodeService) saveIndexRecord(ctx context.Context, info *dto.Transc
 		VideoCodec:      videoCodec,
 		Width:           width,
 		Height:          height,
-		FrameRate:       frameRate,
+		FrameRate:       ffmpeg.ParseFPS(frameRateStr),
 		VideoInitRange:  vInit,
 		VideoIndexRange: vIndex,
 		AudioFile:       "audio.m4s",
 		AudioBandwidth:  info.AudioBitRate,
-		AudioCodec:      DefaultAudioCodec,
+		AudioCodec:      ffmpeg.DefaultAudioCodec,
 		AudioSampleRate: info.AudioSampleRate,
 		AudioInitRange:  aInit,
 		AudioIndexRange: aIndex,
@@ -787,7 +769,7 @@ func (s *TranscodeService) ResetGPUState() {
 	}
 }
 
-func (s *TranscodeService) initResourceProgress(videoID, resourceID uint, targets []TranscodingTarget) {
+func (s *TranscodeService) initResourceProgress(videoID, resourceID uint, targets []ffmpeg.TranscodingTarget) {
 	s.progressMu.Lock()
 	defer s.progressMu.Unlock()
 	state := &resourceTranscodingProgress{
@@ -1058,13 +1040,6 @@ func encodeAudioOnly(ctx context.Context, inputFile, outputFile string, audioBit
 // 第七部分 B：多音轨辅助函数
 // ==============================================================================
 
-func audioFileNameForTrack(language string) string {
-	if language == "" || language == "und" {
-		return "audio.m4s"
-	}
-	return "audio_" + language + ".m4s"
-}
-
 // encodeAudioTrack 编码指定音轨（通过 streamIndex 选择流），输出唯一文件名。
 func encodeAudioTrack(ctx context.Context, inputFile, outputFile string, streamIndex, audioBitRate, audioSampleRate, audioChannels int, durationSec float64, presentationLeadMs int) error {
 	args := ffmpeg.AudioTrackEncodeArgs(inputFile, streamIndex, audioBitRate, audioSampleRate, audioChannels, durationSec, presentationLeadMs)
@@ -1084,7 +1059,7 @@ func (s *TranscodeService) saveAudioTrackRecords(ctx context.Context, info *dto.
 	}
 
 	for i, stream := range info.AudioStreams {
-		audioFile := audioFileNameForTrack(stream.Language)
+		audioFile := ffmpeg.AudioFileNameForTrack(stream.Language)
 		audioFilePath := info.OutputDir + audioFile
 
 		aInit, aIndex, err := getMP4InitRange(audioFilePath)
@@ -1095,19 +1070,19 @@ func (s *TranscodeService) saveAudioTrackRecords(ctx context.Context, info *dto.
 
 		title := languageToTitle(stream.Language)
 		track := model.AudioTrack{
-			ResourceID:  info.ResourceID,
-			DirName:     info.DirName,
-			Language:    stream.Language,
-			Title:       title,
-			TrackIndex:  stream.StreamIndex,
-			IsDefault:   i == 0,
-			Channels:    stream.Channels,
-			AudioFile:   audioFile,
-			Codec:       DefaultAudioCodec,
-			Bandwidth:   stream.BitRate,
-			SampleRate:  stream.SampleRate,
-			InitRange:   aInit,
-			IndexRange:  aIndex,
+			ResourceID: info.ResourceID,
+			DirName:    info.DirName,
+			Language:   stream.Language,
+			Title:      title,
+			TrackIndex: stream.StreamIndex,
+			IsDefault:  i == 0,
+			Channels:   stream.Channels,
+			AudioFile:  audioFile,
+			Codec:      ffmpeg.DefaultAudioCodec,
+			Bandwidth:  stream.BitRate,
+			SampleRate: stream.SampleRate,
+			InitRange:  aInit,
+			IndexRange: aIndex,
 		}
 
 		if err := s.db.WithContext(ctx).Where("resource_id = ? AND language = ?", info.ResourceID, stream.Language).
@@ -1191,8 +1166,6 @@ func minEncodeDurationSeconds(formatDur string, videoStream, audioStream *global
 	}
 	return m
 }
-
-
 
 // 【修复修复】防止路径穿越引发目录安全隐患
 func cleanupTranscodedFilesInOutputDir(outputDir string) error {
@@ -1295,7 +1268,7 @@ func ProcessVideoInfo(input string) (*dto.TranscodingInfo, error) {
 		ti.Duration, _ = strconv.ParseFloat(durStr, 64)
 	}
 	ti.FPS = videoStream.AvgFrameRate
-	ti.FPS30, ti.FPS60 = getFpsInfo(ti.FPS)
+	ti.FPS30, ti.FPS60 = ffmpeg.GetFpsInfo(ti.FPS, global.Config.Transcoding.Generate1080p60)
 
 	if br, err := strconv.Atoi(videoStream.BitRate); err == nil && br > 0 {
 		ti.VideoBitRate = br
@@ -1333,16 +1306,16 @@ func ProcessVideoInfo(input string) (*dto.TranscodingInfo, error) {
 	}
 
 	if ti.AudioSampleRate == 0 {
-		ti.AudioSampleRate = DefaultAudioSample
+		ti.AudioSampleRate = ffmpeg.DefaultAudioSample
 	}
 	if ti.AudioChannels == 0 {
-		ti.AudioChannels = DefaultAudioChan
+		ti.AudioChannels = ffmpeg.DefaultAudioChan
 	}
 	if ti.AudioBitRate == 0 {
-		ti.AudioBitRate = AudioMaxBitrateBps
+		ti.AudioBitRate = ffmpeg.AudioMaxBitrateBps
 	}
-	if ti.AudioBitRate > AudioMaxBitrateBps {
-		ti.AudioBitRate = AudioMaxBitrateBps
+	if ti.AudioBitRate > ffmpeg.AudioMaxBitrateBps {
+		ti.AudioBitRate = ffmpeg.AudioMaxBitrateBps
 	}
 
 	if ti.VideoBitRate == 0 {
@@ -1354,8 +1327,8 @@ func ProcessVideoInfo(input string) (*dto.TranscodingInfo, error) {
 		}
 	}
 	if ti.VideoBitRate == 0 {
-		maxLvl := getMaxQualityLevel(ti.Width, ti.Height)
-		ti.VideoBitRate = getDefaultVideoBitRateByLevel(maxLvl, ti.Width < ti.Height)
+		maxLvl := ffmpeg.GetMaxQualityLevel(ti.Width, ti.Height)
+		ti.VideoBitRate = ffmpeg.GetDefaultVideoBitRateByLevel(maxLvl, ti.Width < ti.Height)
 	}
 	return &ti, nil
 }
@@ -1363,194 +1336,6 @@ func ProcessVideoInfo(input string) (*dto.TranscodingInfo, error) {
 func getMP4InitRange(filePath string) (initRange, indexRange string, err error) {
 	return ffmpeg.GetMP4InitRange(filePath)
 }
-
-type qualityPreset struct {
-	LongSide   int
-	ShortSide  int
-	BitrateH   string
-	BitrateV   string
-	Bitrate60H string
-	Bitrate60V string
-}
-
-var qualityPresets = []qualityPreset{
-	{1920, 1080, "8000k", "5000k", "12000k", "8000k"},
-	{1280, 720, "5000k", "3000k", "7500k", "5000k"},
-	{854, 480, "2500k", "1500k", "", ""},
-	{640, 360, "1000k", "700k", "", ""},
-}
-
-func getMaxQualityLevel(width, height int) int {
-	shortSide, longSide := width, height
-	if height < width {
-		shortSide, longSide = height, width
-	}
-	if longSide >= 1920 && shortSide >= 1000 {
-		return 1080
-	}
-	if shortSide >= 1080 {
-		return 1080
-	}
-	if shortSide >= 720 {
-		return 720
-	}
-	if shortSide >= 480 {
-		return 480
-	}
-	return 360
-}
-
-func getFpsInfo(avgFrameRate string) (string, string) {
-	parts := strings.Split(avgFrameRate, "/")
-	if len(parts) == 2 {
-		num, den := utils.StringToInt(parts[0]), utils.StringToInt(parts[1])
-		if den == 0 {
-			return TimeBase30fps, ""
-		}
-		fps := float64(num) / float64(den)
-		if fps < 30 {
-			return avgFrameRate, ""
-		}
-		if fps >= 59 {
-			if global.Config.Transcoding.Generate1080p60 {
-				return TimeBase30fps, TimeBase60fps
-			}
-			return TimeBase30fps, ""
-		}
-	}
-	return TimeBase30fps, ""
-}
-
-func calcResolution(srcWidth, srcHeight, targetShortSide int) (w, h int) {
-	isPortrait := srcWidth < srcHeight
-	srcAspect := float64(srcWidth) / float64(srcHeight)
-	if isPortrait {
-		w = targetShortSide
-		h = int(math.Round(float64(w) / srcAspect))
-	} else {
-		h = targetShortSide
-		w = int(math.Round(float64(h) * srcAspect))
-	}
-	return w &^ 1, h &^ 1
-}
-
-func parseBitrateKbps(rate string) int {
-	rate = strings.TrimSpace(strings.TrimSuffix(rate, "k"))
-	if v, err := strconv.Atoi(rate); err == nil && v > 0 {
-		return v
-	}
-	return 0
-}
-
-func formatBitrateKbps(rateKbps int) string {
-	if rateKbps < 1 {
-		rateKbps = 1
-	}
-	return fmt.Sprintf("%dk", rateKbps)
-}
-
-func getDefaultVideoBitRateByLevel(maxLevel int, isPortrait bool) int {
-	for _, preset := range qualityPresets {
-		if preset.ShortSide == maxLevel {
-			br := preset.BitrateH
-			if isPortrait {
-				br = preset.BitrateV
-			}
-			if kbps := parseBitrateKbps(br); kbps > 0 {
-				return kbps * 1000
-			}
-		}
-	}
-	return 1000000
-}
-
-func scaleBitrateBySource(sourceMaxKbps, maxPresetKbps, currentPresetKbps int) int {
-	if sourceMaxKbps <= 0 {
-		return currentPresetKbps
-	}
-	if maxPresetKbps <= 0 || currentPresetKbps <= 0 {
-		return sourceMaxKbps
-	}
-	if currentPresetKbps >= maxPresetKbps {
-		return sourceMaxKbps
-	}
-	scaled := int(math.Round(float64(sourceMaxKbps) * float64(currentPresetKbps) / float64(maxPresetKbps)))
-	if scaled < 200 {
-		scaled = 200
-	}
-	if scaled > sourceMaxKbps {
-		scaled = sourceMaxKbps
-	}
-	return scaled
-}
-
-func getPresetBitrateKbps(preset qualityPreset, isPortrait, fps60 bool) int {
-	var bitrate string
-	if fps60 {
-		bitrate = preset.Bitrate60H
-		if isPortrait {
-			bitrate = preset.Bitrate60V
-		}
-		if kbps := parseBitrateKbps(bitrate); kbps > 0 {
-			return kbps
-		}
-	}
-	bitrate = preset.BitrateH
-	if isPortrait {
-		bitrate = preset.BitrateV
-	}
-	return parseBitrateKbps(bitrate)
-}
-
-func getTranscodingTarget(videoInfo *dto.TranscodingInfo) []TranscodingTarget {
-	targets := make([]TranscodingTarget, 0)
-	maxLevel := getMaxQualityLevel(videoInfo.Width, videoInfo.Height)
-	isPortrait := videoInfo.Width < videoInfo.Height
-
-	var maxPreset qualityPreset
-	for _, p := range qualityPresets {
-		if p.ShortSide == maxLevel {
-			maxPreset = p
-			break
-		}
-	}
-	if maxPreset.ShortSide == 0 {
-		return targets
-	}
-
-	maxPresetKbps30 := getPresetBitrateKbps(maxPreset, isPortrait, false)
-	maxPresetKbps60 := getPresetBitrateKbps(maxPreset, isPortrait, true)
-	if maxPresetKbps60 <= 0 {
-		maxPresetKbps60 = maxPresetKbps30
-	}
-
-	sourceMaxKbps := videoInfo.VideoBitRate / 1000
-	if sourceMaxKbps <= 0 {
-		sourceMaxKbps = maxPresetKbps30
-	}
-
-	enable60 := global.Config.Transcoding.Generate1080p60 && videoInfo.FPS60 != ""
-
-	for _, preset := range qualityPresets {
-		if preset.ShortSide > maxLevel {
-			continue
-		}
-		w, h := calcResolution(videoInfo.Width, videoInfo.Height, preset.ShortSide)
-		resStr := fmt.Sprintf("%dx%d", w, h)
-
-		currKbps30 := getPresetBitrateKbps(preset, isPortrait, false)
-		dynKbps30 := scaleBitrateBySource(sourceMaxKbps, maxPresetKbps30, currKbps30)
-
-		if preset.ShortSide == maxLevel && enable60 {
-			currKbps60 := getPresetBitrateKbps(preset, isPortrait, true)
-			dynKbps60 := scaleBitrateBySource(sourceMaxKbps, maxPresetKbps60, currKbps60)
-			targets = append(targets, TranscodingTarget{Resolution: resStr, BitrateRate: formatBitrateKbps(dynKbps60), FPS: videoInfo.FPS60, FpsName: "60"})
-		}
-		targets = append(targets, TranscodingTarget{Resolution: resStr, BitrateRate: formatBitrateKbps(dynKbps30), FPS: videoInfo.FPS30, FpsName: "30"})
-	}
-	return targets
-}
-
 func getVideoInfo(input string) (global.VideoInfo, error) {
 	result, err := ffmpeg.RunFFprobe(input)
 	if err != nil {
@@ -1608,42 +1393,11 @@ func probeH264Avc1CodecString(filePath string) (string, error) {
 }
 
 func avc1CodecStringFromH264ProfileLevel(profile string, level int) (string, error) {
-	profile = strings.ToLower(profile)
-	var profileHex string
-	switch {
-	case strings.Contains(profile, "baseline"):
-		profileHex = "42"
-	case strings.Contains(profile, "main"):
-		profileHex = "4D"
-	case strings.Contains(profile, "high"):
-		profileHex = "64"
-	default:
+	s := ffmpeg.Avc1CodecString(profile, level)
+	if s == "" {
 		return "", fmt.Errorf("unsupported h264 profile: %s", profile)
 	}
-
-	levelHex := fmt.Sprintf("%02X", level)
-	return fmt.Sprintf("avc1.%s00%s", profileHex, levelHex), nil
-}
-
-
-func parseQualityInfo(quality string) (int, int, int, float64) {
-	w, h, bw, fr := 1920, 1080, 3000000, 30.0
-	parts := strings.Split(quality, "_")
-	if len(parts) > 0 {
-		res := strings.Split(parts[0], "x")
-		if len(res) == 2 {
-			w, _ = strconv.Atoi(res[0])
-			h, _ = strconv.Atoi(res[1])
-		}
-	}
-	if len(parts) > 1 {
-		r, _ := strconv.Atoi(strings.TrimSuffix(parts[1], "k"))
-		bw = r * 1000
-	}
-	if len(parts) > 2 {
-		fr, _ = strconv.ParseFloat(parts[2], 64)
-	}
-	return w, h, bw, fr
+	return s, nil
 }
 
 func parseProgressQualitySortKey(quality string) (w, h, f, b int) {
@@ -1656,7 +1410,7 @@ func parseProgressQualitySortKey(quality string) (w, h, f, b int) {
 		}
 	}
 	if len(parts) > 1 {
-		b = parseBitrateKbps(parts[1])
+		b = ffmpeg.ParseBitrateKbps(parts[1])
 	}
 	if len(parts) > 2 {
 		f, _ = strconv.Atoi(parts[2])
