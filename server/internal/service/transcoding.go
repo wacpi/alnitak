@@ -228,6 +228,11 @@ func (s *TranscodeService) ProcessVideo(ctx context.Context, info *dto.Transcodi
 				}
 			}()
 
+			// 如果 context 已取消，goroutine 直接返回
+			if ctx.Err() != nil {
+				return
+			}
+
 			if err := s.processSingleQuality(ctx, info, t, audioTrackTasks, singleAudioTask); err != nil {
 				utils.ErrorLog(fmt.Sprintf("【转码处理失败】%s", err.Error()), "transcoding", "")
 				return
@@ -236,7 +241,19 @@ func (s *TranscodeService) ProcessVideo(ctx context.Context, info *dto.Transcodi
 		}(target)
 	}
 
-	wg.Wait()
+	// 等待所有分片完成或 context 取消
+	waitDone := make(chan struct{}, 1)
+	go func() {
+		wg.Wait()
+		waitDone <- struct{}{}
+	}()
+	select {
+	case <-waitDone:
+	case <-ctx.Done():
+		utils.InfoLog(fmt.Sprintf("【转码取消】VideoID=%d, ResourceID=%d", info.VideoID, info.ResourceID), "transcoding")
+		// 等待 goroutine 自然结束（FFmpeg 被 exec.CommandContext 杀死后很快返回）
+		<-waitDone
+	}
 	utils.InfoLog(fmt.Sprintf("【所有分段转码完成】成功=%d, 总数=%d", successCount.Load(), len(targets)), "transcoding")
 
 	// 1.5 多音轨落库（在所有 quality 完成后执行一次）
@@ -900,7 +917,9 @@ func (s *TranscodeService) StopTranscodingAndCleanup(videoID uint) error {
 			p.CancelFunc()
 		}
 		if p.Cmd != nil && p.Cmd.Process != nil {
-			_ = p.Cmd.Process.Kill()
+			if err := p.Cmd.Process.Kill(); err != nil {
+				utils.ErrorLog(fmt.Sprintf("【终止进程失败】PID=%d", p.PID), "transcoding", err.Error())
+			}
 		}
 		if p.OutputDir != "" {
 			if _, done := cleanedDirs[p.OutputDir]; !done {
@@ -946,14 +965,20 @@ func (s *TranscodeService) runVideoEncodeTask(
 	scaleFilter := fmt.Sprintf("fps=%s,scale=%s:flags=lanczos", fps, quality)
 
 	// 【核心修复】防止 FFmpeg 默认吃光所有 CPU 引发 OS 上下文切换风暴
+	// CPU编码与GPU编码采用不同的线程策略：
+	// - GPU编码：NVENC硬件编码几乎不占CPU，给2~4线程足矣
+	// - CPU编码：预留2核给系统/OS，其余分配给FFmpeg；用maxConcur除避免竞态堆积
 	numCPU := runtime.NumCPU()
-	threads := numCPU / s.maxConcur
-	if threads < 1 {
-		threads = 1
-	}
-	if threads > 8 {
-		threads = 8
-	} // 限制单实例线程上限避免内部损耗
+	threads := 4
+	if !useGpu {
+		threads = (numCPU - 2) / s.maxConcur
+		if threads < 1 {
+			threads = 1
+		}
+		if threads > 8 {
+			threads = 8
+		}
+	} // GPU编码固定4线程，CPU动态分配
 
 	args := []string{
 		"-i", inputFile,
@@ -1067,7 +1092,7 @@ func (s *TranscodeService) runVideoEncodeTask(
 		if useGpu && (strings.Contains(errOut, "No NVENC") || strings.Contains(errOut, "nvenc")) {
 			return fmt.Errorf("GPU error: %s", errOut)
 		}
-		return fmt.Errorf("encode failed: %s\n%s", err.Error(), errOut)
+		return fmt.Errorf("encode failed: %w\n%s", err, errOut)
 	}
 	return nil
 }
@@ -1109,7 +1134,7 @@ func encodeAudioOnly(ctx context.Context, inputFile, outputFile string, audioBit
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("音频编码失败: %s, stderr: %s", err.Error(), stderr.String())
+		return fmt.Errorf("音频编码失败: %w, stderr: %s", err, stderr.String())
 	}
 	return nil
 }
@@ -1159,7 +1184,7 @@ func encodeAudioTrack(ctx context.Context, inputFile, outputFile string, streamI
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("音轨%d编码失败: %s, stderr: %s", streamIndex, err.Error(), stderr.String())
+		return fmt.Errorf("音轨%d编码失败: %w, stderr: %s", streamIndex, err, stderr.String())
 	}
 	return nil
 }
