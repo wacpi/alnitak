@@ -391,9 +391,21 @@ func (s *TranscodeService) encodeVideoWithFallback(
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		// GPU AV1/HEVC → GPU H.264 → CPU H.264 逐级降级
+		// GPU AV1 → GPU H.265 → GPU H.264 → CPU H.264 逐级降级
+		if useAv1 {
+			utils.InfoLog(fmt.Sprintf("【GPU降级】%s AV1→H.265 GPU", qualityName), "transcoding")
+			err = s.runVideoEncodeTask(ctx, info.VideoID, info.ResourceID, info.InputFile, videoFile, t.Resolution, t.BitrateRate, t.FPS, qualityName, info.Duration, true, false, true, cancel)
+			if err == nil {
+				s.recordGPUSuccess()
+				return nil
+			}
+			s.handleGPUFailure()
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+		}
 		if useAv1 || useHevc {
-			utils.InfoLog(fmt.Sprintf("【GPU降级】%s AV1/HEVC→H.264 GPU", qualityName), "transcoding")
+			utils.InfoLog(fmt.Sprintf("【GPU降级】%s H.265→H.264 GPU", qualityName), "transcoding")
 			err = s.runVideoEncodeTask(ctx, info.VideoID, info.ResourceID, info.InputFile, videoFile, t.Resolution, t.BitrateRate, t.FPS, qualityName, info.Duration, true, false, false, cancel)
 			if err == nil {
 				s.recordGPUSuccess()
