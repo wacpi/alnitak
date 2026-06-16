@@ -616,7 +616,9 @@ func (s *TranscodeService) uploadToBackup(info *dto.TranscodingInfo) {
 
 		if lastErr != nil {
 			utils.ErrorLog(fmt.Sprintf("【备用OSS上传失败】%s (重试%d次)", fileName, ossUploadMaxRetries), "oss", lastErr.Error())
+			RecordBackupUploadFailure(objectKey, filePath, "video", lastErr.Error())
 		} else {
+			clearBackupFailure(objectKey)
 			utils.InfoLog(fmt.Sprintf("【备用OSS上传成功】%s", fileName), "transcoding")
 		}
 	}

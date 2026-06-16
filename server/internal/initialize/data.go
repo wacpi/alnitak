@@ -850,6 +850,10 @@ var authApiDesc = map[string]string{
 	"GET|/api/v1/playlist/getPlaylistReviewRecord":     "获取合集审核记录",
 	"POST|/api/v1/playlist/getPlaylistListManage":      "获取全站合集列表（后台管理）",
 	"DELETE|/api/v1/playlist/deletePlaylistManage/:id": "删除合集（后台管理）",
+	// 备用 OSS
+	"GET|/api/v1/backup/failures":             "获取备用OSS上传失败记录",
+	"POST|/api/v1/backup/retry/:id":           "重试单条备用OSS上传失败记录",
+	"POST|/api/v1/backup/retryAll":            "重试所有备用OSS上传失败记录",
 	// PGC
 	"POST|/api/v1/pgc/create":                 "创建PGC内容",
 	"PUT|/api/v1/pgc/update":                  "更新PGC内容",

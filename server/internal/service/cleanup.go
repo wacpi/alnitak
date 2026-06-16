@@ -548,107 +548,59 @@ func (r *CleanupResult) cleanOrphanedSubtitles(dryRun bool) {
 		// 检查 SubtitleTrack 表是否有对应记录
 		var track model.SubtitleTrack
 		if err := global.Mysql.Unscoped().Where("object_key = ?", objectKey).First(&track).Error; err != nil || track.ID == 0 {
-			r.Items = append(r.Items, CleanupItem{
-				Type:   "subtitle",
-				Path:   objectKey,
-				Reason: "SubtitleTrack记录不存在",
-			})
-			if !dryRun {
-				deleteOrphanedSubtitleFile(objectKey, localPath, r)
-				r.CleanedSubtitles++
-			} else {
-				r.CleanedSubtitles++
-			}
+			r.markSubtitleOrphaned(objectKey, localPath, "SubtitleTrack记录不存在", 0, dryRun)
 			continue
 		}
 
 		// 记录存在但已被软删除
 		if track.DeletedAt.Valid {
-			r.Items = append(r.Items, CleanupItem{
-				Type:   "subtitle",
-				Path:   objectKey,
-				Reason: "SubtitleTrack已软删除",
-			})
-			if !dryRun {
-				global.Mysql.Unscoped().Delete(&model.SubtitleTrack{}, track.ID)
-				deleteOrphanedSubtitleFile(objectKey, localPath, r)
-				r.CleanedSubtitles++
-			} else {
-				r.CleanedSubtitles++
-			}
+			r.markSubtitleOrphaned(objectKey, localPath, "SubtitleTrack已软删除", track.ID, dryRun)
 			continue
 		}
 
 		// 检查关联的 Resource 是否存在
 		var resource model.Resource
 		if err := global.Mysql.Unscoped().Where("short_id = ?", track.ResourceShortID).First(&resource).Error; err != nil || resource.ID == 0 {
-			r.Items = append(r.Items, CleanupItem{
-				Type:   "subtitle",
-				Path:   objectKey,
-				Reason: "关联Resource不存在",
-			})
-			if !dryRun {
-				global.Mysql.Unscoped().Delete(&model.SubtitleTrack{}, track.ID)
-				deleteOrphanedSubtitleFile(objectKey, localPath, r)
-				r.CleanedSubtitles++
-			} else {
-				r.CleanedSubtitles++
-			}
+			r.markSubtitleOrphaned(objectKey, localPath, "关联Resource不存在", track.ID, dryRun)
 			continue
 		}
 
 		// Resource 已被软删除
 		if resource.DeletedAt.Valid {
-			r.Items = append(r.Items, CleanupItem{
-				Type:   "subtitle",
-				Path:   objectKey,
-				Reason: "关联Resource已软删除",
-			})
-			if !dryRun {
-				global.Mysql.Unscoped().Delete(&model.SubtitleTrack{}, track.ID)
-				deleteOrphanedSubtitleFile(objectKey, localPath, r)
-				r.CleanedSubtitles++
-			} else {
-				r.CleanedSubtitles++
-			}
+			r.markSubtitleOrphaned(objectKey, localPath, "关联Resource已软删除", track.ID, dryRun)
 			continue
 		}
 
 		// 检查关联的 Video 是否存在
 		var video model.Video
 		if err := global.Mysql.Unscoped().Where("id = ?", resource.Vid).First(&video).Error; err != nil || video.ID == 0 {
-			r.Items = append(r.Items, CleanupItem{
-				Type:   "subtitle",
-				Path:   objectKey,
-				Reason: "关联Video不存在",
-			})
-			if !dryRun {
-				global.Mysql.Unscoped().Delete(&model.SubtitleTrack{}, track.ID)
-				deleteOrphanedSubtitleFile(objectKey, localPath, r)
-				r.CleanedSubtitles++
-			} else {
-				r.CleanedSubtitles++
-			}
+			r.markSubtitleOrphaned(objectKey, localPath, "关联Video不存在", track.ID, dryRun)
 			continue
 		}
 
 		// Video 已被软删除
 		if video.DeletedAt.Valid {
-			r.Items = append(r.Items, CleanupItem{
-				Type:   "subtitle",
-				Path:   objectKey,
-				Reason: "关联Video已软删除",
-			})
-			if !dryRun {
-				global.Mysql.Unscoped().Delete(&model.SubtitleTrack{}, track.ID)
-				deleteOrphanedSubtitleFile(objectKey, localPath, r)
-				r.CleanedSubtitles++
-			} else {
-				r.CleanedSubtitles++
-			}
+			r.markSubtitleOrphaned(objectKey, localPath, "关联Video已软删除", track.ID, dryRun)
 			continue
 		}
 	}
+}
+
+// markSubtitleOrphaned 记录一条孤立字幕并执行清理
+// trackID 为 0 表示 DB 无记录（不执行 DB 删除），>0 则同时清理 SubtitleTrack
+func (r *CleanupResult) markSubtitleOrphaned(objectKey, localPath, reason string, trackID uint, dryRun bool) {
+	r.Items = append(r.Items, CleanupItem{
+		Type:   "subtitle",
+		Path:   objectKey,
+		Reason: reason,
+	})
+	if !dryRun {
+		if trackID > 0 {
+			global.Mysql.Unscoped().Delete(&model.SubtitleTrack{}, trackID)
+		}
+		deleteOrphanedSubtitleFile(objectKey, localPath, r)
+	}
+	r.CleanedSubtitles++
 }
 
 // deleteOrphanedSubtitleFile 删除孤立的字幕文件（本地+OSS）

@@ -186,6 +186,17 @@ func buildMPDSegmentBase(file *model.VideoIndexFile, key string, useBackup ...bo
 	safeVideoURL := xmlEscape(videoURL)
 	safeAudioURL := xmlEscape(audioURL)
 
+	// 备用 OSS 的第二 BaseURL（dash.js 原生多源容灾：下载失败自动轮换）
+	var safeBackupVideoURL, safeBackupAudioURL string
+	if !backup && global.StorageBackup != nil {
+		if bv := global.GetBackupOssUrl("video/" + file.DirName + "/" + file.VideoFile); bv != "" {
+			safeBackupVideoURL = xmlEscape(bv)
+		}
+		if ba := global.GetBackupOssUrl("video/" + file.DirName + "/" + file.AudioFile); ba != "" {
+			safeBackupAudioURL = xmlEscape(ba)
+		}
+	}
+
 	var sb strings.Builder
 	sb.WriteString(`<?xml version="1.0" encoding="UTF-8"?>`)
 	sb.WriteString("\n")
@@ -200,6 +211,10 @@ func buildMPDSegmentBase(file *model.VideoIndexFile, key string, useBackup ...bo
 	sb.WriteString("\n")
 	fmt.Fprintf(&sb, `        <BaseURL>%s</BaseURL>`, safeVideoURL)
 	sb.WriteString("\n")
+	if safeBackupVideoURL != "" {
+		fmt.Fprintf(&sb, `        <BaseURL>%s</BaseURL>`, safeBackupVideoURL)
+		sb.WriteString("\n")
+	}
 	fmt.Fprintf(&sb, `        <SegmentBase indexRange="%s">`, file.VideoIndexRange)
 	sb.WriteString("\n")
 	fmt.Fprintf(&sb, `          <Initialization range="%s"/>`, file.VideoInitRange)
@@ -216,6 +231,10 @@ func buildMPDSegmentBase(file *model.VideoIndexFile, key string, useBackup ...bo
 	sb.WriteString("\n")
 	fmt.Fprintf(&sb, `        <BaseURL>%s</BaseURL>`, safeAudioURL)
 	sb.WriteString("\n")
+	if safeBackupAudioURL != "" {
+		fmt.Fprintf(&sb, `        <BaseURL>%s</BaseURL>`, safeBackupAudioURL)
+		sb.WriteString("\n")
+	}
 	if file.AudioIndexRange != "" {
 		fmt.Fprintf(&sb, `        <SegmentBase indexRange="%s">`, file.AudioIndexRange)
 		sb.WriteString("\n")
@@ -255,11 +274,23 @@ func buildMPDSegmentBaseUnified(files []model.VideoIndexFile, key string, useBac
 		videoURL := getMediaFileURLWithBackup(file.DirName, file.VideoFile, key, backup)
 		safeVideoURL := xmlEscape(videoURL)
 
+		// 备用 OSS 的第二 BaseURL（每个 Representation 独立）
+		var safeBackupVideoURL string
+		if !backup && global.StorageBackup != nil {
+			if bv := global.GetBackupOssUrl("video/" + file.DirName + "/" + file.VideoFile); bv != "" {
+				safeBackupVideoURL = xmlEscape(bv)
+			}
+		}
+
 		fmt.Fprintf(&sb, `      <Representation id="%s" bandwidth="%d" width="%d" height="%d" frameRate="%.3f" codecs="%s">`,
 			file.Quality, file.VideoBandwidth, file.Width, file.Height, file.FrameRate, file.VideoCodec)
 		sb.WriteString("\n")
 		fmt.Fprintf(&sb, `        <BaseURL>%s</BaseURL>`, safeVideoURL)
 		sb.WriteString("\n")
+		if safeBackupVideoURL != "" {
+			fmt.Fprintf(&sb, `        <BaseURL>%s</BaseURL>`, safeBackupVideoURL)
+			sb.WriteString("\n")
+		}
 		fmt.Fprintf(&sb, `        <SegmentBase indexRange="%s">`, file.VideoIndexRange)
 		sb.WriteString("\n")
 		fmt.Fprintf(&sb, `          <Initialization range="%s"/>`, file.VideoInitRange)
@@ -274,6 +305,14 @@ func buildMPDSegmentBaseUnified(files []model.VideoIndexFile, key string, useBac
 	audioURL := getMediaFileURLWithBackup(audio.DirName, audio.AudioFile, key, backup)
 	safeAudioURL := xmlEscape(audioURL)
 
+	// 备用 OSS 的第二 BaseURL
+	var safeBackupAudioURL string
+	if !backup && global.StorageBackup != nil {
+		if ba := global.GetBackupOssUrl("video/" + audio.DirName + "/" + audio.AudioFile); ba != "" {
+			safeBackupAudioURL = xmlEscape(ba)
+		}
+	}
+
 	sb.WriteString(`    <AdaptationSet mimeType="audio/mp4" segmentAlignment="true" startWithSAP="1">`)
 	sb.WriteString("\n")
 	fmt.Fprintf(&sb, `      <Representation id="audio" bandwidth="%d" codecs="%s">`,
@@ -281,6 +320,10 @@ func buildMPDSegmentBaseUnified(files []model.VideoIndexFile, key string, useBac
 	sb.WriteString("\n")
 	fmt.Fprintf(&sb, `        <BaseURL>%s</BaseURL>`, safeAudioURL)
 	sb.WriteString("\n")
+	if safeBackupAudioURL != "" {
+		fmt.Fprintf(&sb, `        <BaseURL>%s</BaseURL>`, safeBackupAudioURL)
+		sb.WriteString("\n")
+	}
 	if audio.AudioIndexRange != "" {
 		fmt.Fprintf(&sb, `        <SegmentBase indexRange="%s">`, audio.AudioIndexRange)
 		sb.WriteString("\n")

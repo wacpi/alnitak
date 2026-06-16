@@ -159,14 +159,8 @@ func writeSubtitleVTTFile(objectKey string, vtt []byte) (localPath string, err e
 			utils.ErrorLog("字幕上传到对象存储失败", "subtitle", err.Error())
 			return "", errors.New("上传字幕失败")
 		}
-		// 异步上传到备用OSS（多源容灾）
-		if global.StorageBackup != nil {
-			go func() {
-				if err := global.StorageBackup.PutObjectFromFile(objectKey, localPath); err != nil {
-					utils.ErrorLog("字幕后备OSS上传失败", "subtitle", err.Error())
-				}
-			}()
-		}
+		// 上传到备用 OSS（带重试 + 失败持久化）
+		go UploadToBackupWithRetry(objectKey, localPath, "subtitle")
 	}
 	return localPath, nil
 }

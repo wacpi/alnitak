@@ -131,6 +131,8 @@ func CollectRoutes(r *gin.Engine) *gin.Engine {
 		CollectOnlineRoutes(v1)
 		// 配置相关接口
 		CollectConfigRoutes(v1)
+		// 备用 OSS 重试相关接口
+		CollectBackupRoutes(v1)
 		// PGC相关接口
 		CollectPGCRoutes(v1)
 	}
