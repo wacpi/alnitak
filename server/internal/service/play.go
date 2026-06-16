@@ -14,6 +14,13 @@ import (
 	"interastral-peace.com/alnitak/pkg/playtoken"
 )
 
+// AudioTrackInfo 音轨信息，用于返回给前端
+type AudioTrackInfo struct {
+	Language string `json:"language"`
+	Title    string `json:"title"`
+	IsDefault bool  `json:"isDefault"`
+}
+
 // PlayURLsResult 播放 URL 结果，包含主备音视频直链。
 type PlayURLsResult struct {
 	VideoURL    string `json:"video"`
@@ -21,6 +28,7 @@ type PlayURLsResult struct {
 	Expires     int64  `json:"expires"`
 	BackupVideo string `json:"backupVideo,omitempty"` // 备用 OSS 视频 URL（B站风格多源容灾）
 	BackupAudio string `json:"backupAudio,omitempty"` // 备用 OSS 音频 URL
+	AudioTracks []AudioTrackInfo `json:"audioTracks,omitempty"` // 可用音轨列表
 }
 
 const playGrantTTL = 8 * time.Minute
@@ -47,9 +55,10 @@ func IssuePlayGrantForResource(ctx *gin.Context, resourceShortID string) (token 
 	return tok, time.Now().Add(playGrantTTL).Unix(), nil
 }
 
-// GetPlayURLs 校验 grant 后返回默认清晰度下音视频分离的直链（带 st）。
+// GetPlayURLs 校验 grant 后返回指定清晰度下音视频分离的直链（带 st）。
 // 配置了备用 OSS 时同时返回 backupVideo/backupAudio（B站风格多源容灾）。
-func GetPlayURLs(ctx *gin.Context, resourceShortID, grantToken, quality string) (result PlayURLsResult, err error) {
+// audioLang 可选：指定音轨语言，为空时使用默认音轨。
+func GetPlayURLs(ctx *gin.Context, resourceShortID, grantToken, quality, audioLang string) (result PlayURLsResult, err error) {
 	if err := checkPlayAccess(ctx); err != nil {
 		return result, err
 	}
@@ -114,30 +123,95 @@ func GetPlayURLs(ctx *gin.Context, resourceShortID, grantToken, quality string) 
 	if err != nil {
 		return result, err
 	}
-	aTok, err := playtoken.IssueStreamToken(file.DirName, file.AudioFile, streamSliceTTL)
+	base := publicAPIBase(ctx)
+
+	// ===== 多音轨支持 =====
+	audioFile := file.AudioFile
+	var audioTracks []AudioTrackInfo
+
+	// 查询 AudioTrack 记录（如果存在）
+	var trackRecords []model.AudioTrack
+	global.Mysql.Where("resource_id = ?", res.ID).Find(&trackRecords)
+
+	if len(trackRecords) > 0 {
+		// 填充音轨信息到返回值
+		for _, tr := range trackRecords {
+			audioTracks = append(audioTracks, AudioTrackInfo{
+				Language:  tr.Language,
+				Title:     tr.Title,
+				IsDefault: tr.IsDefault,
+			})
+		}
+		result.AudioTracks = audioTracks
+
+		// 根据 audioLang 参数选择音轨文件
+		if audioLang != "" {
+			found := false
+			for _, tr := range trackRecords {
+				if tr.Language == audioLang {
+					audioFile = tr.AudioFile
+					found = true
+					break
+				}
+			}
+			if !found {
+				// audioLang 不存在时回退默认音轨
+				for _, tr := range trackRecords {
+					if tr.IsDefault {
+						audioFile = tr.AudioFile
+						break
+					}
+				}
+			}
+		} else {
+			// 未指定时使用默认音轨
+			for _, tr := range trackRecords {
+				if tr.IsDefault {
+					audioFile = tr.AudioFile
+					break
+				}
+			}
+		}
+	}
+
+	aTok, err := playtoken.IssueStreamToken(file.DirName, audioFile, streamSliceTTL)
 	if err != nil {
 		return result, err
 	}
-	base := publicAPIBase(ctx)
 
 	dir := file.DirName
-	result = PlayURLsResult{
-		VideoURL: base + "/api/v1/video/stream/" + url.PathEscape(file.VideoFile) + "?st=" + url.QueryEscape(vTok),
-		AudioURL: base + "/api/v1/video/stream/" + url.PathEscape(file.AudioFile) + "?st=" + url.QueryEscape(aTok),
-		Expires:  exp,
-	}
+	result.VideoURL = base + "/api/v1/video/stream/" + url.PathEscape(file.VideoFile) + "?st=" + url.QueryEscape(vTok)
+	result.AudioURL = base + "/api/v1/video/stream/" + url.PathEscape(audioFile) + "?st=" + url.QueryEscape(aTok)
+	result.Expires = exp
 
-	// B站风格：配置了备用 OSS 时附带 backup URL，播放器可在主 URL 不可用时降级到备用 OSS 直连
+	// B站风格：配置了备用 OSS 时附带 backup URL
 	if global.StorageBackup != nil {
 		if bv := global.GetBackupOssUrl("video/" + dir + "/" + file.VideoFile); bv != "" {
 			result.BackupVideo = bv
 		}
-		if ba := global.GetBackupOssUrl("video/" + dir + "/" + file.AudioFile); ba != "" {
+		if ba := global.GetBackupOssUrl("video/" + dir + "/" + audioFile); ba != "" {
 			result.BackupAudio = ba
 		}
 	}
 
 	return result, nil
+}
+
+// GetAudioTracks 查询指定资源的可用音轨列表
+func GetAudioTracks(resourceID uint) ([]AudioTrackInfo, error) {
+	var trackRecords []model.AudioTrack
+	if err := global.Mysql.Where("resource_id = ?", resourceID).Find(&trackRecords).Error; err != nil {
+		return nil, err
+	}
+	tracks := make([]AudioTrackInfo, 0, len(trackRecords))
+	for _, tr := range trackRecords {
+		tracks = append(tracks, AudioTrackInfo{
+			Language:  tr.Language,
+			Title:     tr.Title,
+			IsDefault: tr.IsDefault,
+		})
+	}
+	return tracks, nil
 }
 
 func publicAPIBase(ctx *gin.Context) string {

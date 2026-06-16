@@ -56,6 +56,7 @@ func InitTables() {
 	global.Mysql.AutoMigrate(&model.AuthType{})           // 认证类型配置表
 	global.Mysql.AutoMigrate(&model.UserAuth{})            // 用户认证记录表
 	global.Mysql.AutoMigrate(&model.BackupUploadFailure{}) // 备用OSS上传失败记录表
+	global.Mysql.AutoMigrate(&model.AudioTrack{})          // 音频轨道表（多音轨支持）
 	// 初始化默认认证类型
 	service.InitDefaultAuthTypes()
 

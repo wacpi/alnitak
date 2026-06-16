@@ -228,6 +228,24 @@ func GetImgFile(ctx *gin.Context) {
 	ctx.Redirect(http.StatusFound, redirect)
 }
 
+// GetAudioTracks 获取指定资源的可用音轨列表（多音轨支持）
+// GET /api/v1/audio/tracks/:resourceId
+func GetAudioTracks(ctx *gin.Context) {
+	resourceId, parseErr := service.ParseResourceID(ctx.Param("resourceId"))
+	if parseErr != nil {
+		resp.FailWithMessage(ctx, parseErr.Error())
+		return
+	}
+
+	tracks, err := service.GetAudioTracks(resourceId)
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+
+	resp.OkWithData(ctx, gin.H{"tracks": tracks})
+}
+
 // GetSubtitleFile GET /api/subtitle/:file（file 为 snowflake.vtt，须已在 subtitle_track 中登记；策略与 GetImgFile 一致）
 func GetSubtitleFile(ctx *gin.Context) {
 	file := ctx.Param("file")

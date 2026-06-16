@@ -200,14 +200,22 @@ func (s *SharedTask) DoOrWait(ctx context.Context, taskFn func() error) error {
 func (s *TranscodeService) ProcessVideo(ctx context.Context, info *dto.TranscodingInfo) {
 	targets := getTranscodingTarget(info)
 	s.initResourceProgress(info.VideoID, info.ResourceID, targets)
+	defer s.clearProgress(info.ResourceID)
 
-	utils.InfoLog(fmt.Sprintf("【转码开始】VideoID=%d, ResourceID=%d, 目标数量=%d", info.VideoID, info.ResourceID, len(targets)), "transcoding")
+	utils.InfoLog(fmt.Sprintf("【转码开始】VideoID=%d, ResourceID=%d, 目标数量=%d, 音轨数=%d", info.VideoID, info.ResourceID, len(targets), len(info.AudioStreams)), "transcoding")
+
+	// 【多音轨】每个音轨对应一个 SharedTask（确保每条音轨只编一次，跨 quality goroutine 共享）
+	audioTrackTasks := make([]*SharedTask, len(info.AudioStreams))
+	for i := range audioTrackTasks {
+		audioTrackTasks[i] = NewSharedTask()
+	}
+	// 无多音轨探测时，回退单音轨模式
+	singleAudioTask := NewSharedTask()
 
 	var wg sync.WaitGroup
 	var successCount atomic.Int32
-	audioTask := NewSharedTask()
 
-	// 1. 并发处理所有分片
+	// 1. 并发处理所有画质分片
 	for _, target := range targets {
 		wg.Add(1)
 		go func(t TranscodingTarget) {
@@ -220,7 +228,7 @@ func (s *TranscodeService) ProcessVideo(ctx context.Context, info *dto.Transcodi
 				}
 			}()
 
-			if err := s.processSingleQuality(ctx, info, t, audioTask); err != nil {
+			if err := s.processSingleQuality(ctx, info, t, audioTrackTasks, singleAudioTask); err != nil {
 				utils.ErrorLog(fmt.Sprintf("【转码处理失败】%s", err.Error()), "transcoding", "")
 				return
 			}
@@ -230,6 +238,11 @@ func (s *TranscodeService) ProcessVideo(ctx context.Context, info *dto.Transcodi
 
 	wg.Wait()
 	utils.InfoLog(fmt.Sprintf("【所有分段转码完成】成功=%d, 总数=%d", successCount.Load(), len(targets)), "transcoding")
+
+	// 1.5 多音轨落库（在所有 quality 完成后执行一次）
+	if len(info.AudioStreams) > 0 {
+		_ = s.saveAudioTrackRecords(ctx, info)
+	}
 
 	// 2. 失败拦截与处理
 	if successCount.Load() == 0 {
@@ -242,7 +255,6 @@ func (s *TranscodeService) ProcessVideo(ctx context.Context, info *dto.Transcodi
 	if global.Config.Storage.OssType != "local" {
 		if err := s.uploadToOSS(ctx, info); err != nil {
 			utils.ErrorLog("【OSS上传流程失败】", "transcoding", err.Error())
-			// 转码成功但上传失败 → 标记 UPLOAD_FAILED（保留产物，可重试上传）
 			s.markUploadFailed(ctx, info)
 			return
 		}
@@ -264,11 +276,11 @@ func (s *TranscodeService) ProcessVideo(ctx context.Context, info *dto.Transcodi
 }
 
 func (s *TranscodeService) processSingleQuality(
-	ctx context.Context, info *dto.TranscodingInfo, t TranscodingTarget, audioTask *SharedTask,
+	ctx context.Context, info *dto.TranscodingInfo, t TranscodingTarget,
+	audioTrackTasks []*SharedTask, singleAudioTask *SharedTask,
 ) error {
 	qualityName := t.Resolution + "_" + t.BitrateRate + "_" + t.FpsName
 	videoFile := info.OutputDir + qualityName + "_video.m4s"
-	audioFile := info.OutputDir + "audio.m4s"
 
 	s.semaphore <- struct{}{}
 	defer func() { <-s.semaphore }()
@@ -292,18 +304,50 @@ func (s *TranscodeService) processSingleQuality(
 		return fmt.Errorf("【被取消】%s", qualityName)
 	}
 
-	// 音频同步处理
-		err := audioTask.DoOrWait(subCtx, func() error {
+	// ===== 音频编码（多音轨支持） =====
+	if len(info.AudioStreams) > 0 {
+		// 多音轨模式：每个音轨独立编码，默认音轨失败时整体失败
+		for i, stream := range info.AudioStreams {
+			audioFileName := audioFileNameForTrack(stream.Language)
+			audioFilePath := info.OutputDir + audioFileName
+
+			// 当前帧率用于计算 B 帧偏移（使用首个 quality 的 fps 即可，所有 quality 共享）
+			leadMs := bFramePresentationLeadMs(t.FPS)
+			err := audioTrackTasks[i].DoOrWait(subCtx, func() error {
+				utils.InfoLog(fmt.Sprintf("【编码音频】%s 语言=%s 码率=%dk", audioFileName, stream.Language, stream.BitRate/1000), "transcoding")
+				return encodeAudioTrack(subCtx, info.InputFile, audioFilePath,
+					stream.StreamIndex, stream.BitRate, stream.SampleRate, stream.Channels,
+					info.Duration, leadMs)
+			})
+			if err != nil {
+				if i == 0 {
+					// 默认音轨失败 → 该 quality 失败
+					s.markQualityFailed(info.ResourceID, qualityName)
+					return fmt.Errorf("【默认音轨编码失败】%s: %w", qualityName, err)
+				}
+				// 非默认音轨失败 → 仅记录日志
+				utils.ErrorLog(fmt.Sprintf("【附加音轨编码失败】语言=%s: %s", stream.Language, err.Error()), "transcoding", "")
+			}
+		}
+	} else {
+		// 单音轨回退模式
+		audioFile := info.OutputDir + "audio.m4s"
+		err := singleAudioTask.DoOrWait(subCtx, func() error {
 			utils.InfoLog(fmt.Sprintf("【编码音频】audio.m4s (码率=%dk)", info.AudioBitRate/1000), "transcoding")
 			leadMs := bFramePresentationLeadMs(t.FPS)
 			return encodeAudioOnly(subCtx, info.InputFile, audioFile, info.AudioBitRate, info.AudioSampleRate, info.AudioChannels, info.Duration, leadMs)
 		})
-	if err != nil {
-		s.markQualityFailed(info.ResourceID, qualityName)
-		return fmt.Errorf("【音频等待失败】%s: %w", qualityName, err)
+		if err != nil {
+			s.markQualityFailed(info.ResourceID, qualityName)
+			return fmt.Errorf("【音频编码失败】%s: %w", qualityName, err)
+		}
 	}
 
 	// 解析存储
+	audioFile := info.OutputDir + "audio.m4s"
+	if len(info.AudioStreams) > 0 {
+		audioFile = info.OutputDir + audioFileNameForTrack(info.AudioStreams[0].Language)
+	}
 	if err := s.saveIndexRecord(subCtx, info, qualityName, videoFile, audioFile); err != nil {
 		s.markQualityFailed(info.ResourceID, qualityName)
 		return fmt.Errorf("【索引生成失败】%s: %w", qualityName, err)
@@ -330,8 +374,21 @@ func (s *TranscodeService) encodeVideoWithFallback(
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		// GPU AV1/HEVC → GPU H.264 → CPU H.264 逐级降级
+		if useAv1 || useHevc {
+			utils.InfoLog(fmt.Sprintf("【GPU降级】%s AV1/HEVC→H.264 GPU", qualityName), "transcoding")
+			err = s.runVideoEncodeTask(ctx, info.VideoID, info.ResourceID, info.InputFile, videoFile, t.Resolution, t.BitrateRate, t.FPS, qualityName, info.Duration, true, false, false, cancel)
+			if err == nil {
+				s.recordGPUSuccess()
+				return nil
+			}
+			s.handleGPUFailure()
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+		}
 		utils.InfoLog(fmt.Sprintf("【GPU降级CPU编码】%s", qualityName), "transcoding")
-		return s.runVideoEncodeTask(ctx, info.VideoID, info.ResourceID, info.InputFile, videoFile, t.Resolution, t.BitrateRate, t.FPS, qualityName, info.Duration, false, useAv1, useHevc, cancel)
+		return s.runVideoEncodeTask(ctx, info.VideoID, info.ResourceID, info.InputFile, videoFile, t.Resolution, t.BitrateRate, t.FPS, qualityName, info.Duration, false, false, false, cancel)
 	} else if useGpu && err == nil {
 		s.recordGPUSuccess()
 	}
@@ -513,6 +570,12 @@ func (s *TranscodeService) uploadToOSS(ctx context.Context, info *dto.Transcodin
 				fileName := file.Name()
 				objectKey := "video/" + info.DirName + "/" + fileName
 				filePath := info.OutputDir + fileName
+
+				// 每次上传新文件前检查 context 是否已取消
+				if ctx.Err() != nil {
+					results <- uploadTaskResult{fileName: fileName, objectKey: objectKey, success: false}
+					return
+				}
 
 				var lastErr error
 				for attempt := 0; attempt <= ossUploadMaxRetries; attempt++ {
@@ -1052,6 +1115,128 @@ func encodeAudioOnly(ctx context.Context, inputFile, outputFile string, audioBit
 }
 
 // ==============================================================================
+// 第七部分 B：多音轨辅助函数
+// ==============================================================================
+
+func audioFileNameForTrack(language string) string {
+	if language == "" || language == "und" {
+		return "audio.m4s"
+	}
+	return "audio_" + language + ".m4s"
+}
+
+// encodeAudioTrack 编码指定音轨（通过 streamIndex 选择流），输出唯一文件名。
+func encodeAudioTrack(ctx context.Context, inputFile, outputFile string, streamIndex, audioBitRate, audioSampleRate, audioChannels int, durationSec float64, presentationLeadMs int) error {
+	bitRateStr := fmt.Sprintf("%dk", audioBitRate/1000)
+	sampleRateStr := strconv.Itoa(audioSampleRate)
+	channelsStr := strconv.Itoa(audioChannels)
+
+	adelayArg := adelayPerChannelArg(presentationLeadMs, audioChannels)
+	audioFilter := fmt.Sprintf("[0:a:%d]asetpts=PTS-STARTPTS,aresample=osr=%s", streamIndex, sampleRateStr)
+	if adelayArg != "" {
+		audioFilter += ",adelay=" + adelayArg
+	}
+	audioFilter += "[aout]"
+	audioOutputDur := durationSec
+	if presentationLeadMs > 0 {
+		audioOutputDur += float64(presentationLeadMs) / 1000.0
+	}
+	command := []string{
+		"-i", inputFile,
+		"-filter_complex", audioFilter,
+		"-map", "[aout]", "-vn", "-c:a", "aac", "-b:a", bitRateStr,
+		"-ar", sampleRateStr, "-ac", channelsStr,
+		"-f", "mp4",
+		"-frag_duration", FragDurationUs,
+		"-movflags", "+frag_keyframe+empty_moov+default_base_moof+dash+global_sidx+negative_cts_offsets",
+		"-avoid_negative_ts", "make_zero",
+	}
+	if dur := ffmpegOutputDurationArgs(audioOutputDur); dur != nil {
+		command = append(command, dur...)
+	}
+	command = append(command, "-y", outputFile)
+	cmd := exec.CommandContext(ctx, "ffmpeg", command...)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("音轨%d编码失败: %s, stderr: %s", streamIndex, err.Error(), stderr.String())
+	}
+	return nil
+}
+
+// saveAudioTrackRecords 保存所有音轨记录到 audio_track 表。
+// 默认音轨（第一条）同时写入 VideoIndexFile 的音频字段（向后兼容）。
+func (s *TranscodeService) saveAudioTrackRecords(ctx context.Context, info *dto.TranscodingInfo) error {
+	if len(info.AudioStreams) == 0 {
+		return nil
+	}
+
+	for i, stream := range info.AudioStreams {
+		audioFile := audioFileNameForTrack(stream.Language)
+		audioFilePath := info.OutputDir + audioFile
+
+		aInit, aIndex, err := getMP4InitRange(audioFilePath)
+		if err != nil {
+			utils.ErrorLog(fmt.Sprintf("【音轨索引解析失败】语言=%s: %s", stream.Language, err.Error()), "transcoding", "")
+			continue
+		}
+
+		title := languageToTitle(stream.Language)
+		track := model.AudioTrack{
+			ResourceID:  info.ResourceID,
+			DirName:     info.DirName,
+			Language:    stream.Language,
+			Title:       title,
+			TrackIndex:  stream.StreamIndex,
+			IsDefault:   i == 0,
+			Channels:    stream.Channels,
+			AudioFile:   audioFile,
+			Codec:       DefaultAudioCodec,
+			Bandwidth:   stream.BitRate,
+			SampleRate:  stream.SampleRate,
+			InitRange:   aInit,
+			IndexRange:  aIndex,
+		}
+
+		if err := s.db.WithContext(ctx).Where("resource_id = ? AND language = ?", info.ResourceID, stream.Language).
+			FirstOrCreate(&track).Error; err != nil {
+			utils.ErrorLog(fmt.Sprintf("【音轨记录保存失败】语言=%s: %s", stream.Language, err.Error()), "transcoding", "")
+		}
+	}
+	return nil
+}
+
+// languageToTitle 将 ISO 639-2 语言代码转为可读标题
+func languageToTitle(lang string) string {
+	switch lang {
+	case "jpn":
+		return "日语"
+	case "eng":
+		return "英语"
+	case "kor":
+		return "韩语"
+	case "chi", "zho":
+		return "中文"
+	case "fre", "fra":
+		return "法语"
+	case "ger", "deu":
+		return "德语"
+	case "spa":
+		return "西班牙语"
+	case "rus":
+		return "俄语"
+	case "tha":
+		return "泰语"
+	case "vie":
+		return "越南语"
+	case "und":
+		return "未知"
+	default:
+		return lang
+	}
+}
+
+// ==============================================================================
 // 第八部分：辅助工具函数 (纯函数)
 // ==============================================================================
 
@@ -1214,12 +1399,16 @@ func ProcessVideoInfo(input string) (*dto.TranscodingInfo, error) {
 		return &ti, err
 	}
 
-	var videoStream, audioStream *global.Streams
+	var videoStream *global.Streams
+	audioStreams := make([]global.Streams, 0)
 	for i := range videoData.Stream {
-		if videoData.Stream[i].CodecType == "video" && videoStream == nil {
-			videoStream = &videoData.Stream[i]
-		} else if videoData.Stream[i].CodecType == "audio" && audioStream == nil {
-			audioStream = &videoData.Stream[i]
+		switch videoData.Stream[i].CodecType {
+		case "video":
+			if videoStream == nil {
+				videoStream = &videoData.Stream[i]
+			}
+		case "audio":
+			audioStreams = append(audioStreams, videoData.Stream[i])
 		}
 	}
 	if videoStream == nil && len(videoData.Stream) > 0 {
@@ -1233,7 +1422,13 @@ func ProcessVideoInfo(input string) (*dto.TranscodingInfo, error) {
 	ti.Height = videoStream.Height
 	ti.CodecName = videoStream.CodecName
 
-	ti.Duration = minEncodeDurationSeconds(videoData.Format.Duration, videoStream, audioStream)
+	// 【多音轨】取第一个音轨作为默认音频参数（向后兼容）
+	var primaryAudio *global.Streams
+	if len(audioStreams) > 0 {
+		primaryAudio = &audioStreams[0]
+	}
+
+	ti.Duration = minEncodeDurationSeconds(videoData.Format.Duration, videoStream, primaryAudio)
 	if ti.Duration <= 0 {
 		durStr := videoStream.Duration
 		if durStr == "" {
@@ -1248,14 +1443,33 @@ func ProcessVideoInfo(input string) (*dto.TranscodingInfo, error) {
 		ti.VideoBitRate = br
 	}
 
-	if audioStream != nil {
-		if sr, err := strconv.Atoi(audioStream.SampleRate); err == nil && sr > 0 {
+	// 【多音轨】填充所有音频流
+	ti.AudioStreams = make([]dto.AudioStreamProbe, 0, len(audioStreams))
+	for idx, a := range audioStreams {
+		lang := a.Tags.Language
+		if lang == "" {
+			lang = "und"
+		}
+		sr, _ := strconv.Atoi(a.SampleRate)
+		br, _ := strconv.Atoi(a.BitRate)
+		ti.AudioStreams = append(ti.AudioStreams, dto.AudioStreamProbe{
+			StreamIndex: idx,
+			Language:    lang,
+			SampleRate:  sr,
+			Channels:    a.Channels,
+			BitRate:     br,
+		})
+	}
+
+	// 默认音频参数仍取第一个音轨（向后兼容）
+	if primaryAudio != nil {
+		if sr, err := strconv.Atoi(primaryAudio.SampleRate); err == nil && sr > 0 {
 			ti.AudioSampleRate = sr
 		}
-		if audioStream.Channels > 0 {
-			ti.AudioChannels = audioStream.Channels
+		if primaryAudio.Channels > 0 {
+			ti.AudioChannels = primaryAudio.Channels
 		}
-		if br, err := strconv.Atoi(audioStream.BitRate); err == nil && br > 0 {
+		if br, err := strconv.Atoi(primaryAudio.BitRate); err == nil && br > 0 {
 			ti.AudioBitRate = br
 		}
 	}
