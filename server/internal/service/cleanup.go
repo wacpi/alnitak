@@ -13,7 +13,7 @@ import (
 
 // CleanupItem 待清理项目
 type CleanupItem struct {
-	Type   string `json:"type"`   // video, image
+	Type   string `json:"type"`   // video, image, subtitle
 	Path   string `json:"path"`   // 本地路径或文件名
 	Reason string `json:"reason"` // 清理原因
 }
@@ -22,6 +22,7 @@ type CleanupItem struct {
 type CleanupResult struct {
 	CleanedVideoDirs  int           `json:"cleanedVideoDirs"`
 	CleanedImages     int           `json:"cleanedImages"`
+	CleanedSubtitles  int           `json:"cleanedSubtitles"`
 	CleanedVideoFiles int           `json:"cleanedVideoFiles"`
 	CleanedIndexFiles int           `json:"cleanedIndexFiles"`
 	CleanedImageFiles int           `json:"cleanedImageFiles"`
@@ -45,6 +46,9 @@ func CleanupOrphanedResources(dryRun bool) CleanupResult {
 
 	// 2. 清理孤立的图片文件
 	result.cleanOrphanedImages(dryRun)
+
+	// 3. 清理孤立的字幕文件
+	result.cleanOrphanedSubtitles(dryRun)
 
 	return result
 }
@@ -399,6 +403,33 @@ func isImageReferenced(imageUrl string) bool {
 		return true
 	}
 
+	// 检查PGCMedia.cover（包括30天内软删除的）
+	var pgcMediaCount int64
+	global.Mysql.Unscoped().Model(&model.PGCMedia{}).
+		Where("cover = ? AND (deleted_at IS NULL OR deleted_at > ?)", imageUrl, expireTime).
+		Count(&pgcMediaCount)
+	if pgcMediaCount > 0 {
+		return true
+	}
+
+	// 检查PGCContent.cover（包括30天内软删除的）
+	var pgcContentCount int64
+	global.Mysql.Unscoped().Model(&model.PGCContent{}).
+		Where("cover = ? AND (deleted_at IS NULL OR deleted_at > ?)", imageUrl, expireTime).
+		Count(&pgcContentCount)
+	if pgcContentCount > 0 {
+		return true
+	}
+
+	// 检查Collection.cover（收藏夹会软删除，给30天宽限期）
+	var collectionCount int64
+	global.Mysql.Unscoped().Model(&model.Collection{}).
+		Where("cover = ? AND (deleted_at IS NULL OR deleted_at > ?)", imageUrl, expireTime).
+		Count(&collectionCount)
+	if collectionCount > 0 {
+		return true
+	}
+
 	return false
 }
 
@@ -444,6 +475,162 @@ func deleteVideoFromOSS(localDir string, errors *[]string) {
 		}
 		return nil
 	})
+}
+
+// cleanOrphanedSubtitles 清理孤立的字幕文件
+// 清理条件：
+// 1. 本地字幕文件对应的 SubtitleTrack 记录不存在或被软删除
+// 2. SubtitleTrack 指向的 Resource 或 Video 已被删除（物理或软删除）
+func (r *CleanupResult) cleanOrphanedSubtitles(dryRun bool) {
+	subtitleDir := "./upload/subtitle"
+	if !utils.IsFileExists(subtitleDir) {
+		return
+	}
+
+	entries, err := os.ReadDir(subtitleDir)
+	if err != nil {
+		r.Errors = append(r.Errors, "读取字幕目录失败: "+err.Error())
+		return
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		fileName := entry.Name()
+		if !strings.HasSuffix(strings.ToLower(fileName), ".vtt") {
+			continue
+		}
+
+		objectKey := "subtitle/" + fileName
+		localPath := filepath.Join(subtitleDir, fileName)
+
+		// 检查 SubtitleTrack 表是否有对应记录
+		var track model.SubtitleTrack
+		if err := global.Mysql.Unscoped().Where("object_key = ?", objectKey).First(&track).Error; err != nil || track.ID == 0 {
+			r.Items = append(r.Items, CleanupItem{
+				Type:   "subtitle",
+				Path:   objectKey,
+				Reason: "SubtitleTrack记录不存在",
+			})
+			if !dryRun {
+				deleteOrphanedSubtitleFile(objectKey, localPath, r)
+				r.CleanedSubtitles++
+			} else {
+				r.CleanedSubtitles++
+			}
+			continue
+		}
+
+		// 记录存在但已被软删除
+		if track.DeletedAt.Valid {
+			r.Items = append(r.Items, CleanupItem{
+				Type:   "subtitle",
+				Path:   objectKey,
+				Reason: "SubtitleTrack已软删除",
+			})
+			if !dryRun {
+				global.Mysql.Unscoped().Delete(&model.SubtitleTrack{}, track.ID)
+				deleteOrphanedSubtitleFile(objectKey, localPath, r)
+				r.CleanedSubtitles++
+			} else {
+				r.CleanedSubtitles++
+			}
+			continue
+		}
+
+		// 检查关联的 Resource 是否存在
+		var resource model.Resource
+		if err := global.Mysql.Unscoped().Where("short_id = ?", track.ResourceShortID).First(&resource).Error; err != nil || resource.ID == 0 {
+			r.Items = append(r.Items, CleanupItem{
+				Type:   "subtitle",
+				Path:   objectKey,
+				Reason: "关联Resource不存在",
+			})
+			if !dryRun {
+				global.Mysql.Unscoped().Delete(&model.SubtitleTrack{}, track.ID)
+				deleteOrphanedSubtitleFile(objectKey, localPath, r)
+				r.CleanedSubtitles++
+			} else {
+				r.CleanedSubtitles++
+			}
+			continue
+		}
+
+		// Resource 已被软删除
+		if resource.DeletedAt.Valid {
+			r.Items = append(r.Items, CleanupItem{
+				Type:   "subtitle",
+				Path:   objectKey,
+				Reason: "关联Resource已软删除",
+			})
+			if !dryRun {
+				global.Mysql.Unscoped().Delete(&model.SubtitleTrack{}, track.ID)
+				deleteOrphanedSubtitleFile(objectKey, localPath, r)
+				r.CleanedSubtitles++
+			} else {
+				r.CleanedSubtitles++
+			}
+			continue
+		}
+
+		// 检查关联的 Video 是否存在
+		var video model.Video
+		if err := global.Mysql.Unscoped().Where("id = ?", resource.Vid).First(&video).Error; err != nil || video.ID == 0 {
+			r.Items = append(r.Items, CleanupItem{
+				Type:   "subtitle",
+				Path:   objectKey,
+				Reason: "关联Video不存在",
+			})
+			if !dryRun {
+				global.Mysql.Unscoped().Delete(&model.SubtitleTrack{}, track.ID)
+				deleteOrphanedSubtitleFile(objectKey, localPath, r)
+				r.CleanedSubtitles++
+			} else {
+				r.CleanedSubtitles++
+			}
+			continue
+		}
+
+		// Video 已被软删除
+		if video.DeletedAt.Valid {
+			r.Items = append(r.Items, CleanupItem{
+				Type:   "subtitle",
+				Path:   objectKey,
+				Reason: "关联Video已软删除",
+			})
+			if !dryRun {
+				global.Mysql.Unscoped().Delete(&model.SubtitleTrack{}, track.ID)
+				deleteOrphanedSubtitleFile(objectKey, localPath, r)
+				r.CleanedSubtitles++
+			} else {
+				r.CleanedSubtitles++
+			}
+			continue
+		}
+	}
+}
+
+// deleteOrphanedSubtitleFile 删除孤立的字幕文件（本地+OSS）
+func deleteOrphanedSubtitleFile(objectKey, localPath string, r *CleanupResult) {
+	// 删除本地文件
+	if err := os.Remove(localPath); err != nil && !os.IsNotExist(err) {
+		r.Errors = append(r.Errors, "删除字幕本地文件失败: "+localPath+" - "+err.Error())
+	}
+
+	// 删除OSS上的文件
+	if global.Config.Storage.OssType != "local" {
+		if err := global.Storage.DeleteObject(objectKey); err != nil {
+			r.Errors = append(r.Errors, "删除OSS字幕文件失败: "+objectKey+" - "+err.Error())
+		}
+		// 同时删除备用OSS
+		if global.StorageBackup != nil {
+			if err := global.StorageBackup.DeleteObject(objectKey); err != nil {
+				r.Errors = append(r.Errors, "删除备用OSS字幕文件失败: "+objectKey+" - "+err.Error())
+			}
+		}
+	}
 }
 
 // GetCleanupPreview 获取清理预览（不执行实际删除）
