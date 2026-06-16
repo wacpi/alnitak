@@ -4,11 +4,20 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
+	"gorm.io/gorm"
 	"interastral-peace.com/alnitak/internal/domain/model"
 	"interastral-peace.com/alnitak/internal/global"
 	"interastral-peace.com/alnitak/utils"
+)
+
+// 并发安全控制：防止 cron 与手动 API 同时执行清理
+var (
+	cleanupMu      sync.Mutex
+	cleanupRunning int32
 )
 
 // CleanupItem 待清理项目
@@ -34,7 +43,18 @@ type CleanupResult struct {
 
 // CleanupOrphanedResources 清理孤立资源
 // dryRun: 如果为true，只返回将要清理的内容，不实际执行删除
+// 并发安全：dryRun 可并行，非 dryRun 互斥（cron + API 不会同时跑）
 func CleanupOrphanedResources(dryRun bool) CleanupResult {
+	if !dryRun {
+		if !atomic.CompareAndSwapInt32(&cleanupRunning, 0, 1) {
+			return CleanupResult{Errors: []string{"清理任务正在进行中"}}
+		}
+		defer atomic.StoreInt32(&cleanupRunning, 0)
+
+		cleanupMu.Lock()
+		defer cleanupMu.Unlock()
+	}
+
 	result := CleanupResult{
 		Errors: make([]string, 0),
 		Items:  make([]CleanupItem, 0),
@@ -235,35 +255,54 @@ func checkSingleIndexFileValidity(indexFile model.VideoIndexFile) string {
 }
 
 // cleanVideoDirDbRecords 清理视频目录相关的数据库记录
+// 所有 DB 写入操作在一个事务内完成，避免崩溃导致数据不一致
 func cleanVideoDirDbRecords(dirName string, r *CleanupResult) {
-	// 先查询 VideoFile，获取其 ID 用于清理引用表
+	// 先查询 VideoFile，获取其 ID 用于清理引用表（只读，在事务外）
 	var videoFile model.VideoFile
 	global.Mysql.Unscoped().Where("dir_name = ?", dirName).First(&videoFile)
 
-	// 先收集 ResourceID（必须在删除 VideoIndexFile 之前）
+	// 先收集 ResourceID（必须在删除 VideoIndexFile 之前，只读，在事务外）
 	var indexFiles []model.VideoIndexFile
 	global.Mysql.Unscoped().Where("dir_name = ?", dirName).Find(&indexFiles)
 
-	// 删除 VideoIndexFile 记录
-	result := global.Mysql.Unscoped().Where("dir_name = ?", dirName).Delete(&model.VideoIndexFile{})
-	r.CleanedIndexFiles += int(result.RowsAffected)
+	// 在事务内执行所有 DELETE
+	var (
+		cleanedIndexFiles int64
+		cleanedVideoFiles int64
+		cleanedResources  int64
+	)
+	err := global.Mysql.Transaction(func(tx *gorm.DB) error {
+		// 删除 VideoIndexFile 记录
+		result := tx.Unscoped().Where("dir_name = ?", dirName).Delete(&model.VideoIndexFile{})
+		cleanedIndexFiles = result.RowsAffected
 
-	// 清理 VideoFileRef 引用记录（全局去重模式）
-	if videoFile.ID != 0 {
-		global.Mysql.Unscoped().Where("file_id = ?", videoFile.ID).Delete(&model.VideoFileRef{})
-	}
-
-	// 删除 VideoFile 记录
-	result = global.Mysql.Unscoped().Where("dir_name = ?", dirName).Delete(&model.VideoFile{})
-	r.CleanedVideoFiles += int(result.RowsAffected)
-
-	// 删除相关的 Resource 记录（使用之前收集的 ResourceID）
-	for _, indexFile := range indexFiles {
-		if indexFile.ResourceID > 0 {
-			result = global.Mysql.Unscoped().Where("id = ?", indexFile.ResourceID).Delete(&model.Resource{})
-			r.CleanedResources += int(result.RowsAffected)
+		// 清理 VideoFileRef 引用记录（全局去重模式）
+		if videoFile.ID != 0 {
+			tx.Unscoped().Where("file_id = ?", videoFile.ID).Delete(&model.VideoFileRef{})
 		}
+
+		// 删除 VideoFile 记录
+		result = tx.Unscoped().Where("dir_name = ?", dirName).Delete(&model.VideoFile{})
+		cleanedVideoFiles = result.RowsAffected
+
+		// 删除相关的 Resource 记录
+		for _, indexFile := range indexFiles {
+			if indexFile.ResourceID > 0 {
+				result = tx.Unscoped().Where("id = ?", indexFile.ResourceID).Delete(&model.Resource{})
+				cleanedResources += result.RowsAffected
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		r.Errors = append(r.Errors, "事务清理数据库记录失败: "+dirName+" - "+err.Error())
+		return
 	}
+
+	r.CleanedIndexFiles += int(cleanedIndexFiles)
+	r.CleanedVideoFiles += int(cleanedVideoFiles)
+	r.CleanedResources += int(cleanedResources)
 }
 
 // cleanOrphanedImages 清理孤立的图片文件

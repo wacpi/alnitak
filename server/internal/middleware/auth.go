@@ -33,8 +33,8 @@ func Auth() gin.HandlerFunc {
 		// 验证并解析token
 		_, claims, err := jwt_parse.ParseToken(tokenString)
 		if err != nil {
-			// accessToken 过期
-			if errors.Is(err, jwt.ErrTokenExpired) && claims.TokenType == 0 {
+			// accessToken 过期（claims 非 nil 时才判断类型，防御性 nil 检查）
+			if claims != nil && errors.Is(err, jwt.ErrTokenExpired) && claims.TokenType == 0 {
 				if ctx.FullPath() == "/api/v1/token/update" {
 					ctx.Next()
 					return
@@ -53,6 +53,7 @@ func Auth() gin.HandlerFunc {
 		}
 
 		// 验证token存在 -> 判断token类型
+		// ParseToken 成功时 claims 保证非 nil
 		if claims.TokenType == 0 { // accessToken
 			user, _ := service.FindUserById(claims.UserId)
 
@@ -90,7 +91,7 @@ func OptionalAuth() gin.HandlerFunc {
 		}
 		tokenString = trimBearer(tokenString)
 		_, claims, err := jwt_parse.ParseToken(tokenString)
-		if err == nil && claims.TokenType == 0 {
+		if err == nil && claims != nil && claims.TokenType == 0 {
 			ctx.Set("userId", claims.UserId)
 		}
 		ctx.Next()

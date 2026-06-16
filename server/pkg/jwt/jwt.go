@@ -2,6 +2,7 @@ package jwt
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v4"
@@ -67,10 +68,18 @@ func GenerateRefreshToken(id uint) (string, error) {
  * return: *Claims token的负载结构体
  * return: error 解析token的错误信息
  */
+// trimBearer 移除 Authorization 头中的 "Bearer " 前缀
+func trimBearer(token string) string {
+	if len(token) > 7 && strings.EqualFold(token[:7], "Bearer ") {
+		return token[7:]
+	}
+	return token
+}
+
 func GetTokenClaims(tokenString string) (*Claims, error) {
 	claims := &Claims{}
 	parser := jwt.NewParser()
-	_, _, err := parser.ParseUnverified(tokenString, claims)
+	_, _, err := parser.ParseUnverified(trimBearer(tokenString), claims)
 	return claims, err
 }
 
@@ -81,11 +90,12 @@ func GetTokenClaims(tokenString string) (*Claims, error) {
  * return: error 解析token的错误信息
  */
 func ParseToken(tokenString string) (*jwt.Token, *Claims, error) {
+	tokenString = trimBearer(tokenString)
 	// 获取jwt的荷载数据
 	claims, err := GetTokenClaims(tokenString)
 	if err != nil {
 		utils.ErrorLog("token荷载解析失败", "jwt", err.Error())
-		return nil, claims, err
+		return nil, nil, err
 	}
 
 	// 判断类型 选择不同的密钥
