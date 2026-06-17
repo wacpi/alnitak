@@ -15,3 +15,20 @@ node_modules
 web/admin-client/src/utils/global-config.ts
 web/mobile-client/src/utils/global-config.ts
 web/web-client/src/utils/global-config.ts
+
+# Non-source files (archives, binaries)
+*.7z
+*.zip
+*.rar
+*.exe
+*.dll
+
+# Build artifacts / dev logs
+*.log
+dev-error.txt
+dev-output.txt
+
+# IDE / local config
+.ome/
+.omo/
+~/
