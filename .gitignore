@@ -12,10 +12,6 @@ node_modules
 .claude/
 .cursor/
 
-web/admin-client/src/utils/global-config.ts
-web/mobile-client/src/utils/global-config.ts
-web/web-client/src/utils/global-config.ts
-
 # Non-source files (archives, binaries)
 *.7z
 *.zip
