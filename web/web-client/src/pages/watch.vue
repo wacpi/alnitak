@@ -229,14 +229,30 @@ const handelResize = () => {
   })
 }
 
-// 计算当前分P：rid 优先（不受分P排序影响），否则用 p，最后兜底 1
+// 非历史页进入且有多分P时，查播放历史恢复上次观看的分P
+let historyPartOverride = 0;
+if (videoInfo.value && videoInfo.value.resources.length > 1 && !route.query.rid && !route.query.p && process.client) {
+  try {
+    const res = await getHistoryProgressAPI(videoInfo.value.shortId || videoInfo.value.vid);
+    if (res?.data?.code === 200) {
+      const hp = res.data.data?.part;
+      if (hp && hp > 1 && hp <= videoInfo.value.resources.length) {
+        historyPartOverride = hp;
+      }
+    }
+  } catch { /* 忽略，兜底 P1 */ }
+}
+
+// 计算当前分P：rid 优先（不受分P排序影响），其次 p，其次播放历史，最后兜底 1
 const resolveInitialPart = (): number => {
   if (route.query.rid) {
     const rid = String(route.query.rid);
     const idx = videoInfo.value?.resources.findIndex(r => r.shortId === rid) ?? -1;
     if (idx >= 0) return idx + 1;
   }
-  return Number(route.query.p) || 1;
+  if (route.query.p) return Number(route.query.p);
+  if (historyPartOverride > 1) return historyPartOverride;
+  return 1;
 };
 const currentPart = ref(resolveInitialPart());
 
@@ -384,7 +400,7 @@ const refreshProgressAndDanmaku = async (partNum: number) => {
   const rid = videoInfo.value.resources[partNum - 1]?.shortId;
   try {
     const res = rid
-      ? await getHistoryProgressAPI(vid, undefined, rid)
+      ? await getHistoryProgressAPI(vid, partNum, rid)
       : await getHistoryProgressAPI(vid, partNum);
     const progress = res?.data?.code === 200 ? res.data.data?.progress : null;
     // -1 = 已看完：不做续播（由 onPlayerReady 兜底 seek(0)）；其他 0 或非数字也视为无续播

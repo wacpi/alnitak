@@ -10,7 +10,8 @@ export const getHistoryProgressAPI = (vid: string | number, part?: number, rid?:
   let url = `v1/history/video/getProgress?vid=${vid}`;
   if (rid) {
     url += `&rid=${rid}`;
-  } else if (part) {
+  }
+  if (part) {
     url += `&part=${part}`;
   }
   return request.get(url);

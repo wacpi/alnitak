@@ -307,18 +307,23 @@ const options: PlayerOptionsType = {
           }
         }, true); // capture 阶段先于 Wplayer handler
 
-        // playbackEnded 兜底（SegmentBase 等可能不触发原生 ended）
-        dash.value.on('playbackEnded', () => {
-          if (player && player.setting && player.setting.loop) {
-            dashLoopReplay();
-            return;
-          }
-          if (dashEndedHandled) {
-            dashEndedHandled = false;
-            return;
-          }
-          video.dispatchEvent(new Event('ended'));
-        });
+		// playbackEnded 兜底（SegmentBase 等可能不触发原生 ended）
+		dash.value.on('playbackEnded', () => {
+			if (player && player.setting && player.setting.loop) {
+				dashLoopReplay();
+				return;
+			}
+			if (dashEndedHandled) {
+				dashEndedHandled = false;
+				return;
+			}
+			video.dispatchEvent(new Event('ended'));
+
+			// 非循环模式：seek(0) 重置 dash.js MediaSource（ended → open），
+			// 否则用户首次点击播放时 native video.play() 在 ended 状态下不工作，
+			// 表现为需要点击两次才能重播
+			dash.value.seek(0);
+		});
 
         video.addEventListener('timeupdate', () => {
           if (player?.setting?.loop || hasEnded.value || dashEndedFallbackTicking) return;
