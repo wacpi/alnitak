@@ -324,18 +324,6 @@ export function setVideoSubtitleTracksFromConfig(
   }
 }
 
-/** @deprecated 优先用 `fetchAndApplySubtitles`；本函数为异步以支持 OSS 字幕 fetch→blob */
-export async function setVideoSubtitleTracks(
-  video: HTMLVideoElement | null | undefined,
-  tracks: SubtitleTrackItemType[],
-): Promise<void> {
-  revokeSubtitleObjectUrls();
-  const blobs: string[] = [];
-  const config = await hydrateTracksToWPlayerConfig(tracks, blobs);
-  pendingSubtitleObjectUrls.push(...blobs);
-  setVideoSubtitleTracksFromConfig(video, config);
-}
-
 export type WPlayerSubtitleHost = {
   updateSubtitles?: (config: WPlayerSubtitleConfigItem[] | WPlayerSubtitleConfigItem) => void;
   subtitle?: { updateSubtitleConfig?: (c: WPlayerSubtitleConfigItem[] | WPlayerSubtitleConfigItem) => void };
