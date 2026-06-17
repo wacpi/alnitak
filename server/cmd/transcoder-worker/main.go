@@ -15,7 +15,6 @@ import (
 	"go.uber.org/zap"
 
 	"interastral-peace.com/alnitak/internal/config"
-	"interastral-peace.com/alnitak/internal/global"
 	"interastral-peace.com/alnitak/internal/worker"
 	"interastral-peace.com/alnitak/pkg/logger"
 )
@@ -43,7 +42,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "FATAL: 配置解析失败: %v\n", err)
 		panic("配置解析失败: " + err.Error())
 	}
-	global.Config = cfg
 
 	// 解析并发数：优先 CLI 传入的 --concurrency，否则从配置文件读取
 	if *concurrency <= 0 {
@@ -55,7 +53,7 @@ func main() {
 	}
 
 	// 初始化日志
-	logger.InitLogger()
+	logger.InitLogger(cfg)
 	zap.L().Info("transcoder-worker starting",
 		zap.String("env", *env),
 		zap.Int("concurrency", *concurrency),

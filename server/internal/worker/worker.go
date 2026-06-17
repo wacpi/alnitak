@@ -70,6 +70,8 @@ type Worker struct {
 	cancelSub     *redis.PubSub
 	sem           chan struct{}
 	encodingSem   chan struct{} // 画质编码并发限制
+	nvencSem      chan struct{} // 全局 NVENC 硬件上限 (cap=8, GeForce 驱动限制)
+	cpuSem        chan struct{} // CPU fallback 保护 (cap=2, 防线程打满)
 	workDir       string       // 临时文件工作目录，默认 os.TempDir()
 
 	mu           sync.RWMutex
@@ -128,6 +130,10 @@ func NewWorker(cfg *config.Config, workerID string, concurrency int) (*Worker, e
 	if encConcurrency > 0 {
 		w.encodingSem = make(chan struct{}, encConcurrency)
 	}
+
+	// 全局 NVENC 上限（GeForce 驱动限制 8 路）和 CPU fallback 保护
+	w.nvencSem = make(chan struct{}, 8)
+	w.cpuSem = make(chan struct{}, 2)
 
 	w.healthy.Store(true)
 	return w, nil
@@ -454,6 +460,23 @@ func (w *Worker) processJob(ctx context.Context, rawJob, msgID string) error {
 		w.mu.Unlock()
 	}()
 
+	// 清理本 resourceID 的历史残留文件 + 退出时清理本次临时文件
+	cleanPattern := filepath.Join(w.workDir, fmt.Sprintf("alnitak_*_%d*", info.ResourceID))
+	defer func() {
+		if leftovers, err := filepath.Glob(cleanPattern); err == nil {
+			for _, f := range leftovers {
+				if removeErr := os.Remove(f); removeErr == nil {
+					zap.L().Debug("Cleaned temp file", zap.String("path", f))
+				}
+			}
+		}
+	}()
+	if oldFiles, err := filepath.Glob(cleanPattern); err == nil {
+		for _, f := range oldFiles {
+			os.Remove(f)
+		}
+	}
+
 	// 1. 下载输入文件
 	statusKey := fmt.Sprintf("%s%d", transcodingStatusPrefix, info.ResourceID)
 	w.writeStatus(statusKey, "processing", 0, "")
@@ -491,6 +514,19 @@ func (w *Worker) processJob(ctx context.Context, rawJob, msgID string) error {
 	)
 	var completed atomic.Int32
 
+	// 2a. 初始化所有画质进度为 0%（排队中的也能看见）
+	progressKey := fmt.Sprintf("%s%d", transcodingStatusPrefix, info.ResourceID)
+	for _, target := range targets {
+		qualityName := target.Resolution + "_" + target.BitrateRate + "_" + target.FpsName
+		progressField := fmt.Sprintf("progress_%s", qualityName)
+		// 只在尚未开始时写入（避免覆盖已完成的进度）
+		exists, _ := w.rdb.HExists(ctx, progressKey, progressField).Result()
+		if !exists {
+			w.rdb.HSet(ctx, progressKey, progressField, "0.00")
+			w.rdb.HSet(ctx, progressKey, fmt.Sprintf("status_%s", qualityName), "waiting")
+		}
+	}
+
 	// 3. 并发编码视频 + 音轨
 	var encWg sync.WaitGroup
 	errCh := make(chan error, totalQualities)
@@ -508,11 +544,15 @@ func (w *Worker) processJob(ctx context.Context, rawJob, msgID string) error {
 				w.encodingSem <- struct{}{}
 				defer func() { <-w.encodingSem }()
 			}
+			// 标记开始编码（从 waiting → processing）
+			w.rdb.HSet(ctx, statusKey, fmt.Sprintf("status_%s", qName), "processing")
 			if err := w.encodeQuality(jobCtx, &info, t, outPath); err != nil {
 				zap.L().Error("Video encode failed", zap.String("quality", qName), zap.Error(err))
+				w.rdb.HSet(ctx, statusKey, fmt.Sprintf("status_%s", qName), "fail")
 				errCh <- fmt.Errorf("%s: %w", qName, err)
 				return
 			}
+			w.rdb.HSet(ctx, statusKey, fmt.Sprintf("status_%s", qName), "success")
 			completed.Add(1)
 			zap.L().Info("Video encode done", zap.String("quality", qName))
 		}(target, videoOutput, qualityName)
@@ -844,8 +884,31 @@ func (w *Worker) encodeQuality(ctx context.Context, info *dto.TranscodingInfo, t
 }
 
 // doEncodeWithFallback 执行编码并处理 GPU AV1→H.265→H.264→CPU 逐级降级。
+// 全局信号量保护：
+//   - nvencSem: 不超过 GeForce 驱动 8 路 NVENC 上限
+//   - cpuSem:   CPU fallback 最多 2 路，防止线程打满
 func (w *Worker) doEncodeWithFallback(ctx context.Context, info *dto.TranscodingInfo, target ffmpeg.TranscodingTarget, outputPath string, useGpu, useAv1, useHevc bool) error {
 	encode := func(gpu, av1, hevc bool) error {
+		// GPU 编码竞争 nvencSem，CPU 编码竞争 cpuSem
+		if gpu {
+			if w.nvencSem != nil {
+				select {
+				case w.nvencSem <- struct{}{}:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+				defer func() { <-w.nvencSem }()
+			}
+		} else {
+			if w.cpuSem != nil {
+				select {
+				case w.cpuSem <- struct{}{}:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+				defer func() { <-w.cpuSem }()
+			}
+		}
 		args := ffmpeg.VideoEncodeArgs(info.InputFile, target.Resolution, target.BitrateRate, target.FPS, info.Duration, gpu, av1, hevc)
 
 		numCPU := runtime.NumCPU()

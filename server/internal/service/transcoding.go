@@ -217,13 +217,18 @@ func getRemoteVideoTranscodingProgress(videoID uint) (float64, []vo.TranscodingP
 				continue
 			}
 			qualityName := strings.TrimPrefix(key, "progress_")
+			// 读取画质独立状态（success/failed），没有则沿用整体状态
+			qStatus := status
+			if s, ok := statusMap["status_"+qualityName]; ok {
+				qStatus = s
+			}
 			var pct float64
 			fmt.Sscanf(val, "%f", &pct)
 			details = append(details, vo.TranscodingProgressItem{
 				ResourceID: res.ID,
 				Quality:    qualityName,
 				Progress:   pct,
-				Status:     status,
+				Status:     qStatus,
 			})
 			resProgressSum += pct
 			resProgressCount++

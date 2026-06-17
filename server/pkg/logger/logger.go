@@ -7,20 +7,20 @@ import (
 	"github.com/natefinch/lumberjack"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"interastral-peace.com/alnitak/internal/global"
+	"interastral-peace.com/alnitak/internal/config"
 )
 
 // InitLogger 初始化全局日志。配置项：
 //
-//	mode: dev 同时输出到文件和控制台；prod 只输出到文件。
+//	mode: dev 同时输出到文件和控制台；prod 只输出到文件（ERROR+ 额外到 stderr）。
 //	level: debug/info/warn/error，默认 info。
-func InitLogger() (err error) {
-	mode := global.Config.Log.Mode
-	filename := global.Config.Log.FileName
-	maxSize := global.Config.Log.MaxSize
-	maxAge := global.Config.Log.MaxAge
-	maxBackups := global.Config.Log.MaxBackups
-	level := parseLevel(global.Config.Log.Level)
+func InitLogger(cfg *config.Config) (err error) {
+	mode := cfg.Log.Mode
+	filename := cfg.Log.FileName
+	maxSize := cfg.Log.MaxSize
+	maxAge := cfg.Log.MaxAge
+	maxBackups := cfg.Log.MaxBackups
+	level := parseLevel(cfg.Log.Level)
 
 	writeSyncer := zapcore.AddSync(&lumberjack.Logger{
 		Filename:   filename,

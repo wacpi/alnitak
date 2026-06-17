@@ -28,7 +28,7 @@ func main() {
 	// 初始化配置文件
 	initialize.InitConfig(*env)
 	// 初始化日志
-	logger.InitLogger()
+	logger.InitLogger(global.Config)
 	// 初始化滑块验证码生成
 	jigsaw.Jigsaw()
 	// 初始化OSS

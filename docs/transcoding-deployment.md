@@ -2,294 +2,222 @@
 
 ## 概述
 
-转码模块支持两种执行模式：
+支持两种执行模式：
 
 | 模式 | 说明 | 适用场景 |
 |------|------|----------|
-| `local`（默认） | 主进程内直接调用 ffmpeg 转码 | 单机部署、开发环境 |
-| `remote` | 主进程推送任务到 Redis Stream，`transcoder-worker` 消费执行 | 多机集群、GPU 分离、扩缩容 |
+| `local`（默认） | 主进程内调用 ffmpeg 转码 | 单机部署、开发环境 |
+| `remote` | 主进程推任务到 Redis Stream，`transcoder-worker` 消费执行 | GPU 分离、扩缩容 |
 
-两种模式对调用方透明——切换 mode 后 `VideoTransCoding()`、`GetVideoTranscodingProgress()`、`StopTranscodingAndCleanup()` 等接口行为一致。
+切换 mode 后对调用方透明——`VideoTransCoding()`、`GetVideoTranscodingProgress()`、`StopTranscodingAndCleanup()` 等接口行为一致。
 
 ## 架构
-
-### Local 模式
-
-```
-请求 → API → TranscoderService → ffmpeg（本地子进程）
-                                 → OSS（上传产物）
-```
 
 ### Remote 模式
 
 ```
-                         ┌──────────────────┐
-请求 → API → RemoteTranscoder → Redis Stream
-                         │                  │
-                         │     ┌────────────┘
-                         │     ↓
-                         │  transcoder-worker (N 个副本)
-                         │     │
-                         │     ├── 从 OSS 下载源文件
-                         │     ├── ffmpeg 编码
-                         │     ├── 上传产物到 OSS
-                         │     ├── 写状态到 Redis Hash
-                         │     └── 发布完成通知
-                         │
-                   pollProgress（轮询 Redis Hash）
-                         │
-                    completeTransaction（落库）
+请求 → API → RemoteTranscoder → XADD Redis Stream
+                                    │
+                           transcoder-worker (N 个副本)
+                                    │
+                               ┌────┴────┐
+                               │ encoding │ ← encoding_concurrency (cap=3)
+                               │  signal  │     每视频同时跑几个 ffmpeg
+                               └────┬────┘
+                                    │
+                          doEncodeWithFallback
+                          ┌────┐  ┌──────┐
+                          │GPU │  │ CPU  │
+                          └─┬──┘  └──┬───┘
+                       nvencSem  cpuSem
+                        (cap=8)  (cap=2)
+                      驱动上限   防线程打满
 ```
+
+### 三层信号量
+
+| 信号量 | 容量 | 作用 |
+|--------|------|------|
+| `sem` (worker_concurrency) | 可配置 | 整机同时处理几个视频 |
+| `encodingSem` (encoding_concurrency) | 可配置 | 单个视频内同时跑几个 ffmpeg |
+| `nvencSem` | 固定 8 | 全局 NVENC 硬件上限（GeForce 驱动限制），超了排队不降级 |
+| `cpuSem` | 固定 2 | 全局 CPU 降级保护，最多 2 路 |
+
+示例（`worker_concurrency=1, encoding_concurrency=3`，5 画质 + 1 音轨）：
+
+- 3 个画质先拿到 `encodingSem` 跑 ffmpeg，2 个排队
+- 3 个同时抢 `nvencSem`（有空位），全部 NVENC 硬编
+- 完成一个释放 → 排队的拿到 `encodingSem` 接上
+- GPU 炸了降级 CPU → 走 `cpuSem`，最多 2 路 CPU 同时跑
+- 音频不受限，始终并行
 
 ## 前置条件
 
-### Local 模式
+### Remote 模式
 - Go 1.22+
 - ffmpeg + ffprobe 在 PATH 中
-- MySQL
-- OSS（可选，`oss_type=local` 时存本地）
-
-### Remote 模式（额外）
 - Redis 6.2+（Stream + Pub/Sub）
-- Worker 节点可以访问 OSS
-- Worker 节点可以访问 Redis
+- Worker 节点可访问 OSS 和 Redis
 
-## 配置
-
-### 配置项
+## 主服务配置
 
 ```yaml
-# config/application.prod.yaml
-
+# server/conf/application.prod.yaml
 transcoding:
-  # 执行模式：local | remote
-  mode: "local"
-
-  # 编码器
-  use_gpu: false
-  use_h265: false
-  use_av1: false
-
-  # 是否生成 1080p60 档
-  generate_1080p60: false
-
-  # 并发数（CPU/GPU 分别配置）
-  max_cpu_concurrency: 2
-  max_gpu_concurrency: 2
+  mode: remote
+  generate_1080p60: true
+  worker_concurrency: 3        # 主服务用不到，远程 Worker 读自己配置
+  max_queue_depth: 10          # Redis Stream 积压上限
 
 redis:
-  host: "127.0.0.1"
-  port: 6379
-  password: ""
+  host: 10.0.0.1               # 指向共享 Redis
 
-storage:
-  oss_type: "aliyun"        # aliyun / minio / cloudflare / local
-  endpoint: "https://..."
-  bucket: "my-bucket"
+storage:                       # 完整 OSS 配置
+  oss_type: minio
+  endpoint: oss.example.com:9002
+  bucket: alnitak
   key_id: ""
   key_secret: ""
-  region: ""
-  domain: "https://..."
-  upload_mp4_file: false     # 是否保留原文件
-  # 可选：备用 OSS（多源容灾）
-  backup:
-    oss_type: "minio"
-    endpoint: "http://..."
-    bucket: "backup-bucket"
-    key_id: ""
-    key_secret: ""
-    app_id: ""
-    region: ""
-    domain: ""
 ```
 
-### 配置说明
+`worker_concurrency` 由 Worker 自己读自己的配置，主服务无需关心。
 
-| 字段 | 默认值 | 说明 |
-|------|--------|------|
-| `mode` | `local` | 切换 remote 前必须部署 worker |
-| `use_gpu` | `false` | GPU 编码，启用后自动选 nvenc |
-| `max_cpu_concurrency` | 2 | CPU 模式下编多少个 quality |
-| `oss_type` | — | `local` 跳过后处理逻辑 |
-| `backup` | nil | 配置后自动异步上传到备用 OSS |
+## Worker 部署
 
-## Local 模式部署
+Worker 使用独立配置文件（从服务端复制后精简），只保留 `log`、`redis`、`storage`、`transcoding` 四段。
 
-```powershell
-# 编译
-cd server
-go build -o alnitak.exe .
-
-# 确认 ffmpeg 可用
-ffmpeg -version
-ffprobe -version
-
-# 运行
-./alnitak.exe
-```
-
-Local 模式不需要额外运维——ffmpeg 在主进程内启动为子进程，转码进度通过共享内存维护，API 直接返回。
-
-## Remote 模式部署
-
-### Step 1：编译
-
-```powershell
-# 主服务
-cd server
-go build -o alnitak.exe .
-
-# Worker
-go build -o transcoder-worker.exe ./cmd/transcoder-worker
-```
-
-### Step 2：主服务配置
+### 配置文件
 
 ```yaml
-transcoding:
-  mode: "remote"
-
+# conf/application.prod.yaml
+log:
+    level: info
+    mode: prod
 redis:
-  host: "10.0.0.1"   # 指向共享 Redis
-  port: 6379
+    host: 10.0.0.1
+    port: 6379
+storage:                       # 与主服务保持一致
+    oss_type: minio
+    endpoint: oss.example.com:9002
+    bucket: alnitak
+    key_id: ""
+    key_secret: ""
+    backup:                    # 可选备用 OSS
+        oss_type: cloudflare
+        endpoint: https://...
+        key_id: ""
+        key_secret: ""
+transcoding:
+    mode: remote
+    generate_1080p60: true
+    worker_concurrency: 1      # 同时处理几个视频
+    encoding_concurrency: 3    # 每视频同时跑几个画质 ffmpeg
+    work_dir: workdir          # 临时文件目录
+    use_gpu: true
+    use_h265: true
 ```
 
-主服务启动后只在必要配置下开启 Redis 连接——client 是 lazy 创建。
-
-### Step 3：Worker 配置
-
-Worker 复用主服务的 `conf/application.prod.yaml`。Worker 启动时从该配置读 `transcoding.*`、`redis.*`、`storage.*` 三个段。
+### 编译
 
 ```powershell
-# 把编译产物和配置部署到 Worker 节点
-transcoder-worker.exe
-  -env prod                  # 加载 conf/application.prod.yaml
-  -concurrency 2             # 最大并发转码数
-  -id "worker-01"            # 标识（默认取 hostname）
-  -health-port 9100          # 健康检查端口
+cd server
+go build -o main.exe .
+go build -o transcoder-worker.exe .\cmd\transcoder-worker
 ```
 
-Worker 支持多副本部署，通过 Redis Stream consumer group 自动负载。
-
-### Step 4：验证连通
+### Windows 服务注册（nssm）
 
 ```powershell
-# Worker 就绪检查
-curl http://worker-01:9100/ready
-# {"status":"ready","health":{"healthy":true,...}}
-
-# Worker 统计
-curl http://worker-01:9100/stats
+nssm install TranscoderWorker "E:\alnitak\worker\bin\transcoder-worker.exe"
+nssm set TranscoderWorker AppDirectory "E:\alnitak\worker"
+nssm set TranscoderWorker AppParameters "--env prod --health-port 9100"
+nssm set TranscoderWorker Start SERVICE_AUTO_START
+nssm start TranscoderWorker
 ```
 
-### Step 5：Redis Stream 监控
+参数说明：
 
-```bash
-# 查看队列积压
-redis-cli XLEN transcoding:queue
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--env` | prod | 加载 `conf/application.{env}.yaml` |
+| `--health-port` | 9100 | 健康检查 HTTP 端口 |
+| `--id` | hostname | Worker 标识 |
 
-# 查看消费者组状态
-redis-cli XINFO GROUP transcoding:queue transcoder
+`--concurrency` 已废弃——并发数从配置文件的 `worker_concurrency` 读取。
 
-# 查看死信队列
-redis-cli XLEN transcoding:deadletter
+### 启动验证
 
-# 查看指定资源转码状态
-redis-cli HGETALL transcoding:status:{resourceID}
+```powershell
+curl http://localhost:9100/ready
+curl http://localhost:9100/stats
 ```
-
-## Worker 健康检查
-
-| 端点 | 说明 |
-|------|------|
-| `GET /health` | 存活检查，总是返回 `{"status":"ok"}` |
-| `GET /ready` | 就绪检查，Redis 连通则返回 `ready` 否则 `503` |
-| `GET /stats` | 运行时状态快照 |
 
 ```json
-// GET /stats
 {
   "healthy": true,
-  "startedAt": "2026-06-17T10:00:00+08:00",
-  "uptime": "3h12m5s",
-  "concurrency": 2,
-  "jobsActive": 1,
-  "jobsTotal": 42,
+  "concurrency": 1,
+  "jobsActive": 0,
+  "jobsTotal": 0,
   "jobsFailed": 0,
-  "groupID": "transcoder-worker-worker-01"
+  "groupID": "transcoder-worker-PC-01"
 }
 ```
 
-## Docker 部署（参考）
+## 健康检查
 
-```dockerfile
-FROM golang:1.22 AS builder
-WORKDIR /app
-COPY . .
-RUN go build -o alnitak ./server
-RUN go build -o transcoder-worker ./server/cmd/transcoder-worker
+| 端点 | 说明 |
+|------|------|
+| `GET /health` | 存活检查，返回 `{"status":"ok"}` |
+| `GET /ready` | 就绪检查，Redis 连通则 200 否则 503 |
+| `GET /stats` | 运行时状态快照 |
 
-FROM ubuntu:22.04
-RUN apt-get update && apt-get install -y ffmpeg
-COPY --from=builder /app/alnitak /
-COPY --from=builder /app/transcoder-worker /
-COPY --from=builder /app/server/conf /conf
+## Redis Stream 监控
+
+```bash
+# 队列积压
+redis-cli XLEN transcoding:queue
+
+# 消费者组状态
+redis-cli XINFO GROUP transcoding:queue transcoder
+
+# 死信队列
+redis-cli XLEN transcoding:deadletter
+
+# 资源转码状态
+redis-cli HGETALL transcoding:status:{resourceID}
 ```
 
-## 扩缩容指南
-
-### 水平扩容（Remote 模式）
-
-启动更多 Worker 副本即可。多个 Worker 共享同一个 Redis consumer group：
+## 多副本部署
 
 ```powershell
 # 节点 A
-transcoder-worker.exe -id "worker-a" -concurrency 2
-
+transcoder-worker.exe --env prod --id "worker-a"
 # 节点 B
-transcoder-worker.exe -id "worker-b" -concurrency 2
+transcoder-worker.exe --env prod --id "worker-b"
 ```
 
-Redis 自动在消费者间分发消息。节点宕机后，pending 消息由存活的 Worker 通过 `recoverPending` 自动重新认领，无需人工干预。
+通过 Redis consumer group 自动分发任务。
 
-### 垂直扩容（GPU 升级）
+## 故障恢复
 
-Worker 节点配置 `use_gpu: true`，主服务不直接感知 Worker 的 GPU 配置，Worker 按自身配置执行编码降级策略：
+- 消费使用 Redis Stream consumer group，`XAck` 确认
+- Worker 崩溃后，未确认消息 5 分钟后被其他 Worker 认领
+- 超过 3 次重试移入 `transcoding:deadletter`
+- 启动时自动恢复 crash 遗留的 pending 消息
+
+## 编码降级策略
 
 ```
 GPU AV1 → GPU H.265 → GPU H.264 → CPU H.264
 ```
 
-## 故障恢复
-
-### 消息投递保障
-
-- 消费使用 Redis Stream consumer group，`XReadGroup` 读取
-- Worker 处理完消息后 `XAck` 确认
-- Worker 崩溃后，未确认消息在 5 分钟后被其他 Worker 认领
-- 超过 3 次重试的消息移入 `transcoding:deadletter` 死信队列
-
-### 死信处理
-
-```bash
-# 查看死信
-redis-cli XLEN transcoding:deadletter
-redis-cli XRANGE transcoding:deadletter - +
-
-# 死信格式
-# 1) originalMsgID - 原始消息 ID
-# 2) reason - 失败原因
-# 3) movedAt - 移入时间戳
-```
-
-### 幂等保证
-
-- `saveIndexRecord` 使用 GORM `FirstOrCreate`，不会重复插入
-- 多音轨记录同样使用 `FirstOrCreate`（`resource_id + language` 唯一约束）
-- 回调处理 `handleRemoteCompletion` 会检查 DB 状态，不会重复处理
+每步降级受信号量保护：
+- GPU 阶段抢 `nvencSem`（8 路上限）
+- CPU 阶段抢 `cpuSem`（2 路上限）
 
 ## 版本记录
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
 | 1.0 | 2026-06-17 | 初始版，支持 local/remote 模式 |
+| 1.1 | 2026-06-17 | 三层信号量架构，独立 Worker 配置 |
