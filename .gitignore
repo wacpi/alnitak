@@ -20,6 +20,7 @@ web/web-client/src/utils/global-config.ts
 *.7z
 *.zip
 *.rar
+*.tgz
 *.exe
 *.dll
 
@@ -27,6 +28,9 @@ web/web-client/src/utils/global-config.ts
 *.log
 dev-error.txt
 dev-output.txt
+
+# Yarn PnP install cache
+.yarn/*.gz
 
 # IDE / local config
 .ome/
