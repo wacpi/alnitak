@@ -84,6 +84,7 @@ const handleScroll = () => {
       getUploadVideo();
     }
   }
+  loading.value = false;
 }
 
 const throttledScroll = throttle(handleScroll, 150);

@@ -35,6 +35,7 @@ import { onMounted, onBeforeUnmount, ref } from 'vue';
 import VideoItem from '@/components/home-video-item/index.vue';
 import { asyncGetHotVideoAPI, getHotVideoAPI, getLatestVideoAPI } from "@/api/video";
 import { getCarouselAPI } from "@/api/carousel";
+import { asyncGetPGCRecommendAPI } from "@/api/pgc";
 import { throttle } from "@/utils/debounce";
 
 useHead({
@@ -64,6 +65,18 @@ if ((data.value as any).code === statusCode.OK) {
 const carouselList = ref<CarouselType[]>([]);
 if (carouselResult.data.code === statusCode.OK && carouselResult.data.data.carousels) {
   carouselList.value = carouselResult.data.data.carousels;
+}
+
+const pgcPage = ref(1);
+const pgcPageSize = 8;
+const pgcList = ref<PGCRecommendItem[]>([]);
+const { data: pgcData } = await asyncGetPGCRecommendAPI({
+  page: pgcPage.value,
+  pageSize: pgcPageSize,
+  scene: 'home',
+});
+if ((pgcData.value as any).code === statusCode.OK) {
+  pgcList.value = (pgcData.value as any).data.list || [];
 }
 
 const noMore = ref(false);

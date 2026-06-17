@@ -37,6 +37,16 @@ const changeMenuFold = (val: boolean) => {
   menuFold.value = val;
 }
 
+// 客户端挂载后同步折叠状态
+onMounted(() => {
+  try {
+    const saved = localStorage.getItem('menu-fold-state');
+    if (saved === 'true') {
+      menuFold.value = true;
+    }
+  } catch {}
+});
+
 // 获取分区
 const size = 10;
 const videoList = ref<VideoType[]>([])

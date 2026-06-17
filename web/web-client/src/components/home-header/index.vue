@@ -143,12 +143,16 @@ const menuFoldCookie = useCookie<boolean>('menu-fold-state', {
   maxAge: 60 * 60 * 24 * 365,
   path: '/',
 });
+const MENU_FOLD_KEY = 'menu-fold-state';
 const menuFold = ref(menuFoldCookie.value);
 
 const foldClick = () => {
   menuFold.value = !menuFold.value;
   menuFoldCookie.value = menuFold.value;
   emits("changeFold", menuFold.value);
+  try {
+    localStorage.setItem(MENU_FOLD_KEY, String(menuFold.value));
+  } catch {}
 }
 
 // 退出登录

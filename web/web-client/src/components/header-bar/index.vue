@@ -13,7 +13,7 @@
     </div>
     <div class="header-right">
       <!-- 用户头像 -->
-      <div v-if="isLoggedIn" class="avatar-box">
+      <div v-if="uiLoggedIn" class="avatar-box">
         <nuxt-link to="/space">
           <common-avatar :url="userInfo?.avatar" :size="40" :iconSize="22"></common-avatar>
         </nuxt-link>
@@ -179,6 +179,7 @@ const handelSearch = () => {
 }
 
 const auth = useAuthStore();
+const uiLoggedIn = computed(() => auth.isLoggedIn);
 const isLoggedIn = computed(() => auth.isLoggedIn);
 const userInfo = computed(() => auth.user);
 

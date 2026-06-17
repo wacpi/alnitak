@@ -26,7 +26,7 @@ dev-error.txt
 dev-output.txt
 
 # Yarn PnP install cache
-.yarn/*.gz
+.yarn/
 
 # IDE / local config
 .ome/
