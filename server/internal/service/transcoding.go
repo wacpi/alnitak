@@ -645,7 +645,14 @@ func (s *TranscodeService) completeTransaction(ctx context.Context, info *dto.Tr
 		tx.Model(&model.Resource{}).Where("vid = ? and status = ?", info.VideoID, global.PROCESSING_FAIL).Count(&failedCount)
 
 		finalVideoStatus := global.WAITING_REVIEW
-		if failedCount == totalCount {
+		if targetStatus == global.PROCESSING_FAIL {
+			// 转码失败：除非视频原本已审核通过（重新转码场景），否则标记为失败
+			if currentVideo.Status == global.AUDIT_APPROVED || info.OriginalVideoStatus == global.AUDIT_APPROVED {
+				finalVideoStatus = global.AUDIT_APPROVED
+			} else {
+				finalVideoStatus = global.PROCESSING_FAIL
+			}
+		} else if failedCount == totalCount {
 			finalVideoStatus = global.PROCESSING_FAIL
 		} else if currentVideo.Status == global.AUDIT_APPROVED || info.OriginalVideoStatus == global.AUDIT_APPROVED {
 			finalVideoStatus = global.AUDIT_APPROVED

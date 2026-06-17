@@ -295,6 +295,8 @@ func UploadVideoCheck(ctx *gin.Context, videoFileReq dto.VideoFileReq) (dto.Vide
 		uploadVideoPath := "./upload/video/" + fileInfo.DirName + "/upload" + suffix
 		if utils.IsFileExists(uploadVideoPath) {
 			// 合并文件存在，前端可以直接调创建接口，不需要重新上传分片
+			// 同时确保 OSS 上有源文件，避免远程 Worker 拉不到
+			uploadMergedVideoToOSS(fileInfo.DirName, suffix, uploadVideoPath)
 			utils.InfoLog(fmt.Sprintf("【秒传检测】hash=%s, Status=%d, 合并文件已存在，返回[-1]", videoFileReq.Hash, fileInfo.Status), "upload")
 			resp.Chunks = []int{-1}
 			return resp, nil
@@ -481,11 +483,26 @@ func UploadVideoMerge(ctx *gin.Context, videoFileReq dto.VideoFileReq) error {
 		return errors.New("文件校验失败")
 	}
 
-	// 6️⃣ 更新最终状态
+	// 6️⃣ 上传合并后的文件到 OSS（非 local 模式），供远程 Worker 拉取转码
+	if global.Config.Storage.OssType != "local" {
+		objectKey := fmt.Sprintf("video/%s/upload%s", fileInfo.DirName, suffix)
+		if err := global.Storage.PutObjectFromFile(objectKey, outputFile); err != nil {
+			utils.ErrorLog("上传视频文件到OSS失败", "upload", err.Error())
+			// 不回滚合并状态：文件已在本地存在，可后续重试上传
+			// 标记为 Merged 但无 OSS 对象，Worker 会报 key not found
+			global.Mysql.Model(&fileInfo).
+				Update("status", model.FileStatusMerged)
+			return errors.New("上传视频文件到OSS失败")
+		}
+		// 上传到备用 OSS（带重试 + 失败持久化）
+		go UploadToBackupWithRetry(objectKey, outputFile, "video")
+	}
+
+	// 7️⃣ 更新最终状态
 	global.Mysql.Model(&fileInfo).
 		Update("status", model.FileStatusMerged)
 
-	// 7️⃣ 删除分片目录
+	// 8️⃣ 删除分片目录
 	_ = os.RemoveAll(chunkDir)
 
 	return nil
@@ -757,4 +774,20 @@ func generateImgFilename(suffix string) string {
 func generateVideoFilename() string {
 	id := global.SnowflakeNode.Generate()
 	return id.String()
+}
+
+// uploadMergedVideoToOSS 确保已合并的本地视频文件已上传到 OSS，
+// 供远程 Worker 拉取转码。上传失败仅记日志，不阻塞业务流程。
+func uploadMergedVideoToOSS(dirName, suffix, localPath string) {
+	if global.Config.Storage.OssType == "local" {
+		return
+	}
+	objectKey := fmt.Sprintf("video/%s/upload%s", dirName, suffix)
+	if err := global.Storage.PutObjectFromFile(objectKey, localPath); err != nil {
+		utils.ErrorLog("上传视频到OSS失败(秒传场景)", "upload",
+			fmt.Sprintf("key=%s, err=%v", objectKey, err))
+		return
+	}
+	utils.InfoLog(fmt.Sprintf("上传视频到OSS成功(秒传场景): key=%s", objectKey), "upload")
+	go UploadToBackupWithRetry(objectKey, localPath, "video")
 }

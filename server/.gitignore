@@ -17,3 +17,5 @@ main
 # Local AI assistant config (do not commit)
 .claude/
 CLAUDE.md
+.omo/
+.ome/
