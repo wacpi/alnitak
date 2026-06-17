@@ -171,12 +171,16 @@ const currentWatchVQuery = computed(() => {
   return String(videoInfo.value?.shortId || videoInfo.value?.vid || '');
 });
 
-const { data } = await asyncGetVideoInfoAPI(videoId);
-if ((data.value as any).code === statusCode.OK) {
-  videoInfo.value = (data.value as any).data.video as VideoType;
-} else {
-  await navigateTo('/404');
-  throw new Error('video not found');
+const { data: videoApiData } = await asyncGetVideoInfoAPI(videoId);
+if (videoApiData.value) {
+  if (videoApiData.value.code === statusCode.OK) {
+    videoInfo.value = videoApiData.value.data.video as VideoType;
+  } else {
+    if (process.client) {
+      await navigateTo('/404');
+    }
+    throw new Error('video not found');
+  }
 }
 
 const loadPGCBinding = async (vid: number | string) => {
@@ -201,10 +205,13 @@ const loadPGCBinding = async (vid: number | string) => {
     pgcPanel.value = { seasons: [], episodes: [], activeSeasonId: '' };
   }
 };
-if (videoInfo.value?.vid) {
-  const vid = videoInfo.value.shortId || videoInfo.value.vid;
-  await loadPGCBinding(vid);
-}
+// PGC 绑定：放在 watch 里客户端执行，避免 SSR 水合不匹配
+watch(videoInfo, (val) => {
+  if (val?.vid && process.client) {
+    const vid = val.shortId || val.vid;
+    loadPGCBinding(vid);
+  }
+}, { immediate: true });
 
 const playerContainerRef = ref<HTMLElement | null>(null)
 const danmakuListHeight = ref(300);
