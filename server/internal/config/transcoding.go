@@ -13,5 +13,6 @@ type Transcoding struct {
 	MaxGpuConcurrency  int    `mapstructure:"max_gpu_concurrency" json:"max_gpu_concurrency" yaml:"max_gpu_concurrency"`
 	WorkerConcurrency  int    `mapstructure:"worker_concurrency" json:"worker_concurrency" yaml:"worker_concurrency"`
 	EncodingConcurrency int   `mapstructure:"encoding_concurrency" json:"encoding_concurrency" yaml:"encoding_concurrency"`
+	MaxQueueDepth       int   `mapstructure:"max_queue_depth" json:"max_queue_depth" yaml:"max_queue_depth"`
 	WorkDir            string `mapstructure:"work_dir" json:"work_dir" yaml:"work_dir"`
 }

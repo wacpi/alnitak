@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 	"interastral-peace.com/alnitak/internal/domain/dto"
 	"interastral-peace.com/alnitak/internal/domain/model"
@@ -91,8 +92,36 @@ func NewRemoteTranscoder() *RemoteTranscoder {
 
 // Enqueue 将转码任务序列化为 JSON 并推入 Redis Stream，
 // 同时启动协程异步轮询进度。
+// 入队前会检查 Worker 容量和队列深度，容量不足时返回错误。
 func (t *RemoteTranscoder) Enqueue(ctx context.Context, info *dto.TranscodingInfo) error {
-	// 从主服务配置填充编码参数，保证 Worker 端与后台设定一致
+	// 1. 检查 Worker 可用容量
+	available, err := getAvailableCapacity(ctx)
+	if err != nil {
+		zap.L().Warn("Failed to check worker capacity, proceeding anyway", zap.Error(err))
+	} else if available <= 0 {
+		zap.L().Warn("All workers busy, rejecting enqueue",
+			zap.Uint("videoID", info.VideoID),
+			zap.Uint("resourceID", info.ResourceID))
+		return fmt.Errorf("all transcoding workers are busy, try again later")
+	}
+
+	// 2. 检查队列深度上限
+	maxDepth := global.Config.Transcoding.MaxQueueDepth
+	if maxDepth > 0 {
+		streamLen, err := t.rdb.XLen(ctx, transcodingQueueStream).Result()
+		if err != nil {
+			zap.L().Warn("Failed to check stream length, proceeding anyway", zap.Error(err))
+		} else if streamLen >= int64(maxDepth) {
+			zap.L().Warn("Transcoding queue full, rejecting enqueue",
+				zap.Int64("streamLen", streamLen),
+				zap.Int("maxDepth", maxDepth),
+				zap.Uint("videoID", info.VideoID),
+				zap.Uint("resourceID", info.ResourceID))
+			return fmt.Errorf("transcoding queue is full (%d/%d)", streamLen, maxDepth)
+		}
+	}
+
+	// 3. 从主服务配置填充编码参数，保证 Worker 端与后台设定一致
 	info.UseGpu = global.Config.Transcoding.UseGpu
 	info.UseH265 = global.Config.Transcoding.UseH265
 	info.UseAv1 = global.Config.Transcoding.UseAv1
@@ -121,6 +150,26 @@ func (t *RemoteTranscoder) Enqueue(ctx context.Context, info *dto.TranscodingInf
 	go t.pollProgress(ctx, info)
 
 	return nil
+}
+
+// getAvailableCapacity 扫描所有 Worker 心跳，计算总剩余容量（Σ 最大并发 - 当前活跃任务数）。
+func getAvailableCapacity(ctx context.Context) (int, error) {
+	workers, err := GetAliveWorkers(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("get alive workers: %w", err)
+	}
+	if len(workers) == 0 {
+		return 0, nil
+	}
+	var total int
+	for _, w := range workers {
+		remaining := w.Concurrency - int(w.JobsActive)
+		if remaining < 0 {
+			remaining = 0
+		}
+		total += remaining
+	}
+	return total, nil
 }
 
 // pollProgress 在后台轮询 Redis Hash 中的转码进度，直至完成或取消。
