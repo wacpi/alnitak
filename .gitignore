@@ -35,3 +35,7 @@ server/**/.trash/
 # AI / IDE local config
 .omo/
 .ome/
+
+# Certificates / keys (security-sensitive)
+server/conf/rustfs_cert
+server/conf/rustfs_key
