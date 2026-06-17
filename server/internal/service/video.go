@@ -1012,9 +1012,9 @@ func applyVideoCategoryFilter(db *gorm.DB, category string) *gorm.DB {
 }
 
 type videoProgressSnapshot struct {
-	Overall      float64
-	Details      []vo.TranscodingProgressItem
-	UploadInfo   *vo.UploadProgressInfo
+	Overall    float64
+	Details    []vo.TranscodingProgressItem
+	UploadInfo *vo.UploadProgressInfo
 }
 
 func isTranscodingStatus(status int) bool {
@@ -1436,7 +1436,7 @@ func GetLatestVideo(ctx *gin.Context, page, pageSize int) []vo.VideoResp {
 	global.Mysql.Model(&model.Video{}).
 		Where("status = ? AND pgc_attached = ?", global.AUDIT_APPROVED, false).
 		Order("created_at DESC").
-		Limit(pageSize).Offset((page - 1) * pageSize).
+		Limit(pageSize).Offset((page-1)*pageSize).
 		Pluck("id", &videoIds)
 
 	videos := make([]vo.VideoResp, 0, len(videoIds))
@@ -1549,7 +1549,7 @@ func SearchVideo(ctx *gin.Context, searchVideoReq dto.SearchVideoReq) []vo.Video
 		q = q.Order("created_at desc").Order("id desc")
 	}
 
-	q.Limit(ps).Offset((page - 1) * ps).Pluck("id", &videoIds)
+	q.Limit(ps).Offset((page-1)*ps).Pluck("id", &videoIds)
 
 	videos := make([]vo.VideoResp, 0, len(videoIds))
 	for _, id := range videoIds {
@@ -1561,7 +1561,6 @@ func SearchVideo(ctx *gin.Context, searchVideoReq dto.SearchVideoReq) []vo.Video
 
 	return videos
 }
-
 
 func CreateVideo(video *model.Video) (uint, error) {
 	if video.ShortID == "" {
@@ -1667,12 +1666,15 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 			continue
 		}
 
-		// 检查源文件是否存在
-		suffix := utils.GetFileSuffix(vf.OriginalName)
-		inputPath := "./upload/video/" + vf.DirName + "/upload" + suffix
-		if _, err := os.Stat(inputPath); os.IsNotExist(err) {
-			utils.ErrorLog("分P原始视频文件不存在，跳过", "transcoding", inputPath)
-			continue
+		// 检查源文件是否存在（远程模式不需要，Worker 会从 OSS 下载）
+		var inputPath string
+		if global.Config.Transcoding.Mode != "remote" {
+			suffix := utils.GetFileSuffix(vf.OriginalName)
+			inputPath = "./upload/video/" + vf.DirName + "/upload" + suffix
+			if _, err := os.Stat(inputPath); os.IsNotExist(err) {
+				utils.ErrorLog("分P原始视频文件不存在，跳过", "transcoding", inputPath)
+				continue
+			}
 		}
 
 		rfInfos = append(rfInfos, resourceFileInfo{resource: resource, vf: vf})
@@ -1729,14 +1731,25 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 
 		for _, rf := range rfInfos {
 			suffix := utils.GetFileSuffix(rf.vf.OriginalName)
-			inputPath := "./upload/video/" + rf.vf.DirName + "/upload" + suffix
 
-			// 探测视频信息
-			info, err := ProcessVideoInfo(inputPath)
-			if err != nil {
-				utils.ErrorLog("读取视频信息失败，跳过", "transcoding",
-					fmt.Sprintf("resourceID=%d, file=%s, err=%v", rf.resource.ID, inputPath, err))
-				continue
+			var info *dto.TranscodingInfo
+			if global.Config.Transcoding.Mode == "remote" {
+				// 远程模式：Worker 会从 OSS 下载并 ffprobe，此处用旧资源元数据
+				info = &dto.TranscodingInfo{
+					CodecName:           rf.resource.CodecName,
+					Duration:            float64(rf.resource.Duration),
+					OriginalVideoStatus: originalVideoStatus,
+				}
+			} else {
+				// 本地模式：ffprobe 探测源文件获取元数据
+				inputPath := "./upload/video/" + rf.vf.DirName + "/upload" + suffix
+				var err error
+				info, err = ProcessVideoInfo(inputPath)
+				if err != nil {
+					utils.ErrorLog("读取视频信息失败，跳过", "transcoding",
+						fmt.Sprintf("resourceID=%d, file=%s, err=%v", rf.resource.ID, inputPath, err))
+					continue
+				}
 			}
 
 			// 复用原资源的 ShortID，确保历史记录/弹幕等绑定到 shortId 的数据不受影响
@@ -1765,7 +1778,7 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 			transcodingInfo := &dto.TranscodingInfo{
 				VideoID:             videoId,
 				ResourceID:          newResource.ID,
-				InputFile:           inputPath,
+				InputFile:           "./upload/video/" + sourceDir + "/upload" + suffix,
 				OutputDir:           "./upload/video/" + sourceDir + "/",
 				DirName:             sourceDir,
 				Suffix:              suffix,

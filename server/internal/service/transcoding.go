@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -168,7 +169,115 @@ func VideoTransCoding(transcodingInfo *dto.TranscodingInfo) {
 func ResetGPUState() { GetTranscoder().ResetGPUState() }
 
 func GetVideoTranscodingProgress(videoID uint) (float64, []vo.TranscodingProgressItem, *vo.UploadProgressInfo) {
+	// 远程模式：从 Redis 读取转码进度
+	if global.Config.Transcoding.Mode == "remote" {
+		return getRemoteVideoTranscodingProgress(videoID)
+	}
+	// 本地模式：从内存读取
 	return GetTranscoder().GetVideoTranscodingProgress(videoID)
+}
+
+// getRemoteVideoTranscodingProgress 从 Redis 读取远程转码进度。
+func getRemoteVideoTranscodingProgress(videoID uint) (float64, []vo.TranscodingProgressItem, *vo.UploadProgressInfo) {
+	var resources []model.Resource
+	global.Mysql.Model(&model.Resource{}).Where("vid = ?", videoID).Find(&resources)
+
+	if len(resources) == 0 {
+		return 0, nil, nil
+	}
+
+	details := make([]vo.TranscodingProgressItem, 0)
+	var totalProgress float64
+	var totalCount int
+	var uploadInfo *vo.UploadProgressInfo
+
+	rdb := global.Redis.RawClient()
+	ctx := context.Background()
+
+	for _, res := range resources {
+		statusKey := fmt.Sprintf("transcoding:status:%d", res.ID)
+		statusMap, err := rdb.HGetAll(ctx, statusKey).Result()
+		if err != nil || len(statusMap) == 0 {
+			continue
+		}
+
+		status := statusMap["status"]
+
+		// 解析总体进度
+		var overall float64
+		if p, ok := statusMap["progress"]; ok {
+			fmt.Sscanf(p, "%f", &overall)
+		}
+
+		// 解析每个画质的进度（progress_{qualityName} 字段）
+		var resProgressSum float64
+		var resProgressCount int
+		for key, val := range statusMap {
+			if !strings.HasPrefix(key, "progress_") {
+				continue
+			}
+			qualityName := strings.TrimPrefix(key, "progress_")
+			var pct float64
+			fmt.Sscanf(val, "%f", &pct)
+			details = append(details, vo.TranscodingProgressItem{
+				ResourceID: res.ID,
+				Quality:    qualityName,
+				Progress:   pct,
+				Status:     status,
+			})
+			resProgressSum += pct
+			resProgressCount++
+		}
+
+		// 整体进度计算：
+		//   编码中 → 画质进度平均值
+		//   上传/完成 → 画质已全部 100%，用 progress 字段（Worker 设为 90/100）
+		if resProgressCount > 0 {
+			if strings.Contains(status, "upload") || status == "completed" || status == "encoding_done" {
+				totalProgress += overall * float64(resProgressCount)
+			} else {
+				totalProgress += resProgressSum
+			}
+			totalCount += resProgressCount
+		}
+
+		// 解析上传进度
+		if uploadStr, ok := statusMap["upload"]; ok && uploadStr != "" {
+			var up struct {
+				OssType  string  `json:"ossType"`
+				Progress float64 `json:"progress"`
+				Status   string  `json:"status"`
+			}
+			if err := json.Unmarshal([]byte(uploadStr), &up); err == nil {
+				uploadInfo = &vo.UploadProgressInfo{
+					OssType:  up.OssType,
+					Progress: up.Progress,
+					Status:   up.Status,
+				}
+			}
+		}
+	}
+
+	if totalCount == 0 {
+		return 0, details, uploadInfo
+	}
+
+	sort.Slice(details, func(i, j int) bool {
+		iw, ih, ifps, _ := parseProgressQualitySortKey(details[i].Quality)
+		jw, jh, jfps, _ := parseProgressQualitySortKey(details[j].Quality)
+		if ih != jh {
+			return ih > jh
+		}
+		if iw != jw {
+			return iw > jw
+		}
+		if ifps != jfps {
+			return ifps > jfps
+		}
+		return iw < jw
+	})
+
+	return totalProgress / float64(totalCount), details, uploadInfo
 }
 
 func StopTranscodingAndCleanup(videoID uint) error {

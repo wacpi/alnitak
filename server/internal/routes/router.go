@@ -143,5 +143,8 @@ func CollectRoutes(r *gin.Engine) *gin.Engine {
 	// 后台静态页（如 PGC 管理）
 	r.Static("/admin", "./static/admin")
 
+	// 管理员：查看远程转码 Worker 状态
+	r.GET("/api/v1/admin/workers", middleware.Auth(), api.ListWorkers)
+
 	return r
 }

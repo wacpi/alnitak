@@ -588,6 +588,12 @@ func syncMenuData() {
 	})
 
 	// 同步内容管理子菜单排序：视频(1) → PGC(2) → 其余(3+)
+	// Workers 状态页（系统管理下）
+	ensureMenuExists("System", "SystemMenu", model.Menu{
+		Name: "SystemWorkers", Path: "system/workers", Component: "views/system/workers/index.vue",
+		Desc: "", Sort: 6, Title: "转码Worker", Icon: "ServerOutline", Hidden: false, KeepAlive: false,
+	})
+
 	contentSortOrder := map[string]uint{
 		"ContentVideo":     1,
 		"ContentPGC":       2,
@@ -728,17 +734,17 @@ var authApiDesc = map[string]string{
 	"POST|/api/v1/comment/article/addComment":          "发表文章评论或回复",
 	"GET|/api/v1/comment/article/getCommentList":       "获取文章评论列表",
 	"DELETE|/api/v1/comment/article/deleteComment/:id": "删除文章评论或回复",
-	"POST|/api/v1/comment/article/like/:id":           "点赞文章评论",
+	"POST|/api/v1/comment/article/like/:id":            "点赞文章评论",
 	"DELETE|/api/v1/comment/article/like/:id":          "取消点赞文章评论",
 	"POST|/api/v1/comment/article/dislike/:id":         "点踩文章评论",
 	"DELETE|/api/v1/comment/article/dislike/:id":       "取消点踩文章评论",
 	"POST|/api/v1/comment/video/addComment":            "发表视频评论或回复",
 	"DELETE|/api/v1/comment/video/deleteComment/:id":   "删除视频评论或回复",
 	"GET|/api/v1/comment/video/getCommentList":         "获取视频评论列表",
-	"POST|/api/v1/comment/video/like/:id":            "点赞视频评论",
-	"DELETE|/api/v1/comment/video/like/:id":           "取消点赞视频评论",
-	"POST|/api/v1/comment/video/dislike/:id":          "点踩视频评论",
-	"DELETE|/api/v1/comment/video/dislike/:id":        "取消点踩视频评论",
+	"POST|/api/v1/comment/video/like/:id":              "点赞视频评论",
+	"DELETE|/api/v1/comment/video/like/:id":            "取消点赞视频评论",
+	"POST|/api/v1/comment/video/dislike/:id":           "点踩视频评论",
+	"DELETE|/api/v1/comment/video/dislike/:id":         "取消点踩视频评论",
 	// 弹幕
 	"POST|/api/v1/danmaku/sendDanmaku": "发送弹幕",
 	// 历史记录
@@ -825,7 +831,7 @@ var authApiDesc = map[string]string{
 	"GET|/api/v1/video/getResourceQualityManage": "获取视频资源支持的分辨率信息（后台管理）",
 	"GET|/api/v1/video/getVideoFileManage":       "获取视频文件URL（后台管理）",
 	"POST|/api/v1/video/reTranscodeVideo":        "重新转码视频（后台管理）",
-	"POST|/api/v1/video/reUploadVideo":              "重新上传OSS（后台管理）",
+	"POST|/api/v1/video/reUploadVideo":           "重新上传OSS（后台管理）",
 	"POST|/api/v1/video/subtitle/upload":         "上传分P字幕",
 	"PUT|/api/v1/video/subtitle/:id":             "更新分P字幕",
 	"DELETE|/api/v1/video/subtitle/:id":          "删除分P字幕",
@@ -851,9 +857,9 @@ var authApiDesc = map[string]string{
 	"POST|/api/v1/playlist/getPlaylistListManage":      "获取全站合集列表（后台管理）",
 	"DELETE|/api/v1/playlist/deletePlaylistManage/:id": "删除合集（后台管理）",
 	// 备用 OSS
-	"GET|/api/v1/backup/failures":             "获取备用OSS上传失败记录",
-	"POST|/api/v1/backup/retry/:id":           "重试单条备用OSS上传失败记录",
-	"POST|/api/v1/backup/retryAll":            "重试所有备用OSS上传失败记录",
+	"GET|/api/v1/backup/failures":   "获取备用OSS上传失败记录",
+	"POST|/api/v1/backup/retry/:id": "重试单条备用OSS上传失败记录",
+	"POST|/api/v1/backup/retryAll":  "重试所有备用OSS上传失败记录",
 	// PGC
 	"POST|/api/v1/pgc/create":                 "创建PGC内容",
 	"PUT|/api/v1/pgc/update":                  "更新PGC内容",
@@ -866,6 +872,8 @@ var authApiDesc = map[string]string{
 	"POST|/api/v1/pgc/getManageList":          "获取PGC管理列表（后台管理）",
 	"POST|/api/v1/pgc/adminUpdateStatus":      "管理员修改PGC状态（后台管理）",
 	"DELETE|/api/v1/pgc/adminDelete/:pgc_id":  "管理员删除PGC（后台管理）",
+	// 远程转码 Worker
+	"GET|/api/v1/admin/workers": "获取远程转码Worker状态（后台管理）",
 }
 
 // SyncApiData 自动同步需要登录权限的路由到API表
@@ -970,6 +978,7 @@ func inferCategory(path string) string {
 		"user":       "用户",
 		"verify":     "验证",
 		"video":      "视频",
+		"admin":      "系统管理",
 		"online":     "在线",
 	}
 

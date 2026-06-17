@@ -22,7 +22,7 @@ import (
 
 var (
 	env         = flag.String("env", "prod", "运行环境 dev/prod")
-	concurrency = flag.Int("concurrency", 2, "最大并发转码数")
+	concurrency = flag.Int("concurrency", 0, "最大并发转码数 (0=使用配置文件的 worker_concurrency)")
 	workerID    = flag.String("id", "", "Worker 唯一标识 (默认取 hostname)")
 	healthPort  = flag.Int("health-port", 9100, "健康检查 HTTP 端口")
 )
@@ -34,14 +34,25 @@ func main() {
 	viper.SetConfigName(getConfigName(*env))
 	viper.AddConfigPath("./conf")
 	if err := viper.ReadInConfig(); err != nil {
+		fmt.Fprintf(os.Stderr, "FATAL: 配置文件读取失败: %v\n", err)
 		panic("配置文件读取失败: " + err.Error())
 	}
 
 	cfg := &config.Config{}
 	if err := viper.Unmarshal(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "FATAL: 配置解析失败: %v\n", err)
 		panic("配置解析失败: " + err.Error())
 	}
 	global.Config = cfg
+
+	// 解析并发数：优先 CLI 传入的 --concurrency，否则从配置文件读取
+	if *concurrency <= 0 {
+		if cfg.Transcoding.WorkerConcurrency > 0 {
+			*concurrency = cfg.Transcoding.WorkerConcurrency
+		} else {
+			*concurrency = 2 // 兜底默认值
+		}
+	}
 
 	// 初始化日志
 	logger.InitLogger()
@@ -87,6 +98,7 @@ func main() {
 
 	// 启动消费循环
 	if err := w.Run(ctx); err != nil && err != context.Canceled {
+		fmt.Fprintf(os.Stderr, "FATAL: worker run failed: %v\n", err)
 		zap.L().Fatal("worker run failed", zap.Error(err))
 	}
 
@@ -134,8 +146,9 @@ func startHealthServer(w *worker.Worker, port int) *http.Server {
 	go func() {
 		zap.L().Info("Health server listening", zap.Int("port", port))
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			zap.L().Fatal("health server failed", zap.Error(err))
-		}
+				fmt.Fprintf(os.Stderr, "FATAL: health server failed: %v\n", err)
+				zap.L().Fatal("health server failed", zap.Error(err))
+			}
 	}()
 
 	return srv

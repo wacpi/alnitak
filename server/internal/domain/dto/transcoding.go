@@ -35,4 +35,10 @@ type TranscodingInfo struct {
 
 	// 重新转码时记录原始视频状态，转码完成后恢复（-1表示普通上传转码，无需特殊处理）
 	OriginalVideoStatus int
+
+	// 转码编码参数（由主服务下发，Worker 取此为准而非本机配置，保证前后端一致）
+	UseGpu            bool `json:"useGpu"`
+	UseH265           bool `json:"useH265"`
+	UseAv1            bool `json:"useAv1"`
+	Generate1080p60   bool `json:"generate1080p60"`
 }

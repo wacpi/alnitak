@@ -37,6 +37,13 @@ const (
 )
 
 const (
+	// Redis Key 前缀：Worker 心跳（主服务通过此 key 监测 Worker 存活）
+	heartbeatKeyPrefix = "transcoding:workers:"
+	// 心跳写入间隔
+	heartbeatInterval = 10 * time.Second
+	// 心跳 TTL（比间隔大，允许丢 2 次心跳仍视为存活）
+	heartbeatTTL = 30 * time.Second
+
 	// 超过此空闲时间的 pending 消息视为被遗弃（前一个 Worker crash）
 	maxPendingIdle = 5 * time.Minute
 	// 单个消息最大重试次数（含重新投递），超限进入死信
@@ -54,13 +61,16 @@ const (
 // Worker 远程转码 Worker，从 Redis Stream 消费任务，
 // 执行 ffmpeg 编码后将结果上传到 OSS。
 type Worker struct {
-	rdb         *redis.Client
-	storage     oss.Storage
-	cfg         *config.Config
-	groupID     string
-	concurrency int
-	cancelSub   *redis.PubSub
-	sem         chan struct{}
+	rdb           *redis.Client
+	storage       oss.Storage
+	backupStorage oss.Storage // 备用 OSS（多源容灾），可为 nil
+	cfg           *config.Config
+	groupID       string
+	concurrency   int
+	cancelSub     *redis.PubSub
+	sem           chan struct{}
+	encodingSem   chan struct{} // 画质编码并发限制
+	workDir       string       // 临时文件工作目录，默认 os.TempDir()
 
 	mu           sync.RWMutex
 	activeVideos map[uint]context.CancelFunc
@@ -85,17 +95,40 @@ func NewWorker(cfg *config.Config, workerID string, concurrency int) (*Worker, e
 	if cfg.Storage.OssType != "local" {
 		storage = oss.InitStorage(cfg.Storage)
 	}
+	backupStorage := oss.InitBackupStorage(cfg.Storage)
+
+	workDir := cfg.Transcoding.WorkDir
+	if workDir == "" {
+		workDir = os.TempDir()
+	} else if !filepath.IsAbs(workDir) {
+		// 相对路径基于工作目录（nssm AppDirectory）解析
+		if absDir, err := filepath.Abs(workDir); err == nil {
+			workDir = absDir
+		}
+	}
+
+	encConcurrency := cfg.Transcoding.EncodingConcurrency
+	if encConcurrency <= 0 {
+		encConcurrency = 0 // 0 = unlimited
+	}
 
 	w := &Worker{
-		rdb:          rdb,
-		storage:      storage,
-		cfg:          cfg,
-		groupID:      fmt.Sprintf("transcoder-worker-%s", workerID),
-		concurrency:  concurrency,
-		sem:          make(chan struct{}, concurrency),
-		activeVideos: make(map[uint]context.CancelFunc),
-		startedAt:    time.Now(),
+		rdb:           rdb,
+		storage:       storage,
+		backupStorage: backupStorage,
+		cfg:           cfg,
+		groupID:       fmt.Sprintf("transcoder-worker-%s", workerID),
+		concurrency:   concurrency,
+		workDir:       workDir,
+		sem:           make(chan struct{}, concurrency),
+		activeVideos:  make(map[uint]context.CancelFunc),
+		startedAt:     time.Now(),
 	}
+
+	if encConcurrency > 0 {
+		w.encodingSem = make(chan struct{}, encConcurrency)
+	}
+
 	w.healthy.Store(true)
 	return w, nil
 }
@@ -141,6 +174,53 @@ func (w *Worker) Ready() bool {
 }
 
 // =============================================================================
+// 心跳 — 向 Redis 写入 Worker 存活状态
+// =============================================================================
+
+// heartbeatLoop 每隔 heartbeatInterval 向 Redis 写入心跳 key，TTL = heartbeatTTL。
+// 主服务通过检查该 key 是否存在来判断 Worker 是否存活。
+func (w *Worker) heartbeatLoop(ctx context.Context) {
+	key := heartbeatKeyPrefix + w.groupID
+	ticker := time.NewTicker(heartbeatInterval)
+	defer ticker.Stop()
+
+	// 立即写一次
+	w.writeHeartbeat(ctx, key)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			w.writeHeartbeat(ctx, key)
+		}
+	}
+}
+
+func (w *Worker) writeHeartbeat(ctx context.Context, key string) {
+	h := w.Health()
+	data, err := json.Marshal(map[string]interface{}{
+		"healthy":     h.Healthy,
+		"startedAt":   h.StartedAt,
+		"uptime":      h.Uptime,
+		"concurrency": h.Concurrency,
+		"jobsActive":  h.JobsActive,
+		"jobsTotal":   h.JobsTotal,
+		"jobsFailed":  h.JobsFailed,
+		"groupID":     h.GroupID,
+		"lastSeen":    time.Now().Unix(),
+	})
+	if err != nil {
+		zap.L().Warn("Heartbeat marshal failed", zap.Error(err))
+		return
+	}
+
+	if err := w.rdb.Set(ctx, key, string(data), heartbeatTTL).Err(); err != nil {
+		zap.L().Warn("Heartbeat write failed", zap.Error(err))
+	}
+}
+
+// =============================================================================
 // Run — 主消费循环
 // =============================================================================
 
@@ -171,6 +251,11 @@ func (w *Worker) Run(ctx context.Context) error {
 		zap.String("groupID", w.groupID),
 		zap.Int("concurrency", w.concurrency),
 	)
+
+	// 启动心跳（goroutine 随 ctx 退出）
+	heartbeatCtx, heartbeatCancel := context.WithCancel(ctx)
+	defer heartbeatCancel()
+	go w.heartbeatLoop(heartbeatCtx)
 
 	for {
 		select {
@@ -373,42 +458,70 @@ func (w *Worker) processJob(ctx context.Context, rawJob, msgID string) error {
 	statusKey := fmt.Sprintf("%s%d", transcodingStatusPrefix, info.ResourceID)
 	w.writeStatus(statusKey, "processing", 0, "")
 
-	inputLocal := filepath.Join(os.TempDir(), fmt.Sprintf("alnitak_input_%d%s", info.ResourceID, info.Suffix))
+	inputLocal := filepath.Join(w.workDir, fmt.Sprintf("alnitak_input_%d%s", info.ResourceID, info.Suffix))
+	zap.L().Info("Downloading input file", zap.String("objectKey", fmt.Sprintf("video/%s/upload%s", info.DirName, info.Suffix)))
 	if err := w.downloadInput(&info, inputLocal); err != nil {
 		w.writeStatus(statusKey, "failed", 0, err.Error())
 		return fmt.Errorf("download input: %w", err)
 	}
+	zap.L().Info("Input file downloaded", zap.String("local", inputLocal))
 	defer os.Remove(inputLocal)
 	info.InputFile = inputLocal
+
+	// 1.5 如果元数据不全（远程重转码场景），ffprobe 探测补充
+	if info.Width == 0 || info.Height == 0 {
+		if err := w.probeInput(&info); err != nil {
+			w.writeStatus(statusKey, "failed", 0, err.Error())
+			return fmt.Errorf("probe input: %w", err)
+		}
+	}
 
 	// 2. 计算转码目标
 	targets := w.computeTargets(&info)
 	totalQualities := len(targets)
+	zap.L().Info("Encoding targets",
+		zap.Int("total", totalQualities),
+		zap.Any("qualities", func() []string {
+			var names []string
+			for _, t := range targets {
+				names = append(names, t.Resolution+"_"+t.BitrateRate+"_"+t.FpsName)
+			}
+			return names
+		}()),
+	)
 	var completed atomic.Int32
 
 	// 3. 并发编码视频 + 音轨
 	var encWg sync.WaitGroup
 	errCh := make(chan error, totalQualities)
 
-	// 3a. 视频编码（每个 quality 一个 goroutine）
+	// 3a. 视频编码（受 encodingSem 限制并发数）
 	for _, target := range targets {
 		qualityName := target.Resolution + "_" + target.BitrateRate + "_" + target.FpsName
-		videoOutput := filepath.Join(os.TempDir(), fmt.Sprintf("alnitak_v_%d_%s.m4s", info.ResourceID, qualityName))
+		videoOutput := filepath.Join(w.workDir, fmt.Sprintf("alnitak_v_%d_%s.m4s", info.ResourceID, qualityName))
 
+		zap.L().Info("Starting video encode", zap.String("quality", qualityName))
 		encWg.Add(1)
 		go func(t ffmpeg.TranscodingTarget, outPath, qName string) {
 			defer encWg.Done()
+			if w.encodingSem != nil {
+				w.encodingSem <- struct{}{}
+				defer func() { <-w.encodingSem }()
+			}
 			if err := w.encodeQuality(jobCtx, &info, t, outPath); err != nil {
+				zap.L().Error("Video encode failed", zap.String("quality", qName), zap.Error(err))
 				errCh <- fmt.Errorf("%s: %w", qName, err)
 				return
 			}
 			completed.Add(1)
+			zap.L().Info("Video encode done", zap.String("quality", qName))
 		}(target, videoOutput, qualityName)
 	}
 
 	// 3b. 音频编码（与视频并发）
 	var audioFiles []audioFileEntry
 	audioErrCh := make(chan error, 1)
+	zap.L().Info("Starting audio encode")
 	go func() {
 		files, err := w.encodeAudio(jobCtx, &info)
 		if err == nil {
@@ -418,15 +531,18 @@ func (w *Worker) processJob(ctx context.Context, rawJob, msgID string) error {
 	}()
 
 	// 等待视频完成
+	zap.L().Info("Waiting for video encodes to finish")
 	encWg.Wait()
 	close(errCh)
 
 	// 等待音频完成
 	if audioErr := <-audioErrCh; audioErr != nil {
+		zap.L().Error("Audio encode failed", zap.Error(audioErr))
 		w.writeStatus(statusKey, "audio_failed", float64(completed.Load())/float64(totalQualities)*100, audioErr.Error())
 		// 主音轨失败视为整体失败
 		return fmt.Errorf("audio encode: %w", audioErr)
 	}
+	zap.L().Info("Audio encode done")
 
 	// 收集视频编码错误
 	var errs []string
@@ -443,7 +559,7 @@ func (w *Worker) processJob(ctx context.Context, rawJob, msgID string) error {
 	// 3c. 收集 MP4 init/index 范围（上传前文件仍在本地）
 	for _, target := range targets {
 		qName := target.Resolution + "_" + target.BitrateRate + "_" + target.FpsName
-		videoFile := filepath.Join(os.TempDir(), fmt.Sprintf("alnitak_v_%d_%s.m4s", info.ResourceID, qName))
+		videoFile := filepath.Join(w.workDir, fmt.Sprintf("alnitak_v_%d_%s.m4s", info.ResourceID, qName))
 
 		var audioFile string
 		if len(audioFiles) > 0 {
@@ -460,9 +576,24 @@ func (w *Worker) processJob(ctx context.Context, rawJob, msgID string) error {
 	// 4. 上传转码产物到 OSS
 	if w.storage != nil {
 		w.writeStatus(statusKey, "uploading", 90, "")
+		// 写入上传进度信息供主服务查询
+		uploadInfo := map[string]interface{}{
+			"ossType":  w.cfg.Storage.OssType,
+			"progress": 0,
+			"status":   "uploading",
+		}
+		if data, err := json.Marshal(uploadInfo); err == nil {
+			_ = w.rdb.HSet(ctx, statusKey, "upload", string(data)).Err()
+		}
 		if err := w.uploadOutputs(&info, targets, audioFiles); err != nil {
 			w.writeStatus(statusKey, "upload_failed", 90, err.Error())
 			return fmt.Errorf("upload outputs: %w", err)
+		}
+		// 上传完成后更新进度
+		uploadInfo["progress"] = 100
+		uploadInfo["status"] = "success"
+		if data, err := json.Marshal(uploadInfo); err == nil {
+			_ = w.rdb.HSet(ctx, statusKey, "upload", string(data)).Err()
 		}
 	}
 
@@ -511,37 +642,105 @@ func (w *Worker) downloadInput(info *dto.TranscodingInfo, localPath string) erro
 	if w.storage == nil {
 		return fmt.Errorf("no OSS storage configured")
 	}
-	objectKey := fmt.Sprintf("video/%s/input%s", info.DirName, info.Suffix)
+	objectKey := fmt.Sprintf("video/%s/upload%s", info.DirName, info.Suffix)
 	return w.storage.GetObjectToFile(objectKey, localPath)
 }
 
-// uploadOutputs 将转码产物（视频+音频）上传到 OSS。
+// probeInput 对已下载的源文件执行 ffprobe，补充 Width/Height 等元数据。
+// 远程重转码场景下 main server 可能未提供这些字段，由 Worker 自行探测。
+func (w *Worker) probeInput(info *dto.TranscodingInfo) error {
+	result, err := ffmpeg.RunFFprobe(info.InputFile)
+	if err != nil {
+		return fmt.Errorf("ffprobe %s: %w", info.InputFile, err)
+	}
+
+	for _, s := range result.Streams {
+		if s.CodecType == "video" {
+			if s.Width > 0 {
+				info.Width = s.Width
+			}
+			if s.Height > 0 {
+				info.Height = s.Height
+			}
+			if s.CodecName != "" {
+				info.CodecName = s.CodecName
+			}
+			if s.AvgFrameRate != "" {
+				info.FPS = s.AvgFrameRate
+				generate1080p60 := info.Generate1080p60 || w.cfg.Transcoding.Generate1080p60
+				info.FPS30, info.FPS60 = ffmpeg.GetFpsInfo(info.FPS, generate1080p60)
+			}
+			if br, err := strconv.Atoi(s.BitRate); err == nil && br > 0 {
+				info.VideoBitRate = br
+			}
+		}
+	}
+
+	if info.Duration <= 0 {
+		if dur, err := strconv.ParseFloat(result.Format.Duration, 64); err == nil && dur > 0 {
+			info.Duration = dur
+		}
+	}
+
+	if info.Width == 0 || info.Height == 0 {
+		return fmt.Errorf("could not determine video dimensions from: %s", info.InputFile)
+	}
+
+	zap.L().Info("Probed input file",
+		zap.Int("width", info.Width),
+		zap.Int("height", info.Height),
+		zap.String("fps", info.FPS),
+		zap.Int("bitrate", info.VideoBitRate),
+	)
+	return nil
+}
+
+// uploadOutputs 将转码产物（视频+音频）上传到 OSS（主+备）。
 // audioFiles 由 encodeAudio 返回，含临时路径与 OSS key。
 func (w *Worker) uploadOutputs(info *dto.TranscodingInfo, targets []ffmpeg.TranscodingTarget, audioFiles []audioFileEntry) error {
-	// 上传视频文件
+	type uploadFile struct {
+		localPath string
+		ossKey    string
+	}
+	var files []uploadFile
+
+	// 收集视频文件
 	for _, target := range targets {
 		qName := target.Resolution + "_" + target.BitrateRate + "_" + target.FpsName
-		videoFile := filepath.Join(os.TempDir(), fmt.Sprintf("alnitak_v_%d_%s.m4s", info.ResourceID, qName))
+		videoFile := filepath.Join(w.workDir, fmt.Sprintf("alnitak_v_%d_%s.m4s", info.ResourceID, qName))
 		if _, err := os.Stat(videoFile); os.IsNotExist(err) {
 			continue
 		}
-
 		objectKey := fmt.Sprintf("video/%s/%s_video.m4s", info.DirName, qName)
-		if err := w.storage.PutObjectFromFile(objectKey, videoFile); err != nil {
-			return fmt.Errorf("upload %s: %w", qName, err)
-		}
-		defer os.Remove(videoFile)
+		files = append(files, uploadFile{localPath: videoFile, ossKey: objectKey})
 	}
 
-	// 上传音频文件
+	// 收集音频文件
 	for _, af := range audioFiles {
 		if _, err := os.Stat(af.LocalPath); os.IsNotExist(err) {
 			continue
 		}
-		if err := w.storage.PutObjectFromFile(af.OSSKey, af.LocalPath); err != nil {
-			return fmt.Errorf("upload audio [%s]: %w", af.OSSKey, err)
+		files = append(files, uploadFile{localPath: af.LocalPath, ossKey: af.OSSKey})
+	}
+
+	// 上传到主 OSS
+	for _, f := range files {
+		if err := w.storage.PutObjectFromFile(f.ossKey, f.localPath); err != nil {
+			return fmt.Errorf("upload %s: %w", f.ossKey, err)
 		}
-		defer os.Remove(af.LocalPath)
+		defer os.Remove(f.localPath)
+	}
+
+	// 上传到备用 OSS（多源容灾，失败不阻塞主流程）
+	if w.backupStorage != nil {
+		for _, f := range files {
+			if err := w.backupStorage.PutObjectFromFile(f.ossKey, f.localPath); err != nil {
+				zap.L().Error("Backup OSS upload failed",
+					zap.String("key", f.ossKey),
+					zap.Error(err),
+				)
+			}
+		}
 	}
 
 	return nil
@@ -569,7 +768,7 @@ func (w *Worker) encodeAudio(ctx context.Context, info *dto.TranscodingInfo) ([]
 		// 多音轨模式
 		for i, stream := range info.AudioStreams {
 			audioFileName := ffmpeg.AudioFileNameForTrack(stream.Language)
-			audioOutput := filepath.Join(os.TempDir(),
+			audioOutput := filepath.Join(w.workDir,
 				fmt.Sprintf("alnitak_a_%d_%s.m4s", info.ResourceID, stream.Language))
 
 			args := ffmpeg.AudioTrackEncodeArgs(info.InputFile, stream.StreamIndex,
@@ -599,7 +798,7 @@ func (w *Worker) encodeAudio(ctx context.Context, info *dto.TranscodingInfo) ([]
 	}
 
 	// 单音轨模式（向后兼容）
-	audioOutput := filepath.Join(os.TempDir(),
+	audioOutput := filepath.Join(w.workDir,
 		fmt.Sprintf("alnitak_a_%d.m4s", info.ResourceID))
 
 	args := ffmpeg.AudioEncodeArgs(info.InputFile, info.AudioBitRate,
@@ -625,18 +824,21 @@ func (w *Worker) encodeAudio(ctx context.Context, info *dto.TranscodingInfo) ([]
 
 // computeTargets 计算转码目标列表
 func (w *Worker) computeTargets(info *dto.TranscodingInfo) []ffmpeg.TranscodingTarget {
+	generate1080p60 := info.Generate1080p60 || w.cfg.Transcoding.Generate1080p60
 	return ffmpeg.GetTranscodingTargets(
 		info.Width, info.Height, info.VideoBitRate,
 		info.FPS30, info.FPS60,
-		w.cfg.Transcoding.Generate1080p60,
+		generate1080p60,
 	)
 }
 
 // encodeQuality 执行单画质视频编码（含 GPU→CPU 逐级降级）。
 func (w *Worker) encodeQuality(ctx context.Context, info *dto.TranscodingInfo, target ffmpeg.TranscodingTarget, outputPath string) error {
-	useGpu := w.cfg.Transcoding.UseGpu
-	useHevc := w.cfg.Transcoding.UseH265
-	useAv1 := w.cfg.Transcoding.UseAv1
+	// 使用主服务下发的编码参数，保证与后台设置一致。
+	// 旧任务（升级前入队）各字段为 false，等效 CPU+H.264。
+	useGpu := info.UseGpu
+	useHevc := info.UseH265
+	useAv1 := info.UseAv1
 
 	return w.doEncodeWithFallback(ctx, info, target, outputPath, useGpu, useAv1, useHevc)
 }

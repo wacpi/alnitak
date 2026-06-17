@@ -36,6 +36,53 @@ type RemoteTranscoder struct {
 	rdb *redis.Client
 }
 
+const (
+	// 心跳 key 前缀（与 worker 端保持一致）
+	workerHeartbeatPrefix = "transcoding:workers:"
+)
+
+// WorkerHeartbeat Worker 心跳快照
+type WorkerHeartbeat struct {
+	Healthy     bool      `json:"healthy"`
+	StartedAt   time.Time `json:"startedAt"`
+	Uptime      string    `json:"uptime"`
+	Concurrency int       `json:"concurrency"`
+	JobsActive  int32     `json:"jobsActive"`
+	JobsTotal   int64     `json:"jobsTotal"`
+	JobsFailed  int64     `json:"jobsFailed"`
+	GroupID     string    `json:"groupID"`
+	LastSeen    int64     `json:"lastSeen"`
+}
+
+// GetAliveWorkers 扫描 Redis 中所有 Worker 的心跳 key，返回在线 Worker 列表。
+// 心跳由 Worker 的 heartbeatLoop 每 10s 写入一次，TTL=30s。
+func GetAliveWorkers(ctx context.Context) ([]WorkerHeartbeat, error) {
+	iter := global.Redis.RawClient().Scan(ctx, 0, workerHeartbeatPrefix+"*", 100).Iterator()
+	var workers []WorkerHeartbeat
+	for iter.Next(ctx) {
+		val, err := global.Redis.RawClient().Get(ctx, iter.Val()).Result()
+		if err != nil {
+			continue // key 可能在 scan 和 get 之间过期
+		}
+		var hb WorkerHeartbeat
+		if err := json.Unmarshal([]byte(val), &hb); err != nil {
+			continue
+		}
+		workers = append(workers, hb)
+	}
+	return workers, iter.Err()
+}
+
+// HasAliveWorker 快速检查是否有至少一个 Worker 在线。
+func HasAliveWorker(ctx context.Context) bool {
+	// 用 Exists 检查第一个匹配的 key，比 Scan 快得多
+	iter := global.Redis.RawClient().Scan(ctx, 0, workerHeartbeatPrefix+"*", 1).Iterator()
+	if iter.Next(ctx) {
+		return true
+	}
+	return false
+}
+
 func NewRemoteTranscoder() *RemoteTranscoder {
 	return &RemoteTranscoder{
 		rdb: global.Redis.RawClient(),
@@ -45,6 +92,12 @@ func NewRemoteTranscoder() *RemoteTranscoder {
 // Enqueue 将转码任务序列化为 JSON 并推入 Redis Stream，
 // 同时启动协程异步轮询进度。
 func (t *RemoteTranscoder) Enqueue(ctx context.Context, info *dto.TranscodingInfo) error {
+	// 从主服务配置填充编码参数，保证 Worker 端与后台设定一致
+	info.UseGpu = global.Config.Transcoding.UseGpu
+	info.UseH265 = global.Config.Transcoding.UseH265
+	info.UseAv1 = global.Config.Transcoding.UseAv1
+	info.Generate1080p60 = global.Config.Transcoding.Generate1080p60
+
 	job, err := json.Marshal(info)
 	if err != nil {
 		return fmt.Errorf("transcoding job marshal: %w", err)
