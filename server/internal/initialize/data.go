@@ -172,6 +172,8 @@ func initApiData() {
 		{Method: "POST", Path: "/api/v1/config/setOtherConfig", Category: "配置", Desc: "编辑其他配置（后台管理）"},
 		{Method: "GET", Path: "/api/v1/config/getCleanupPreview", Category: "配置", Desc: "获取资源清理预览（后台管理）"},
 		{Method: "POST", Path: "/api/v1/config/executeCleanup", Category: "配置", Desc: "执行资源清理（后台管理）"},
+		{Method: "GET", Path: "/api/v1/config/getTranscodingConfig", Category: "配置", Desc: "获取转码配置（后台管理）"},
+		{Method: "POST", Path: "/api/v1/config/setTranscodingConfig", Category: "配置", Desc: "编辑转码配置（后台管理）"},
 		// 用户认证相关
 		{Method: "GET", Path: "/api/v1/auth/type/list", Category: "用户认证", Desc: "获取认证类型列表"},
 		{Method: "GET", Path: "/api/v1/auth/user/list", Category: "用户认证", Desc: "获取用户认证列表"},
@@ -353,6 +355,8 @@ func initCasbinRuleData() {
 		{Ptype: "p", V0: "002", V1: "/api/v1/config/setStorageConfig", V2: "POST"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/config/getCleanupPreview", V2: "GET"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/config/executeCleanup", V2: "POST"},
+		{Ptype: "p", V0: "002", V1: "/api/v1/config/getTranscodingConfig", V2: "GET"},
+		{Ptype: "p", V0: "002", V1: "/api/v1/config/setTranscodingConfig", V2: "POST"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/danmaku/sendDanmaku", V2: "POST"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/history/video/addHistory", V2: "POST"},
 		{Ptype: "p", V0: "002", V1: "/api/v1/history/video/getHistory", V2: "GET"},
@@ -842,6 +846,8 @@ var authApiDesc = map[string]string{
 	"POST|/api/v1/config/setStorageConfig": "编辑存储配置（后台管理）",
 	"GET|/api/v1/config/getOtherConfig":    "获取其他配置（后台管理）",
 	"POST|/api/v1/config/setOtherConfig":   "编辑其他配置（后台管理）",
+	"GET|/api/v1/config/getTranscodingConfig":  "获取转码配置（后台管理）",
+	"POST|/api/v1/config/setTranscodingConfig": "编辑转码配置（后台管理）",
 	// 合集
 	"POST|/api/v1/playlist/add":                        "创建合集",
 	"PUT|/api/v1/playlist/edit":                        "编辑合集",
