@@ -589,7 +589,7 @@ func (w *Worker) processJob(ctx context.Context, rawJob, msgID string) (err erro
 	// 等待音频完成
 	if audioErr := <-audioErrCh; audioErr != nil {
 		zap.L().Error("Audio encode failed", zap.Error(audioErr))
-		w.writeStatus(statusKey, "audio_failed", float64(completed.Load())/float64(totalQualities)*100, audioErr.Error())
+		w.writeStatus(statusKey, "failed", float64(completed.Load())/float64(totalQualities)*100, audioErr.Error())
 		// 主音轨失败视为整体失败
 		return fmt.Errorf("audio encode: %w", audioErr)
 	}
@@ -626,7 +626,7 @@ func (w *Worker) processJob(ctx context.Context, rawJob, msgID string) (err erro
 
 	// 4. 上传转码产物到 OSS
 	if w.storage != nil {
-		w.writeStatus(statusKey, "uploading", 90, "")
+		w.writeStatus(statusKey, "uploading", 100, "")
 		// 写入上传进度信息供主服务查询
 		uploadInfo := map[string]interface{}{
 			"ossType":  w.cfg.Storage.OssType,
@@ -637,7 +637,7 @@ func (w *Worker) processJob(ctx context.Context, rawJob, msgID string) (err erro
 			_ = w.rdb.HSet(ctx, statusKey, "upload", string(data)).Err()
 		}
 		if err := w.uploadOutputs(ctx, statusKey, &info, targets, audioFiles); err != nil {
-			w.writeStatus(statusKey, "upload_failed", 90, err.Error())
+			w.writeStatus(statusKey, "failed", 100, err.Error())
 			return fmt.Errorf("upload outputs: %w", err)
 		}
 		// 上传完成后更新进度
