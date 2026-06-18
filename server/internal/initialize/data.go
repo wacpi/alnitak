@@ -719,7 +719,8 @@ var authApiDesc = map[string]string{
 	"GET|/api/v1/article/getUploadArticle":           "获取上传的文章",
 	"POST|/api/v1/article/uploadArticleInfo":         "上传文章信息",
 	// Auth
-	"POST|/api/v1/auth/logout": "退出登录",
+	"POST|/api/v1/auth/logout":         "退出登录",
+	"POST|/api/v1/auth/changePassword": "修改密码（需旧密码校验）",
 	// 客户端
 	"POST|/api/v1/client/log": "客户端日志上报",
 	// 轮播图
