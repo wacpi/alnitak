@@ -205,13 +205,16 @@ func (t *RemoteTranscoder) pollProgress(ctx context.Context, info *dto.Transcodi
 			status := statusMap["status"]
 			if status == "failed" {
 				utils.InfoLog(fmt.Sprintf("【远程转码失败】ResourceID=%d", info.ResourceID), "transcoding")
-				// 标记资源转码失败
 				GetTranscoder().completeTransaction(ctx, info, global.PROCESSING_FAIL)
+				// 清理 Redis 进度哈希，避免垃圾数据堆积
+				t.rdb.Del(ctx, statusKey)
 				return
 			}
 			if status == "completed" {
 				utils.InfoLog(fmt.Sprintf("【远程转码完成】ResourceID=%d", info.ResourceID), "transcoding")
 				t.handleRemoteCompletion(ctx, info, statusMap)
+				// 清理 Redis 进度哈希（statusMap 已读取完，删了不影响）
+				t.rdb.Del(ctx, statusKey)
 				return
 			}
 		}
