@@ -111,12 +111,34 @@ func OptionalAuth() gin.HandlerFunc {
 
 func WsAuth() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		// 读取验证token
-		tokenString := ctx.Query("token")
+		// 优先从 Authorization header 读取（非浏览器客户端），其次从 query param 读取（浏览器 WebSocket API）
+		tokenString := ctx.GetHeader("Authorization")
+		if tokenString == "" {
+			tokenString = ctx.Query("token")
+		}
+		tokenString = trimBearer(tokenString)
+		if tokenString == "" {
+			resp.Result(ctx, 2000, nil, "token验证失败")
+			ctx.Abort()
+			return
+		}
+
 		// 验证并解析token
 		_, claims, err := jwt_parse.ParseToken(tokenString)
 		if err != nil {
 			resp.Result(ctx, 2000, nil, "token验证失败")
+			ctx.Abort()
+			return
+		}
+		if claims.TokenType != 0 {
+			resp.Result(ctx, 2000, nil, "token验证失败")
+			ctx.Abort()
+			return
+		}
+
+		// 检查 accessToken 是否已被吊销
+		if cache.IsAccessTokenBlacklisted(tokenString) {
+			resp.Result(ctx, 3000, nil, "TOKEN已失效")
 			ctx.Abort()
 			return
 		}
