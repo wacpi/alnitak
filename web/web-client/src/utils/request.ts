@@ -52,7 +52,9 @@ const service: AxiosInstance = axios.create({
   baseURL: `${baseURL}/api/`,
   withCredentials: true, // 跨域请求时发送Cookie
   timeout: 5000,
-  headers: {},
+  headers: {
+    'X-Requested-With': 'XMLHttpRequest', // CSRF 防护：浏览器 CORS 策略阻止跨域设置此头
+  },
 });
 
 // 刷新 token 的统一函数
