@@ -23,6 +23,8 @@ func InitRouter() {
 
 	//跨域中间件
 	r.Use(middleware.CORS())
+	//安全响应头中间件
+	r.Use(middleware.SecurityHeaders())
 	if !global.Config.Security.CloseRecordUserOperation {
 		r.Use(middleware.OperationRecord())
 	}
