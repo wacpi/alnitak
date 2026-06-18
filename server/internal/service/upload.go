@@ -688,7 +688,10 @@ func CompleteUploadVideo(vid, userId, fileID uint, videoName, title string, skip
 	transcodingInfo.OutputDir = "./upload/video/" + videoName + "/"
 	transcodingInfo.InputFile = transcodingInfo.OutputDir + "upload" + suffix
 	transcodingInfo.Suffix = suffix
-	_ = GetCurrentTranscoder().Enqueue(context.Background(), transcodingInfo)
+	if err := GetCurrentTranscoder().Enqueue(context.Background(), transcodingInfo); err != nil {
+		utils.ErrorLog("转码入队失败", "upload",
+			fmt.Sprintf("ResourceID=%d, err=%v", resource.ID, err))
+	}
 
 	return vo.ResourceToResourceResp(resource), nil
 }

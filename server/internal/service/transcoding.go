@@ -624,10 +624,17 @@ func (s *TranscodeService) completeTransaction(ctx context.Context, info *dto.Tr
 			targetStatus = global.AUDIT_APPROVED
 		}
 
-		if err := tx.Model(&model.Resource{}).
+		result := tx.Model(&model.Resource{}).
 			Where("id = ? and status = ?", info.ResourceID, global.VIDEO_PROCESSING).
-			Update("status", targetStatus).Error; err != nil {
-			return err
+			Update("status", targetStatus)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			// 资源状态已被其他流程变更（例如之前的 completeTransaction 已完成），
+			// 跳过后续所有 Video 级别状态更新，避免重复写入错误的状态。
+			utils.InfoLog(fmt.Sprintf("资源状态已变更，跳过: ResourceID=%d", info.ResourceID), "transcoding")
+			return nil
 		}
 
 		if targetStatus != global.PROCESSING_FAIL {

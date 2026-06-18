@@ -436,7 +436,10 @@ func ReplaceResource(ctx *gin.Context, replaceReq dto.ReplaceResourceReq) (vo.Re
 	transcodingInfo.OutputDir = "./upload/video/" + newFileInfo.DirName + "/"
 	transcodingInfo.InputFile = transcodingInfo.OutputDir + "upload" + suffix
 	transcodingInfo.Suffix = suffix
-	_ = GetCurrentTranscoder().Enqueue(context.Background(), transcodingInfo)
+	if err := GetCurrentTranscoder().Enqueue(context.Background(), transcodingInfo); err != nil {
+		utils.ErrorLog("资源替换转码入队失败", "resource",
+			fmt.Sprintf("ResourceID=%d, err=%v", replaceReq.ResourceID, err))
+	}
 
 	// 清除视频信息缓存
 	cache.DelVideoInfo(oldResource.Vid)
