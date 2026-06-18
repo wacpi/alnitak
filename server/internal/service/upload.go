@@ -45,6 +45,11 @@ func UploadImg(ctx *gin.Context, file *multipart.FileHeader) (string, error) {
 		return "", errors.New("文件类型错误")
 	}
 
+	// 魔数校验：读取文件头确认真实类型
+	if isImg, err := utils.CheckImageMagicBytes(file); err != nil || !isImg {
+		return "", errors.New("文件类型错误")
+	}
+
 	//文件大小限制
 	if !utils.FileSize(file.Size, 1, global.Config.File.MaxImgSize) {
 		return "", errors.New("文件大小超出限制")
@@ -348,6 +353,13 @@ func UploadVideoChunk(ctx *gin.Context, file *multipart.FileHeader) error {
 	suffix := path.Ext(fileName)
 	if !utils.IsVideoType(suffix, global.Config.File.AllowedVideoExts) {
 		return errors.New("不支持的视频格式")
+	}
+
+	// 首分片时校验魔数，确保文件头部包含真实视频格式标识
+	if chunkIndex == 0 {
+		if isVideo, err := utils.CheckVideoMagicBytes(file); err != nil || !isVideo {
+			return errors.New("不支持的视频格式")
+		}
 	}
 
 	// 2️⃣ 查询或创建文件记录（hash + size 全局唯一）
