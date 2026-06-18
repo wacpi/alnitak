@@ -13,7 +13,7 @@
  *   <oss-image :src="info.cover" alt="封面" class="cover" />
  *   <oss-image :src="getResourceUrl(info.cover)" alt="封面" />
  */
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import { getResourceUrl } from '@/utils/resource';
 import { getBackupUrl } from '@/utils/image-oss';
 
@@ -23,6 +23,12 @@ const props = defineProps<{
 
 const currentSrc = ref(props.src ? getResourceUrl(props.src) : '');
 let hasTriedFallback = false;
+
+// props.src 变化时同步更新（轮播图等场景复用组件但切换图片时）
+watch(() => props.src, (newSrc) => {
+  currentSrc.value = newSrc ? getResourceUrl(newSrc) : '';
+  hasTriedFallback = false;
+});
 
 function onError() {
   if (hasTriedFallback) return;
