@@ -18,9 +18,9 @@ func CollectUserAuthRoutes(r *gin.RouterGroup) {
 	// 当前会话用户（支持 Authorization / Cookie）
 	authGroup.GET("me", api.Me)
 	// 退出登录：凭 body 或 HttpOnly refresh_token Cookie，无需 Authorization（行业常见做法）
-	authGroup.POST("logout", api.Logout)
+	authGroup.POST("logout", middleware.CsrfCheck(), api.Logout)
 	// 更新token
-	authGroup.POST("updateToken", api.UpdateToken)
+	authGroup.POST("updateToken", middleware.CsrfCheck(), api.UpdateToken)
 	// 修改密码检查
 	authGroup.POST("resetpwdCheck", middleware.RateLimiter(middleware.ModifyPwdRateLimit), api.ResetPwdCheck)
 	// 修改密码

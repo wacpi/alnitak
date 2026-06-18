@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"errors"
+	"net/http"
 	"strings"
 
 	"interastral-peace.com/alnitak/internal/cache"
@@ -144,6 +145,19 @@ func WsAuth() gin.HandlerFunc {
 		}
 
 		ctx.Set("userId", claims.UserId)
+		ctx.Next()
+	}
+}
+
+// CsrfCheck 校验 X-Requested-With 头，防止 Cookie 类接口遭受简单 CSRF 攻击。
+// 浏览器跨域请求无法手动设置 X-Requested-With，该中间件配合 SameSite=Lax 提供深度防御。
+func CsrfCheck() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		if ctx.GetHeader("X-Requested-With") != "XMLHttpRequest" {
+			resp.Result(ctx, http.StatusForbidden, nil, "非法请求")
+			ctx.Abort()
+			return
+		}
 		ctx.Next()
 	}
 }
