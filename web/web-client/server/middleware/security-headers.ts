@@ -18,7 +18,9 @@ export default defineEventHandler((event) => {
     // embed 页面允许被外部站点 iframe 嵌套（嵌入播放器）
     setHeader(event, 'Content-Security-Policy', [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      // unsafe-eval 已移除：Nuxt 3 预编译模板，运行时无需 eval
+      // unsafe-inline on style 保留：Vue scoped style / CSS-in-JS 必需
+      "script-src 'self' 'unsafe-inline'",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: *",
       "media-src 'self' *",
@@ -31,7 +33,9 @@ export default defineEventHandler((event) => {
     setHeader(event, 'X-Frame-Options', 'DENY');
     setHeader(event, 'Content-Security-Policy', [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      // unsafe-eval 已移除：Nuxt 3 预编译模板，运行时无需 eval
+      // unsafe-inline on style 保留：Vue scoped style / CSS-in-JS 必需
+      "script-src 'self' 'unsafe-inline'",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: *",
       "media-src 'self' *",
