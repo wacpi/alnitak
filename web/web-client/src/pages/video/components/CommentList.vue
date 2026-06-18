@@ -15,7 +15,7 @@
     </div>
     <el-input class="comment-input" v-model="commentContent" resize="none" :rows="3" type="textarea"
       placeholder="善语结善缘，恶言伤人心" id="video-comment-input" name="videoComment" />
-    <button class="comment-submit" :class="uiLoggedIn ? '' : 'submit-disabled'" @click="submitComment">发表评论</button>
+    <button class="comment-submit" :class="[uiLoggedIn ? '' : 'submit-disabled', submitting ? 'is-loading' : '']" :disabled="submitting" @click="submitComment">{{ submitting ? '发送中...' : '发表评论' }}</button>
   </div>
   <!-- 评论列表 -->
   <div class="comment-container" v-for="(item, i) in commentList" :key="item.id">
@@ -129,6 +129,8 @@ import { requireLogin } from "@/utils/require-login";
 import { useClientHydrated } from '@/composables/use-client-hydrated';
 import { useAuthStore } from "@/stores/auth-store";
 import { throttle } from "@/utils/debounce";
+
+const submitting = ref(false);
 
 const props = defineProps<{
   vid: number | string
@@ -264,19 +266,24 @@ const submitComment = async () => {
     return;
   }
 
-  commentForm.parentId = 0;
-  commentForm.content = commentContent.value;
-  const comment = await addComment();
-  if (comment) {
-    // 关闭所有回复框
-    commentList.value.forEach((item) => {
-      item.showReplyBox = false;
-    })
+  submitting.value = true;
+  try {
+    commentForm.parentId = 0;
+    commentForm.content = commentContent.value;
+    const comment = await addComment();
+    if (comment) {
+      // 关闭所有回复框
+      commentList.value.forEach((item) => {
+        item.showReplyBox = false;
+      })
 
-    // 手动添加评论
-    if (pagination.noMore) {
-      commentList.value.push(comment);
+      // 手动添加评论
+      if (pagination.noMore) {
+        commentList.value.push(comment);
+      }
     }
+  } finally {
+    submitting.value = false;
   }
 }
 
@@ -858,5 +865,10 @@ onBeforeUnmount(() => {
   &:hover {
     background-color: var(--primary-hover-color) !important;
   }
+}
+
+.is-loading {
+  opacity: 0.6;
+  cursor: wait !important;
 }
 </style>

@@ -29,7 +29,9 @@
       </div>
       <div class="button-group">
         <button class="btn-other" type="button" @click="emit('changeForm')">注册</button>
-        <button class="btn-primary" type="submit">登录</button>
+        <button class="btn-primary" type="submit" :disabled="loading">
+          {{ loading ? '登录中...' : '登录' }}
+        </button>
       </div>
     </form>
     <client-only>
@@ -48,6 +50,7 @@ import { saveCredentials } from "@/stores/auth-store";
 
 const emit = defineEmits(["success", "changeForm"]);
 
+const loading = ref(false);
 const currentTab = ref('account');
 const tabs = [{ key: 'account', label: '密码登录' }, { key: 'code', label: '邮箱登录' }];
 const tabChange = (tab: string) => {
@@ -113,8 +116,13 @@ const accountLogin = async () => {
     return;
   }
 
-  const res = await loginAPI(loginForm);
-  handleLoginRes(res);
+  loading.value = true;
+  try {
+    const res = await loginAPI(loginForm);
+    handleLoginRes(res);
+  } finally {
+    loading.value = false;
+  }
 }
 
 // 验证码登录
@@ -176,8 +184,13 @@ const codeLogin = async () => {
     return;
   }
 
-  const res = await emailLoginAPI(loginForm);
-  handleLoginRes(res);
+  loading.value = true;
+  try {
+    const res = await emailLoginAPI(loginForm);
+    handleLoginRes(res);
+  } finally {
+    loading.value = false;
+  }
 }
 
 const handleLoginRes = async (res: AxiosResponse<any, any>) => {
@@ -303,6 +316,11 @@ const handleLoginRes = async (res: AxiosResponse<any, any>) => {
     background: var(--primary-color);
     border-radius: 8px;
     border: 1px solid var(--primary-color);
+
+    &:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
   }
 }
 
