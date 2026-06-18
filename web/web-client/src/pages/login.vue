@@ -26,7 +26,6 @@ const loginSuccess = async () => {
     await navigateTo('/');
   }
 }
-}
 </script>
 
 <style lang="scss" scoped>
