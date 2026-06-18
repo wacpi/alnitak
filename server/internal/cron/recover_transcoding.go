@@ -97,6 +97,20 @@ func RecoverStuckTranscoding() {
 		recovered, skipped, errors), "cron")
 }
 
+// getOriginalVideoStatus 读取 ReTranscodeVideo 写入 Redis 的原始审核状态。
+// 如果键不存在或已过期，返回 -1（普通恢复，不改变审核状态）。
+func getOriginalVideoStatus(videoID uint) int {
+	rdb := global.Redis.RawClient()
+	ctx := context.Background()
+	key := fmt.Sprintf("transcoding:orig_status:%d", videoID)
+	val, err := rdb.Get(ctx, key).Int()
+	if err != nil {
+		return -1
+	}
+	utils.InfoLog(fmt.Sprintf("读取到原始审核状态: VideoID=%d, status=%d", videoID, val), "cron")
+	return val
+}
+
 // resourceInStream 检查指定 resourceID 是否已在 Redis Stream 中等待处理。
 // 扫描 Stream 所有条目（maxDepth <= 10，最多 10 条），避免在 Worker 
 // 还未开始处理（未写进度 Hash）时重复入队。
@@ -127,7 +141,10 @@ func reenqueueResource(res model.Resource) error {
 
 	suffix := utils.GetFileSuffix(vf.OriginalName)
 
-	// 2. 如果是远程模式，Worker 会从 OSS 下载文件并自行 ffprobe，
+	// 2. 获取原始审核状态（由 ReTranscodeVideo 写入 Redis）
+	origStatus := getOriginalVideoStatus(res.Vid)
+
+	// 3. 如果是远程模式，Worker 会从 OSS 下载文件并自行 ffprobe，
 	//    只需提供基础字段即可；本地模式需要探测源文件。
 	inputPath := "./upload/video/" + vf.DirName + "/upload" + suffix
 
@@ -144,7 +161,7 @@ func reenqueueResource(res model.Resource) error {
 			Suffix:              suffix,
 			CodecName:           res.CodecName,
 			Duration:            float64(res.Duration),
-			OriginalVideoStatus: -1, // 普通转码恢复，不是重新审核
+			OriginalVideoStatus: origStatus,
 		}
 	} else {
 		// 本地模式：需要完整文件信息
@@ -174,7 +191,7 @@ func reenqueueResource(res model.Resource) error {
 			AudioSampleRate:     probed.AudioSampleRate,
 			AudioChannels:       probed.AudioChannels,
 			AudioStreams:        probed.AudioStreams,
-			OriginalVideoStatus: -1,
+			OriginalVideoStatus: origStatus,
 		}
 	}
 

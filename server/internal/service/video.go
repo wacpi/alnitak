@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -1720,6 +1721,12 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 	// 将稿件状态设为转码中，避免前端展示无资源的稿件
 	global.Mysql.Model(&model.Video{}).Where("id = ?", videoId).Update("status", global.VIDEO_PROCESSING)
 	cache.DelVideoInfo(videoId)
+
+	// 保存原始审核状态到 Redis，供 cron 恢复时使用
+	// 如果后续 Enqueue 失败，cron RecoverStuckTranscoding 的 reenqueueResource
+	// 会读此值设置 OriginalVideoStatus，保证转码完成后恢复到正确状态。
+	origStatusKey := fmt.Sprintf("transcoding:orig_status:%d", videoId)
+	global.Redis.RawClient().Set(context.Background(), origStatusKey, originalVideoStatus, 72*time.Hour)
 
 	// ========== 第3步：异步执行 ffprobe 探测、创建资源、启动转码 ==========
 	// ffprobe 大文件耗时较长，放入 goroutine 避免 API 超时
