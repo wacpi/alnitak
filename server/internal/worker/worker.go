@@ -308,6 +308,7 @@ func (w *Worker) Run(ctx context.Context) error {
 					jobJSON, ok := msg.Values["job"].(string)
 					if !ok {
 						w.rdb.XAck(ctx, transcodingQueueStream, transcoderGroup, msgID)
+						w.rdb.XDel(ctx, transcodingQueueStream, msgID)
 						continue
 					}
 
@@ -368,6 +369,7 @@ func (w *Worker) recoverPending(ctx context.Context) error {
 			// 超过重试上限 → 移入死信
 			w.sendToDeadLetter(ctx, p.ID, fmt.Sprintf("retry count %d exceeded max", p.RetryCount))
 			w.rdb.XAck(ctx, transcodingQueueStream, transcoderGroup, p.ID)
+			w.rdb.XDel(ctx, transcodingQueueStream, p.ID)
 			zap.L().Warn("Moved to dead letter",
 				zap.String("msgID", p.ID),
 				zap.Int64("retryCount", p.RetryCount))
@@ -399,6 +401,7 @@ func (w *Worker) recoverPending(ctx context.Context) error {
 		jobJSON, ok := msg.Values["job"].(string)
 		if !ok {
 			w.rdb.XAck(ctx, transcodingQueueStream, transcoderGroup, msg.ID)
+			w.rdb.XDel(ctx, transcodingQueueStream, msg.ID)
 			continue
 		}
 		// recovery 阶段使用轻量 goroutine，受全局 sem 约束
@@ -441,7 +444,7 @@ func (w *Worker) sendToDeadLetter(ctx context.Context, msgID, reason string) {
 // =============================================================================
 
 // processJob 处理单个转码任务。
-func (w *Worker) processJob(ctx context.Context, rawJob, msgID string) error {
+func (w *Worker) processJob(ctx context.Context, rawJob, msgID string) (err error) {
 	var info dto.TranscodingInfo
 	if err := json.Unmarshal([]byte(rawJob), &info); err != nil {
 		return fmt.Errorf("unmarshal job: %w", err)
@@ -449,6 +452,14 @@ func (w *Worker) processJob(ctx context.Context, rawJob, msgID string) error {
 
 	jobCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	// 无论成功还是失败都 ACK + XDEL 消息：
+	//   - XAck 防止 Worker 重启后重新消费已处理的任务
+	//   - XDEL 防止 Stream 堆积导致 maxDepth 上限被占满
+	defer func() {
+		w.rdb.XAck(ctx, transcodingQueueStream, transcoderGroup, msgID)
+		w.rdb.XDel(ctx, transcodingQueueStream, msgID)
+	}()
 
 	// 注册当前任务以便取消
 	w.mu.Lock()
@@ -625,7 +636,7 @@ func (w *Worker) processJob(ctx context.Context, rawJob, msgID string) error {
 		if data, err := json.Marshal(uploadInfo); err == nil {
 			_ = w.rdb.HSet(ctx, statusKey, "upload", string(data)).Err()
 		}
-		if err := w.uploadOutputs(&info, targets, audioFiles); err != nil {
+		if err := w.uploadOutputs(ctx, statusKey, &info, targets, audioFiles); err != nil {
 			w.writeStatus(statusKey, "upload_failed", 90, err.Error())
 			return fmt.Errorf("upload outputs: %w", err)
 		}
@@ -642,9 +653,6 @@ func (w *Worker) processJob(ctx context.Context, rawJob, msgID string) error {
 		zap.L().Error("HSet status failed", zap.String("key", statusKey), zap.Error(err))
 	}
 	w.rdb.Publish(ctx, transcodingCompleteChannel, fmt.Sprintf("%d", info.ResourceID))
-
-	// 6. ACK
-	w.rdb.XAck(ctx, transcodingQueueStream, transcoderGroup, msgID)
 
 	zap.L().Info("Job completed",
 		zap.Uint("resourceID", info.ResourceID),
@@ -737,7 +745,7 @@ func (w *Worker) probeInput(info *dto.TranscodingInfo) error {
 
 // uploadOutputs 将转码产物（视频+音频）上传到 OSS（主+备）。
 // audioFiles 由 encodeAudio 返回，含临时路径与 OSS key。
-func (w *Worker) uploadOutputs(info *dto.TranscodingInfo, targets []ffmpeg.TranscodingTarget, audioFiles []audioFileEntry) error {
+func (w *Worker) uploadOutputs(ctx context.Context, statusKey string, info *dto.TranscodingInfo, targets []ffmpeg.TranscodingTarget, audioFiles []audioFileEntry) error {
 	type uploadFile struct {
 		localPath string
 		ossKey    string
@@ -764,11 +772,28 @@ func (w *Worker) uploadOutputs(info *dto.TranscodingInfo, targets []ffmpeg.Trans
 	}
 
 	// 上传到主 OSS
-	for _, f := range files {
+	total := len(files)
+	for i, f := range files {
 		if err := w.storage.PutObjectFromFile(f.ossKey, f.localPath); err != nil {
 			return fmt.Errorf("upload %s: %w", f.ossKey, err)
 		}
 		defer os.Remove(f.localPath)
+
+		// 每上传一个文件更新一次进度
+		pct := int(float64(i+1) / float64(total) * 100)
+		uploadInfo := map[string]interface{}{
+			"ossType":  w.cfg.Storage.OssType,
+			"progress": pct,
+			"status":   "uploading",
+		}
+		if data, err := json.Marshal(uploadInfo); err == nil {
+			_ = w.rdb.HSet(ctx, statusKey, "upload", string(data)).Err()
+		}
+		zap.L().Info("Upload progress",
+			zap.String("resourceKey", statusKey),
+			zap.Int("fileIndex", i+1),
+			zap.Int("totalFiles", total),
+			zap.Int("progress", pct))
 	}
 
 	// 上传到备用 OSS（多源容灾，失败不阻塞主流程）

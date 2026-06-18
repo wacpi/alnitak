@@ -37,5 +37,8 @@ func StartCronTask() {
 	// 每30分钟重试备用OSS上传失败记录
 	c.Every(30).Minutes().Do(safeDo(RetryBackupFailures))
 
+	// 每5分钟恢复卡住的转码任务（Enqueue失败但状态未更新）
+	c.Every(5).Minutes().Do(safeDo(RecoverStuckTranscoding))
+
 	<-c.Start()
 }
