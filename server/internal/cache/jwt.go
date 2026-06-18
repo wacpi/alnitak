@@ -24,3 +24,8 @@ func SetRefreshToken(id uint, token string) {
 func DelRefreshToken(id uint, token string) {
 	global.Redis.ZRem(REFRESH_TOKEN_KEY+utils.UintToString(id), token)
 }
+
+// DelAllRefreshToken 删除用户的所有 refreshToken（改密码/强制下线时使用）
+func DelAllRefreshToken(id uint) {
+	global.Redis.Del(REFRESH_TOKEN_KEY + utils.UintToString(id))
+}

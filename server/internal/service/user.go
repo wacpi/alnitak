@@ -24,12 +24,19 @@ func UserRegister(ctx *gin.Context, registerReq dto.RegisterReq) error {
 		return errors.New("邮箱已存在")
 	}
 
+	// 验证码暴力枚举防护
+	if cache.GetEmailCodeTryCount(registerReq.Email) > 5 {
+		return errors.New("验证码错误次数过多，请重新获取")
+	}
+
 	if cache.GetEmailCode(registerReq.Email) != registerReq.Code { // 验证邮箱验证码
+		cache.IncrEmailCodeTryCount(registerReq.Email)
 		return errors.New("邮箱验证码错误")
 	}
 
-	// 删除邮箱验证码
+	// 删除邮箱验证码及计数
 	cache.DelEmailCode(registerReq.Email)
+	cache.DelEmailCodeTryCount(registerReq.Email)
 
 	// 对密码加密
 	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(registerReq.Password), bcrypt.DefaultCost)
@@ -218,19 +225,40 @@ func ResetPwdCheck(ctx *gin.Context, email string) error {
 }
 
 func ModifyPwd(ctx *gin.Context, modifyPwdReq dto.ModifyPwdReq) error {
-	if cache.GetEmailCode(modifyPwdReq.Email) != modifyPwdReq.Code { // 验证邮箱验证码
+	// 校验：必须先通过 ResetPwdCheck（人机验证）才能改密码
+	if cache.GetResetPwdCheckStatus(modifyPwdReq.Email) != 1 {
+		return errors.New("请先完成安全验证")
+	}
+
+	// 校验：邮箱验证码
+	if cache.GetEmailCode(modifyPwdReq.Email) != modifyPwdReq.Code {
+		// 验证码错误计数
+		cache.IncrEmailCodeTryCount(modifyPwdReq.Email)
+		if cache.GetEmailCodeTryCount(modifyPwdReq.Email) > 5 {
+			cache.DelEmailCode(modifyPwdReq.Email)            // 使当前验证码失效
+			cache.DelResetPwdCheckStatus(modifyPwdReq.Email) // 需要重新走安全验证
+			return errors.New("验证码错误次数过多，请重新获取")
+		}
 		return errors.New("邮箱验证错误")
 	}
 
 	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(modifyPwdReq.Password), bcrypt.DefaultCost)
-	if err := global.Mysql.Model(&model.User{}).Where("email = ?", modifyPwdReq.Email).
-		Update("password", hashedPassword).Error; err != nil {
+	user, err := FindUserByEmail(modifyPwdReq.Email)
+	if err != nil {
+		return errors.New("用户不存在")
+	}
+	if err := global.Mysql.Model(&model.User{}).Where("id = ?", user.ID).
+		Update("password", string(hashedPassword)).Error; err != nil {
 		utils.ErrorLog("修改密码失败", "user", err.Error())
 		return errors.New("修改失败")
 	}
 
-	// 删除验证状态
+	// 清理验证状态
+	cache.DelEmailCode(modifyPwdReq.Email)
+	cache.DelEmailCodeTryCount(modifyPwdReq.Email)
 	cache.DelResetPwdCheckStatus(modifyPwdReq.Email)
+	// 改密码后失效该用户的所有已有 refreshToken，防止已被窃取的会话续签
+	cache.DelAllRefreshToken(user.ID)
 
 	return nil
 }
