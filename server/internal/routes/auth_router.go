@@ -10,11 +10,11 @@ func CollectUserAuthRoutes(r *gin.RouterGroup) {
 	authGroup := r.Group("auth")
 
 	// 用户注册
-	authGroup.POST("register", api.Register)
+	authGroup.POST("register", middleware.RateLimiter(middleware.LoginRateLimit), api.Register)
 	// 用户登录(密码)
-	authGroup.POST("login", api.Login)
+	authGroup.POST("login", middleware.RateLimiter(middleware.LoginRateLimit), api.Login)
 	// 用户登录(邮箱)
-	authGroup.POST("login/email", api.EmailLogin)
+	authGroup.POST("login/email", middleware.RateLimiter(middleware.LoginRateLimit), api.EmailLogin)
 	// 当前会话用户（支持 Authorization / Cookie）
 	authGroup.GET("me", api.Me)
 	// 退出登录：凭 body 或 HttpOnly refresh_token Cookie，无需 Authorization（行业常见做法）
@@ -22,9 +22,9 @@ func CollectUserAuthRoutes(r *gin.RouterGroup) {
 	// 更新token
 	authGroup.POST("updateToken", api.UpdateToken)
 	// 修改密码检查
-	authGroup.POST("resetpwdCheck", api.ResetPwdCheck)
+	authGroup.POST("resetpwdCheck", middleware.RateLimiter(middleware.ModifyPwdRateLimit), api.ResetPwdCheck)
 	// 修改密码
-	authGroup.POST("modifyPwd", api.ModifyPwd)
+	authGroup.POST("modifyPwd", middleware.RateLimiter(middleware.ModifyPwdRateLimit), api.ModifyPwd)
 
 	// 认证类型列表（公开）
 	authGroup.GET("type/list", api.GetAuthTypeList)
