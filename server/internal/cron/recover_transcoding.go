@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 	"interastral-peace.com/alnitak/internal/domain/dto"
@@ -17,6 +18,8 @@ import (
 const (
 	transcodingQueueStream    = "transcoding:queue"
 	transcodingStatusPrefix   = "transcoding:status:"
+	retryCounterPrefix        = "transcoding:retry:"
+	maxReenqueueRetries       = 3
 )
 
 
@@ -61,9 +64,29 @@ func RecoverStuckTranscoding() {
 		}
 
 		if exists > 0 {
-			// Redis 中有进度记录，说明 pollProgress 在运行或者任务已成功入队
-			skipped++
-			continue
+			// 有进度哈希 → 检查是否过期（pollProgress 丢失后留下的残渣）
+			status, err := rdb.HGet(ctx, redisKey, "status").Result()
+			if err != nil {
+				utils.ErrorLog("读取哈希状态失败", "cron",
+					fmt.Sprintf("ResourceID=%d, err=%v", res.ID, err))
+				errors++
+				continue
+			}
+			if status == "completed" || status == "failed" || status == "partial_fail" {
+				// pollProgress 丢失（主服务重启）导致无人处理此完成状态，
+				// 删掉哈希后重新入队，新的 pollProgress 会接管。
+				utils.InfoLog(fmt.Sprintf("发现过期完成状态，重新入队: ResourceID=%d, VideoID=%d, status=%s",
+					res.ID, res.Vid, status), "cron")
+				if err := rdb.Del(ctx, redisKey).Err(); err != nil {
+					utils.ErrorLog("删除过期哈希失败", "cron",
+						fmt.Sprintf("ResourceID=%d, err=%v", res.ID, err))
+				}
+				// 继续执行下面的重新入队逻辑
+			} else {
+				// 任务正常进行中，跳过
+				skipped++
+				continue
+			}
 		}
 
 		// 再检查 Stream 中是否已有该 resourceID 的条目
@@ -80,7 +103,8 @@ func RecoverStuckTranscoding() {
 			continue
 		}
 
-		// 没有 Redis 进度记录 + Stream 中没有 → Enqueue 从未成功 → 需要重新入队
+		// 没有 Redis 进度记录（或已被删除）+ Stream 中无条目
+		// → Enqueue 从未成功或哈希残留已清理 → 重新入队
 		utils.InfoLog(fmt.Sprintf("发现卡住的转码任务，准备重新入队: ResourceID=%d, VideoID=%d", res.ID, res.Vid), "cron")
 
 		if err := reenqueueResource(res); err != nil {
@@ -129,7 +153,31 @@ func resourceInStream(ctx context.Context, rdb *redis.Client, resourceID uint) (
 }
 
 // reenqueueResource 为指定资源重建 TranscodingInfo 并重新入队
+// 每次调用前会检查重试上限，超出则标记 PROCESSING_FAIL 不再重试。
 func reenqueueResource(res model.Resource) error {
+	rdb := global.Redis.RawClient()
+	ctx := context.Background()
+
+	// 0. 重试上限检查
+	retryKey := fmt.Sprintf("%s%d", retryCounterPrefix, res.ID)
+	retryCount, err := rdb.Incr(ctx, retryKey).Result()
+	if err != nil {
+		return fmt.Errorf("重试计数器失败: %w", err)
+	}
+	rdb.Expire(ctx, retryKey, 72*time.Hour) // 避免键堆积
+
+	if retryCount > maxReenqueueRetries {
+		utils.InfoLog(fmt.Sprintf("转码恢复已达上限(%d)，标记失败: ResourceID=%d",
+			maxReenqueueRetries, res.ID), "cron")
+		global.Mysql.Model(&model.Resource{}).Where("id = ?", res.ID).
+			Update("status", global.PROCESSING_FAIL)
+		rdb.Del(ctx, retryKey)
+		// 同时清理可能残留的进度哈希
+		statusKey := fmt.Sprintf("%s%d", transcodingStatusPrefix, res.ID)
+		rdb.Del(ctx, statusKey)
+		return fmt.Errorf("转码恢复已达上限(%d)，资源已标记为处理失败", maxReenqueueRetries)
+	}
+
 	// 1. 获取 VideoFile 信息（用于构建文件路径）
 	var vf model.VideoFile
 	if err := global.Mysql.Where("id = ?", res.FileID).First(&vf).Error; err != nil {
@@ -144,14 +192,14 @@ func reenqueueResource(res model.Resource) error {
 	// 2. 获取原始审核状态（由 ReTranscodeVideo 写入 Redis）
 	origStatus := getOriginalVideoStatus(res.Vid)
 
-	// 3. 如果是远程模式，Worker 会从 OSS 下载文件并自行 ffprobe，
-	//    只需提供基础字段即可；本地模式需要探测源文件。
+	// 3. 构建 TranscodingInfo
+	//    远程模式：Worker 会从 OSS 下载文件并自行 ffprobe，只需基础字段
+	//    本地模式：需要探测源文件
 	inputPath := "./upload/video/" + vf.DirName + "/upload" + suffix
 
 	var info *dto.TranscodingInfo
 
 	if global.Config.Transcoding.Mode == "remote" {
-		// 远程模式：Worker 下载后自己 probe，只需传基础信息
 		info = &dto.TranscodingInfo{
 			VideoID:             res.Vid,
 			ResourceID:          res.ID,
@@ -164,7 +212,6 @@ func reenqueueResource(res model.Resource) error {
 			OriginalVideoStatus: origStatus,
 		}
 	} else {
-		// 本地模式：需要完整文件信息
 		if _, err := os.Stat(inputPath); os.IsNotExist(err) {
 			return fmt.Errorf("源文件不存在: %s", inputPath)
 		}
@@ -195,10 +242,13 @@ func reenqueueResource(res model.Resource) error {
 		}
 	}
 
-	// 3. 入队
+	// 4. 入队
 	if err := service.GetCurrentTranscoder().Enqueue(context.Background(), info); err != nil {
 		return fmt.Errorf("Enqueue失败: %w", err)
 	}
+
+	// 入队成功，清除重试计数器，下次再卡住从 1 开始计数
+	rdb.Del(ctx, retryKey)
 
 	utils.InfoLog(fmt.Sprintf("转码任务重新入队成功: ResourceID=%d, VideoID=%d, DirName=%s",
 		res.ID, res.Vid, vf.DirName), "cron")
