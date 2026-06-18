@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -312,6 +313,18 @@ func (t *RemoteTranscoder) handleRemoteCompletion(ctx context.Context, info *dto
 	utils.InfoLog(fmt.Sprintf("【远程转码】索引创建完成，共 %d 个画质", len(indexRecords)), "transcoding")
 	if err := svc.completeTransaction(ctx, info, global.WAITING_REVIEW); err != nil {
 		utils.ErrorLog("【远程转码】完成事务失败", "transcoding", err.Error())
+	}
+
+	// 5. 清理本地源文件和目录
+	// 远程模式下 Worker 从 OSS 拉取源文件进行转码，转码产物也直接写入 OSS，
+	// 本地副本（upload.mp4 等）已无用处，删除以释放 VPS 磁盘空间。
+	if info.OutputDir != "" {
+		if err := os.RemoveAll(info.OutputDir); err != nil {
+			utils.ErrorLog("【远程转码】清理本地源文件目录失败", "transcoding",
+				fmt.Sprintf("dir=%s err=%v", info.OutputDir, err))
+		} else {
+			utils.InfoLog(fmt.Sprintf("【远程转码】已清理本地源文件目录: %s", info.OutputDir), "transcoding")
+		}
 	}
 }
 

@@ -3,8 +3,12 @@ package service
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"interastral-peace.com/alnitak/internal/domain/dto"
+	"interastral-peace.com/alnitak/internal/global"
+	"interastral-peace.com/alnitak/utils"
 )
 
 // LocalTranscoder 包装现有的 TranscodeService，在本地进程内执行转码。
@@ -23,7 +27,43 @@ func (t *LocalTranscoder) Enqueue(ctx context.Context, info *dto.TranscodingInfo
 	if info == nil {
 		return fmt.Errorf("transcoding info is nil")
 	}
-	go t.inner.ProcessVideo(ctx, info)
+	go func() {
+		// 确保本地源文件可用：如果本地不存在则从 OSS 下载（兼容远程→本地切换场景）
+		if err := ensureLocalSourceFile(info); err != nil {
+			utils.ErrorLog("【本地转码】无法获取源文件，取消转码", "transcoding", err.Error())
+			return
+		}
+		t.inner.ProcessVideo(ctx, info)
+	}()
+	return nil
+}
+
+// ensureLocalSourceFile 确保本地源文件存在。如果本地没有且 OSS 上有备份，自动下载。
+// 解决场景：远程模式运行一段时间后切回本地模式，源文件已被清理，需从 OSS 恢复。
+func ensureLocalSourceFile(info *dto.TranscodingInfo) error {
+	if utils.IsFileExists(info.InputFile) {
+		return nil // 本地已有，直接使用
+	}
+
+	// local 存储模式没有 OSS 备份，无法恢复，只能抛错
+	if global.Config.Storage.OssType == "local" || global.Storage == nil {
+		return fmt.Errorf("源文件不存在且无法从OSS下载（local存储）: %s", info.InputFile)
+	}
+
+	objectKey := fmt.Sprintf("video/%s/upload%s", info.DirName, info.Suffix)
+	utils.InfoLog(fmt.Sprintf("【本地转码】源文件不存在，从OSS下载 key=%s -> %s", objectKey, info.InputFile), "transcoding")
+
+	// 确保父目录存在
+	parentDir := filepath.Dir(info.InputFile)
+	if err := os.MkdirAll(parentDir, 0755); err != nil {
+		return fmt.Errorf("创建目录失败 %s: %w", parentDir, err)
+	}
+
+	if err := global.Storage.GetObjectToFile(objectKey, info.InputFile); err != nil {
+		return fmt.Errorf("从OSS下载源文件失败 key=%s: %w", objectKey, err)
+	}
+
+	utils.InfoLog(fmt.Sprintf("【本地转码】OSS源文件下载完成: %s", info.InputFile), "transcoding")
 	return nil
 }
 
