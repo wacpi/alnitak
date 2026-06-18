@@ -1,10 +1,6 @@
 interface OtherConfigType {
   allowOrigin: string;
   prefix: string;
-  generate1080p60: boolean;
-  useGpu: boolean;
-  useH265: boolean;
-  useAv1: boolean;
   serverPort: string;
   sslEnabled: boolean;
   sslPort: string;
@@ -33,4 +29,18 @@ interface StorageConfigType {
   domain: string;
   private: boolean;
   uploadMp4File: boolean;
+}
+
+interface TranscodingConfigType {
+  mode: string;
+  useGpu: boolean;
+  useH265: boolean;
+  useAv1: boolean;
+  generate1080p60: boolean;
+  maxCpuConcurrency: number;
+  maxGpuConcurrency: number;
+  workerConcurrency: number;
+  encodingConcurrency: number;
+  maxQueueDepth: number;
+  workDir: string;
 }
