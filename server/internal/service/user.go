@@ -263,6 +263,40 @@ func ModifyPwd(ctx *gin.Context, modifyPwdReq dto.ModifyPwdReq) error {
 	return nil
 }
 
+// ChangePassword 修改密码（已登录用户，知道旧密码）
+func ChangePassword(ctx *gin.Context, userId uint, req dto.ChangePasswordReq) error {
+	if len(req.NewPassword) < 6 {
+		return errors.New("新密码长度不能小于6位")
+	}
+
+	user, err := FindUserById(userId)
+	if err != nil {
+		return errors.New("用户不存在")
+	}
+
+	// 校验旧密码
+	if bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.OldPassword)) != nil {
+		return errors.New("旧密码错误")
+	}
+
+	// 新密码不能和旧密码相同
+	if req.OldPassword == req.NewPassword {
+		return errors.New("新密码不能与旧密码相同")
+	}
+
+	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err := global.Mysql.Model(&model.User{}).Where("id = ?", user.ID).
+		Update("password", string(hashedPassword)).Error; err != nil {
+		utils.ErrorLog("修改密码失败", "user", err.Error())
+		return errors.New("修改失败")
+	}
+
+	// 改密码后失效所有 refreshToken，防止已被窃取的会话续签
+	cache.DelAllRefreshToken(user.ID)
+
+	return nil
+}
+
 // 获取用户列表
 func GetUserListManage(userListReq dto.UserListReq) (total int64, users []vo.UserInfoManageResp) {
 	global.Mysql.Model(&model.User{}).Count(&total)

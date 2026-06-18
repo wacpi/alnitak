@@ -62,6 +62,12 @@ type ModifyPwdReq struct {
 	CaptchaId string
 }
 
+// 修改密码（已登录用户，知道旧密码）
+type ChangePasswordReq struct {
+	OldPassword string `json:"oldPassword"`
+	NewPassword string `json:"newPassword"`
+}
+
 // 编辑用户信息
 type EditUserInfoManageReq struct {
 	Uid        uint

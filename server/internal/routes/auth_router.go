@@ -26,6 +26,9 @@ func CollectUserAuthRoutes(r *gin.RouterGroup) {
 	// 修改密码
 	authGroup.POST("modifyPwd", middleware.RateLimiter(middleware.ModifyPwdRateLimit), api.ModifyPwd)
 
+	// 修改密码（已登录状态，需校验旧密码）
+	authGroup.POST("changePassword", middleware.Auth(), middleware.RateLimiter(middleware.ModifyPwdRateLimit), api.ChangePassword)
+
 	// 认证类型列表（公开）
 	authGroup.GET("type/list", api.GetAuthTypeList)
 	// 获取用户认证列表（公开）

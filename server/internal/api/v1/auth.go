@@ -296,6 +296,29 @@ func ModifyPwd(ctx *gin.Context) {
 	resp.Ok(ctx)
 }
 
+// 修改密码（已登录用户，需校验旧密码）
+func ChangePassword(ctx *gin.Context) {
+	var req dto.ChangePasswordReq
+	if err := ctx.Bind(&req); err != nil {
+		resp.FailWithMessage(ctx, "请求参数有误")
+		return
+	}
+
+	if req.NewPassword == "" || req.OldPassword == "" {
+		resp.FailWithMessage(ctx, "参数不能为空")
+		return
+	}
+
+	userId, _ := ctx.Get("userId")
+	if err := service.ChangePassword(ctx, userId.(uint), req); err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+
+	// 改密后清除本地凭证，弹回登录页（前端拦截器处理）
+	resp.OkWithMessage(ctx, "密码修改成功，请重新登录")
+}
+
 // ========== 认证类型 API ==========
 
 // AddAuthType 添加认证类型
