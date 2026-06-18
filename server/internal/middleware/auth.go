@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 
+	"interastral-peace.com/alnitak/internal/cache"
 	"interastral-peace.com/alnitak/internal/global"
 	"interastral-peace.com/alnitak/internal/resp"
 	"interastral-peace.com/alnitak/internal/service"
@@ -55,6 +56,13 @@ func Auth() gin.HandlerFunc {
 		// 验证token存在 -> 判断token类型
 		// ParseToken 成功时 claims 保证非 nil
 		if claims.TokenType == 0 { // accessToken
+			// 检查 accessToken 是否已被吊销（登出后立即失效）
+			if cache.IsAccessTokenBlacklisted(tokenString) {
+				resp.Result(ctx, 3000, nil, "TOKEN已失效")
+				ctx.Abort()
+				return
+			}
+
 			user, _ := service.FindUserById(claims.UserId)
 
 			// 获得用户的全部角色
@@ -92,7 +100,10 @@ func OptionalAuth() gin.HandlerFunc {
 		tokenString = trimBearer(tokenString)
 		_, claims, err := jwt_parse.ParseToken(tokenString)
 		if err == nil && claims != nil && claims.TokenType == 0 {
-			ctx.Set("userId", claims.UserId)
+			// 跳过已吊销的 token
+			if !cache.IsAccessTokenBlacklisted(tokenString) {
+				ctx.Set("userId", claims.UserId)
+			}
 		}
 		ctx.Next()
 	}

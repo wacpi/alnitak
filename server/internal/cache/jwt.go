@@ -1,11 +1,15 @@
 package cache
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"time"
 
 	"interastral-peace.com/alnitak/internal/global"
 	"interastral-peace.com/alnitak/utils"
 )
+
+const ACCESS_TOKEN_BLACKLIST_KEY = "access_token_blacklist:"
 
 func IsRefreshTokenExist(userId uint, token string) bool {
 	return global.Redis.ZScore(REFRESH_TOKEN_KEY+utils.UintToString(userId), token) != 0
@@ -28,4 +32,25 @@ func DelRefreshToken(id uint, token string) {
 // DelAllRefreshToken 删除用户的所有 refreshToken（改密码/强制下线时使用）
 func DelAllRefreshToken(id uint) {
 	global.Redis.Del(REFRESH_TOKEN_KEY + utils.UintToString(id))
+}
+
+// ========== AccessToken 黑名单（登出后立即失效） ==========
+
+// SetBlacklistedAccessToken 将 accessToken 加入黑名单，TTL 为 token 剩余有效期
+func SetBlacklistedAccessToken(tokenString string, expiresAt time.Time) {
+	ttl := time.Until(expiresAt)
+	if ttl <= 0 {
+		return
+	}
+	// 用 token 的 SHA256 摘要做 key，避免原始 token 过长
+	hash := sha256.Sum256([]byte(tokenString))
+	key := ACCESS_TOKEN_BLACKLIST_KEY + hex.EncodeToString(hash[:])
+	global.Redis.Set(key, "1", ttl)
+}
+
+// IsAccessTokenBlacklisted 检查 accessToken 是否已被吊销
+func IsAccessTokenBlacklisted(tokenString string) bool {
+	hash := sha256.Sum256([]byte(tokenString))
+	key := ACCESS_TOKEN_BLACKLIST_KEY + hex.EncodeToString(hash[:])
+	return global.Redis.Get(key) != ""
 }

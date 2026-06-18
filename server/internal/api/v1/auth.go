@@ -207,6 +207,15 @@ func Logout(ctx *gin.Context) {
 		}
 	}
 
+	// 将当前 accessToken 加入黑名单，使其立即失效
+	if accessToken := ctx.GetHeader("Authorization"); accessToken != "" {
+		if _, claims, err := jwt_parse.ParseToken(accessToken); err == nil && claims != nil {
+			if claims.TokenType == 0 && claims.ExpiresAt != nil {
+				cache.SetBlacklistedAccessToken(accessToken, claims.ExpiresAt.Time)
+			}
+		}
+	}
+
 	service.Logout(ctx, tokenReq)
 	clearRefreshCookie(ctx)
 	resp.Ok(ctx)
