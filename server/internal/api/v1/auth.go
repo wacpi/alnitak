@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"interastral-peace.com/alnitak/internal/cache"
@@ -211,7 +212,14 @@ func Logout(ctx *gin.Context) {
 	if accessToken := ctx.GetHeader("Authorization"); accessToken != "" {
 		if _, claims, err := jwt_parse.ParseToken(accessToken); err == nil && claims != nil {
 			if claims.TokenType == 0 && claims.ExpiresAt != nil {
-				cache.SetBlacklistedAccessToken(accessToken, claims.ExpiresAt.Time)
+				// ParseToken 内部使用了 trimBearer，但原始 accessToken 可能含 "Bearer " 前缀，
+				// 而 Auth/OptionalAuth 中间件传入 IsAccessTokenBlacklisted 的是 trimBearer 之后的值。
+				// 为保证 hash key 一致，此处统一去除前缀（大小写不敏感）。
+				cleanToken := accessToken
+				if len(cleanToken) > 7 && strings.EqualFold(cleanToken[:7], "Bearer ") {
+					cleanToken = cleanToken[7:]
+				}
+				cache.SetBlacklistedAccessToken(cleanToken, claims.ExpiresAt.Time)
 			}
 		}
 	}
