@@ -8,13 +8,10 @@ export default defineNuxtPlugin(async () => {
   const auth = useAuthStore();
   const headers: Record<string, string> = {};
 
+  // 转发 Cookie（含 HttpOnly refresh_token），后端 /auth/me 支持 Cookie 鉴权
   const cookie = useRequestHeaders(['cookie']).cookie;
   if (cookie) {
     headers.cookie = cookie;
-    const token = cookie.split(';').find(c => c.trim().startsWith('token='))?.split('=')[1];
-    if (token) {
-      headers.authorization = `Bearer ${token}`;
-    }
   }
 
   // SSR阶段直接请求后端（端口9001），避免代理问题
@@ -23,7 +20,6 @@ export default defineNuxtPlugin(async () => {
   const url = `${protocol}://${domain}/api/v1/auth/me`;
 
   try {
-    // NODE_TLS_REJECT_UNAUTHORIZED=0 已经全局禁用证书验证
     const res: any = await $fetch(url, { headers });
     if (res?.code === statusCode.OK && res?.data?.userInfo) {
       auth.initFromSSR({ status: 'auth', user: res.data.userInfo });
@@ -35,4 +31,3 @@ export default defineNuxtPlugin(async () => {
 
   auth.initFromSSR({ status: 'guest', user: null });
 });
-

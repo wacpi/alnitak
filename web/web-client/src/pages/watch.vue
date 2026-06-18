@@ -126,10 +126,8 @@ import { createUUID } from "@/utils/uuid";
 import { getDanmakuAPI } from "@/api/danmaku";
 import { getHistoryProgressAPI, addHistoryAPI } from "@/api/history";
 import { globalConfig } from '@/utils/global-config';
-import { updateTokenAPI } from '@/api/auth';
-import { storageData } from '@/utils/storage-data';
-import { useAuthStore, saveCredentials } from '@/stores/auth-store';
 import { statusCode } from '@/utils/status-code';
+import { useAuthStore } from '@/stores/auth-store';
 
 const route = useRoute();
 const router = useRouter();
@@ -599,23 +597,13 @@ const handleVisibilityChange = async () => {
       reconnectAttempts = 0;
       initWebSocket();
     }
-    // 同步登录状态：watch 页的 request interceptor 跳过了 token 自动刷新，
-    // 所以在页面回到前台时手动尝试续签并同步 auth 状态
+    // 同步登录状态：通过 HttpOnly Cookie 续签（不再依赖 localStorage token）
     try {
-      const localRefreshToken = storageData.get('refreshToken');
-      const token = storageData.get('token');
-      if (!token && localRefreshToken) {
-        const res = await updateTokenAPI(localRefreshToken);
-        if (res.data.code === statusCode.OK) {
-          saveCredentials({
-            token: res.data.data.token,
-            refreshToken: res.data.data.refreshToken,
-            userId: res.data.data.userId,
-          });
-        }
-      }
       const auth = useAuthStore();
-      await auth.fetchMe(true);
+      if (!auth.token) {
+        // 无内存 token 时直接由 fetchMe 通过 Cookie 获取新 token
+        await auth.fetchMe(true);
+      }
     } catch {
       // 不阻塞其他逻辑
     }
