@@ -322,7 +322,8 @@ const loadPartList = () => {
   if (props.resources && props.resources.length > 0) {
     partList.value = props.resources.map((resource, index) => ({
       vid: props.vid,
-      shortId: resource.shortId, // 添加资源的 shortId (rid)
+      shortId: props.vid, // shortId 应为视频标识符，资源 rid 用 resourceRid 传递
+      resourceRid: resource.shortId,
       title: '',
       cover: '',
       duration: resource.duration || 0,
@@ -346,7 +347,8 @@ const loadPlaylist = async (vid: number | string) => {
   if (props.resources && props.resources.length > 0) {
     partList.value = props.resources.map((resource, index) => ({
       vid: props.vid,
-      shortId: resource.shortId, // 添加资源的 shortId (rid)
+      shortId: props.vid,
+      resourceRid: resource.shortId,
       title: '',
       cover: '',
       duration: resource.duration || 0,
@@ -383,8 +385,10 @@ videoList.value = (data.videos || []).map((v: any) => ({
       }))
     } else if (!hasCollection && !partList.value.length && data.currentVideoParts && data.currentVideoParts.length > 0) {
       // 没有合集、没有props资源、但API返回了分P
-partList.value = data.currentVideoParts.map((r: any, index: number) => ({
+      partList.value = data.currentVideoParts.map((r: any, index: number) => ({
         vid: vid,
+        shortId: vid,
+        resourceRid: r.shortId,
         title: '',
         cover: '',
         duration: r.duration || 0,
