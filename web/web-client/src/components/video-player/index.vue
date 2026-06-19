@@ -110,9 +110,7 @@ let dashNativeAudioTracks: any[] = [];
 let dashUnifiedMode = false;
 let dashQualityMap: Map<string, number> = new Map(); // 清晰度显示名 → dash.js Representation 索引
 
-/** DASH 片尾兜底：与 dash 调度/缓冲的秒级容差，过小易误判未完结 */
-const DASH_NEAR_END_SEC = 0.45;
-const DASH_VERIFY_END_SEC = 0.35;
+/** DASH 片尾兜底延迟（ms），给 ended 事件缓冲 */
 const DASH_END_FALLBACK_DELAY_MS = 220;
 
 // ===== HLS 清晰度切换时保存播放状态（HLS 模式下 Wplayer 仍会创建新 video 元素） =====
@@ -318,25 +316,18 @@ const options: PlayerOptionsType = {
 				return;
 			}
 			video.dispatchEvent(new Event('ended'));
-
-			// 非循环模式：seek(0) 重置 dash.js MediaSource（ended → open），
-			// 否则用户首次点击播放时 native video.play() 在 ended 状态下不工作，
-			// 表现为需要点击两次才能重播
-			dash.value.seek(0);
 		});
 
         video.addEventListener('timeupdate', () => {
           if (player?.setting?.loop || hasEnded.value || dashEndedFallbackTicking) return;
-          const d = video.duration;
-          if (!Number.isFinite(d) || d <= 0) return;
-          if (video.currentTime < d - DASH_NEAR_END_SEC) return;
+          // 兜底：video.ended 已为 true 但原生 ended 事件未触发（极少数 DASH SegmentBase 场景）
+          if (!video.ended) return;
           dashEndedFallbackTicking = true;
           window.setTimeout(() => {
             dashEndedFallbackTicking = false;
             if (player?.setting?.loop || hasEnded.value) return;
-            const dur = video.duration;
-            if (!Number.isFinite(dur) || dur <= 0) return;
-            if (video.currentTime < dur - DASH_VERIFY_END_SEC) return;
+            // 双重确认 video 确实已结束
+            if (!video.ended) return;
             video.dispatchEvent(new Event('ended'));
           }, DASH_END_FALLBACK_DELAY_MS);
         });
@@ -597,6 +588,18 @@ const loadPart = async (part: number) => {
           lastPlaybackState = { time: player.video.currentTime, playing: false };
         }
       });
+    }
+    // DASH 播放结束后 MediaSource 关闭，原生 video.play() 无法自动重启。
+    // 拦截 play 方法，在视频已结束时先通过 dash.js seek(0) 重置 MediaSource 再播放。
+    if (dash.value) {
+      const origPlay = player.play.bind(player);
+      player.play = function (fromNative?: boolean) {
+        if (dash.value && player.video?.ended) {
+          // seek(0) 重新打开 MediaSource，使后续原生 play() 能正常恢复播放
+          dash.value.seek(0);
+        }
+        origPlay(fromNative);
+      };
     }
     filterDanmaku({ disableLeave, disableType });
 

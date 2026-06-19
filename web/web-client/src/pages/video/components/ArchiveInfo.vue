@@ -60,6 +60,7 @@ import CollectionList from './CollectionList.vue';
 const props = defineProps<{
   vid: number | string;
   shortId?: string;
+  rid?: string;         // 当前分P的资源 rid，嵌入代码用
 }>();
 
 // 点赞收藏数据
@@ -103,8 +104,8 @@ const route = useRoute();
 const embedCode = computed(() => {
   if (process.client) {
     const v = props.shortId || String(props.vid);
-    // 优先使用 rid 精准定位
-    const rid = route.query.rid;
+    // 优先使用 props.rid（父组件同步的当前资源 rid），其次 route.query.rid 兜底
+    const rid = props.rid || route.query.rid;
     if (rid) {
       const url = window.location.origin + `/embed/watch?v=${v}&rid=${rid}`;
       return `<iframe src='${url}' width='800' height='450' frameborder='0' allowfullscreen></iframe>`;

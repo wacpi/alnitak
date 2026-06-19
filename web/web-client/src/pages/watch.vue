@@ -24,7 +24,7 @@
           <!-- 点赞收藏等数据 -->
           <div class="video-toolbar">
             <div class="toolbar-left" v-if="!isPGCPage">
-              <archive-info v-if="videoInfo" :vid="videoInfo.vid" :short-id="videoInfo.shortId"></archive-info>
+              <archive-info v-if="videoInfo" :vid="videoInfo.vid" :short-id="videoInfo.shortId" :rid="videoInfo.resources?.[currentPart - 1]?.shortId"></archive-info>
             </div>
             <div class="toolbar-right">
               <span>{{ onlineCount }} 人在看</span>
