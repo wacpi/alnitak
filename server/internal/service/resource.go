@@ -103,7 +103,7 @@ func GetVideoResourceByStatus(videoId uint, status int) (resources []vo.Resource
 // 获取视频资源（含fileId和uid用于全局去重）
 func GetReviewResourceList(videoId uint) (resources []vo.ResourceResp) {
 	global.Mysql.Model(&model.Resource{}).
-		Select("id, created_at, vid, title, duration, status, file_id, uid, sort_order").
+		Select("id, short_id, created_at, vid, title, duration, status, file_id, uid, sort_order").
 		Where("vid = ?", videoId).
 		Order("sort_order ASC, id ASC").
 		Scan(&resources)
