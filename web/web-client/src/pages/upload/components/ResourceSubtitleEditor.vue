@@ -4,13 +4,13 @@
     <div v-if="loading" class="subtitle-muted">加载中…</div>
     <ul v-else class="track-list">
       <li v-for="t in tracks" :key="t.id" class="track-row">
-        <template v-if="editingId === t.id">
+        <template v-if="editingId === (t.shortId || t.id)">
           <el-select v-model="editForm.lang" size="small" class="inp-lang" filterable allow-create placeholder="语言代码">
             <el-option v-for="opt in LANG_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
           </el-select>
           <el-input v-model="editForm.label" size="small" class="inp-label" placeholder="显示名" maxlength="64" />
           <el-checkbox v-model="editForm.isDefault" size="small">默认</el-checkbox>
-          <el-button link type="primary" size="small" :loading="saving" @click="onSaveEdit(t.id)">保存</el-button>
+          <el-button link type="primary" size="small" :loading="saving" @click="onSaveEdit(t.shortId || t.id)">保存</el-button>
           <el-button link size="small" @click="cancelEdit">取消</el-button>
         </template>
         <template v-else>
@@ -19,7 +19,7 @@
           <el-tag v-if="t.isDefault" size="small" type="success" class="tag-def">默认</el-tag>
           <el-button link type="primary" size="small" @click="startEdit(t)">编辑</el-button>
           <el-button link size="small" @click="onPreview(t)">预览</el-button>
-          <el-popconfirm title="确定删除该字幕？" width="220" @confirm="onDelete(t.id)">
+          <el-popconfirm title="确定删除该字幕？" width="220" @confirm="onDelete(t.shortId || t.id)">
             <template #reference>
               <el-button link type="danger" size="small">删除</el-button>
             </template>
@@ -96,7 +96,7 @@ const form = ref({
   isDefault: false,
 });
 
-const editingId = ref<number | null>(null);
+const editingId = ref<number | string | null>(null);
 const editForm = ref({ lang: '', label: '', isDefault: false });
 const saving = ref(false);
 
@@ -190,7 +190,7 @@ const cancelEdit = () => {
   editingId.value = null;
 };
 
-const onSaveEdit = async (id: number) => {
+const onSaveEdit = async (id: number | string) => {
   const lang = editForm.value.lang.trim();
   if (!lang) {
     ElMessage.warning('请填写语言代码');
@@ -236,7 +236,7 @@ const onPreview = async (track: SubtitleTrackItemType) => {
   }
 };
 
-const onDelete = async (id: number) => {
+const onDelete = async (id: number | string) => {
   try {
     const res = await deleteSubtitleAPI(id);
     if (res.data.code === statusCode.OK) {

@@ -13,13 +13,13 @@ export const uploadSubtitleAPI = (formData: FormData) => {
 };
 
 /** 更新字幕元数据或文件（JSON 或 multipart） */
-export const updateSubtitleAPI = (id: number, data: Record<string, unknown> | FormData) => {
+export const updateSubtitleAPI = (id: number | string, data: Record<string, unknown> | FormData) => {
   if (data instanceof FormData) {
     return request.put(`v1/video/subtitle/${id}`, data);
   }
   return request.put(`v1/video/subtitle/${id}`, data);
 };
 
-export const deleteSubtitleAPI = (id: number) => {
+export const deleteSubtitleAPI = (id: number | string) => {
   return request.delete(`v1/video/subtitle/${id}`);
 };
