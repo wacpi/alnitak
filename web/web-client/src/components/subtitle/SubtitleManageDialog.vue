@@ -18,7 +18,7 @@ import { getVideoStatusAPI } from '@/api/video';
 import ResourceSubtitleEditor from '@/pages/upload/components/ResourceSubtitleEditor.vue';
 
 const props = defineProps<{
-  vid: number | null;
+  vid: number | string | null;
 }>();
 
 const emit = defineEmits<{
@@ -45,7 +45,7 @@ watch(
 
 const subtitleResourceKey = (item: ResourceType) => String(item.shortId || item.id);
 
-const loadVideo = async (vid: number) => {
+const loadVideo = async (vid: number | string) => {
   loading.value = true;
   videoData.value = null;
   try {

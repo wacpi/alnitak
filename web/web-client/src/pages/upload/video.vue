@@ -51,7 +51,7 @@ const getVideoStatus = async (vid: number) => {
 }
 
 onBeforeMount(async () => {
-  const vid = Number(route.query.vid);
+  const vid = route.query.vid as string | undefined;
   if (vid) {
     getVideoStatus(vid);
   }

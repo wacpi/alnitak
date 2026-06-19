@@ -66,8 +66,8 @@
                 </el-button>
                 <template #dropdown>
                   <el-dropdown-menu>
-                    <el-dropdown-item @click="modifyVideo(item.vid)">编辑</el-dropdown-item>
-                    <el-dropdown-item @click="openSubtitleManage(item.vid)">字幕管理</el-dropdown-item>
+<el-dropdown-item @click="modifyVideo(item.shortId || item.vid)">编辑</el-dropdown-item>
+<el-dropdown-item @click="openSubtitleManage(item.shortId || item.vid)">字幕管理</el-dropdown-item>
                     <el-dropdown-item @click="deleteVideo(item, index)">删除稿件</el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
@@ -101,7 +101,7 @@ import { formatTime } from '@/utils/format';
 import { getResourceUrl } from '@/utils/resource';
 import SubtitleManageDialog from '@/components/subtitle/SubtitleManageDialog.vue';
 
-const subtitleManageVid = ref<number | null>(null);
+const subtitleManageVid = ref<string | number | null>(null);
 
 const page = ref(1);
 const total = ref(0);
@@ -317,11 +317,11 @@ const showReason = async (vid: number) => {
 }
 
 //前往修改视频
-const modifyVideo = (vid: number) => {
+const modifyVideo = (vid: number | string) => {
   navigateTo({ name: "upload-video", query: { vid: vid } });
 }
 
-const openSubtitleManage = (vid: number) => {
+const openSubtitleManage = (vid: number | string) => {
   subtitleManageVid.value = vid;
 }
 
