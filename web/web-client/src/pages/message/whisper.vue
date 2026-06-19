@@ -56,8 +56,8 @@ import { ElMessage } from 'element-plus';
 import { getUserBaseInfoAPI, getUserInfoAPI } from '@/api/user';
 import { onBeforeMount, onBeforeUnmount, reactive, ref, nextTick } from 'vue';
 import { getWhisperDetailsAPI, getWhisperListAPI, readWhisperAPI, sendWhisperAPI } from "@/api/msg-whisper";
-import { storageData } from "@/utils/storage-data";
 import { globalConfig } from "@/utils/global-config";
+import { getBrowserToken } from "@/stores/auth-store";
 
 definePageMeta({
   middleware: ['auth']
@@ -217,7 +217,7 @@ let websocket: WebSocket | null = null;
 //初始化weosocket
 const initWebSocket = async () => {
   const wsProtocol = globalConfig.https ? 'wss://' : 'ws://';
-  SocketURL = `${wsProtocol}${globalConfig.domain}/api/v1/message/ws?token=${storageData.get("token")}`;
+  SocketURL = `${wsProtocol}${globalConfig.domain}/api/v1/message/ws?token=${getBrowserToken()}`;
   websocket = new WebSocket(SocketURL);
   websocket.onmessage = websocketOnmessage;
   websocket.onerror = () => {};

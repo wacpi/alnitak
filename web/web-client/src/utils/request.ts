@@ -130,15 +130,14 @@ service.interceptors.response.use(async (res) => {
           });
         });
       case statusCode.LOGIN_AGAIN:
-        // 清理缓存信息并切换为游客态。
-        // 注意：这里不要自动弹出登录弹窗，否则"跨标签页退出登录"或页面后台轮询时
-        // 会在用户无操作的情况下频繁弹窗，影响体验。
+        // 仅清理本地凭证和切换游客态。
+        // 不调用 closeLoginModal()——用户可能正主动打开登录弹窗，
+        // 关闭它会打断登录流程。弹窗由用户操作控制，不由后端响应接管。
         clearCredentials();
         try {
           const auth = useAuthStore();
           auth.token = '';
           auth.markGuest();
-          auth.closeLoginModal();
         } catch {
           // 兜底：不阻塞响应流
         }

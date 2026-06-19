@@ -46,7 +46,7 @@ import { isEmail } from "@/utils/verify";
 import { loginAPI, emailLoginAPI } from "@/api/auth";
 import type { AxiosResponse } from "axios";
 import { sendEmailCodeAPI } from "@/api/code";
-import { saveCredentials } from "@/stores/auth-store";
+import { saveCredentials, broadcastAuthChange } from "@/stores/auth-store";
 
 const emit = defineEmits(["success", "changeForm"]);
 
@@ -202,6 +202,7 @@ const handleLoginRes = async (res: AxiosResponse<any, any>) => {
       break;
     case statusCode.OK:
       saveCredentials(res.data.data);
+      broadcastAuthChange();
       emit("success");
       break;
     default:

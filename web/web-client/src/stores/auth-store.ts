@@ -12,6 +12,18 @@ const getRedirectUrl = () => {
   return `${window.location.pathname}${window.location.search}${window.location.hash}`;
 };
 
+const AUTH_SYNC_KEY = 'auth_sync';
+
+// 向同源其他标签页广播登录态变更
+// 注意：只从用户主动登录/退出的地方调用（LoginForm/logout），
+// 不要在 clearCredentials/saveCredentials 里广播，否则 LOGIN_AGAIN 拦截器
+// 会触发跨标签无限循环：Tab A 广播 → Tab B fetchMe → LOGIN_AGAIN → 广播 → Tab A ...
+export const broadcastAuthChange = () => {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(AUTH_SYNC_KEY, Date.now().toString());
+  }
+};
+
 // 浏览器端可读的 store token 引用，供 request.ts 等无法直接 useAuthStore 的场景使用。
 // 只在浏览器端 set，SSR 期间保持空。
 let _browserToken = '';
@@ -164,6 +176,7 @@ export const useAuthStore = defineStore('auth', {
       clearCredentials();
       this.token = '';
       this.markGuest();
+      broadcastAuthChange();
       authDebug('[auth] logout end', { status: this.status });
     },
   },

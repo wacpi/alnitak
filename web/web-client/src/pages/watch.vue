@@ -264,6 +264,24 @@ if (process.client) {
   }
 }
 
+// 同步当前分P到 URL（使用 rid，其是稳定的资源标识符）。
+// 解决场景：用户从历史记录恢复播放非 P1 时，地址栏仍只有 ?v=xxx，分享链接只能回到 P1。
+if (process.client) {
+  const targetPart = currentPart.value;
+  const resources = videoInfo.value?.resources;
+  const currentResource = resources?.[targetPart - 1];
+  if (currentResource?.shortId && !route.query.rid) {
+    // 使用 history.replaceState 避免触发 Vue Router 的 watcher 导致重复拉取视频信息
+    const newQuery: Record<string, string> = { v: currentWatchVQuery.value, rid: currentResource.shortId };
+    if (route.query.ep) newQuery.ep = String(route.query.ep);
+    if (route.query.mode) newQuery.mode = String(route.query.mode);
+    const search = Object.entries(newQuery)
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+      .join('&');
+    window.history.replaceState(null, '', `/watch?${search}`);
+  }
+}
+
 const pendingProgress = ref<number | null>(null);
 
 // 获取组件引用
@@ -672,8 +690,8 @@ watch(
     if ((data.value as any).code === statusCode.OK) {
       videoInfo.value = (data.value as any).data.video as VideoType;
       const vid = videoInfo.value.shortId || videoInfo.value.vid;
-      await loadPGCBinding(vid);
-      // 初始化分P
+      // 先设置 currentPart，确保与 videoInfo 在同一微任务批次内完成，
+      // 避免播放器先用旧 currentPart 渲染一次导致错加载音频/进度
       if (route.query.rid) {
         const rid = String(route.query.rid);
         const idx = videoInfo.value.resources.findIndex(r => r.shortId === rid);
@@ -681,6 +699,7 @@ watch(
       } else {
         currentPart.value = Number(route.query.p) || 1;
       }
+      await loadPGCBinding(vid);
       await refreshProgressAndDanmaku(currentPart.value);
       if (process.client) {
         reconnectWebSocket();
