@@ -1773,6 +1773,7 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 				Duration:  utils.SecFromFloat(info.Duration),
 				FileID:    rf.vf.ID,
 				ShortID:   shortID,
+				SortOrder: rf.resource.SortOrder,
 			}
 			if err := global.Mysql.Create(&newResource).Error; err != nil {
 				utils.ErrorLog("创建新资源记录失败", "transcoding", err.Error())
