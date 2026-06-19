@@ -200,4 +200,26 @@ func backfillSubtitleShortID() {
 			utils.InfoLog("【字幕绑定迁移】废弃列 resource_id 已删除", "init")
 		}
 	}
+
+	// 为已有字幕回填 short_id
+	backfillSubtitleTrackShortID()
+}
+
+// backfillSubtitleTrackShortID 为已有字幕轨分配短ID
+func backfillSubtitleTrackShortID() {
+	var needFill []model.SubtitleTrack
+	global.Mysql.Where("short_id = '' OR short_id IS NULL").Find(&needFill)
+	if len(needFill) == 0 {
+		return
+	}
+	utils.InfoLog(fmt.Sprintf("【字幕短ID迁移】共%d条待回填", len(needFill)), "init")
+	for _, t := range needFill {
+		sid, err := service.AllocateUniqueSubtitleShortID()
+		if err != nil {
+			utils.ErrorLog("分配字幕短ID失败", "init", fmt.Sprintf("id=%d err=%v", t.ID, err))
+			continue
+		}
+		global.Mysql.Model(&model.SubtitleTrack{}).Where("id = ?", t.ID).Update("short_id", sid)
+	}
+	utils.InfoLog("【字幕短ID迁移】回填完成", "init")
 }

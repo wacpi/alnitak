@@ -8,7 +8,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"interastral-peace.com/alnitak/internal/resp"
 	"interastral-peace.com/alnitak/internal/service"
-	"interastral-peace.com/alnitak/utils"
 )
 
 // GetSubtitleList GET /api/v1/video/subtitle/list?resourceShortId=
@@ -74,8 +73,8 @@ type putSubtitleBody struct {
 // PutSubtitle PUT /api/v1/video/subtitle/:id
 // 可选 multipart：file + 与上传相同扩展名；仅 JSON 则只更新元数据
 func PutSubtitle(ctx *gin.Context) {
-	id := utils.StringToUint(ctx.Param("id"))
-	if id == 0 {
+	id, err := service.ParseSubtitleTrackID(ctx.Param("id"))
+	if err != nil {
 		resp.FailWithMessage(ctx, "字幕不存在")
 		return
 	}
@@ -121,8 +120,8 @@ func PutSubtitle(ctx *gin.Context) {
 
 // DeleteSubtitle DELETE /api/v1/video/subtitle/:id
 func DeleteSubtitle(ctx *gin.Context) {
-	id := utils.StringToUint(ctx.Param("id"))
-	if id == 0 {
+	id, err := service.ParseSubtitleTrackID(ctx.Param("id"))
+	if err != nil {
 		resp.FailWithMessage(ctx, "字幕不存在")
 		return
 	}

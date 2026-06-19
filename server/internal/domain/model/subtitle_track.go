@@ -20,6 +20,7 @@ const (
 // SubtitleTrack 分 P 字幕轨（元数据在库，文件在 subtitle/ 前缀下）
 type SubtitleTrack struct {
 	gorm.Model
+	ShortID          string `gorm:"type:varchar(16);uniqueIndex;comment:短ID"`
 	ResourceShortID  string `gorm:"type:varchar(16);not null;index;uniqueIndex:uk_subtitle_short_id_lang,priority:1;comment:资源短ID"`
 	Vid              uint   `gorm:"not null;index;comment:冗余稿件 ID"`
 	Lang             string `gorm:"type:varchar(20);not null;uniqueIndex:uk_subtitle_short_id_lang,priority:2;comment:BCP-47 语言"`

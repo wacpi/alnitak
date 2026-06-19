@@ -184,6 +184,7 @@ func ListSubtitleTracks(ctx *gin.Context, resourceShortID string) ([]vo.Subtitle
 	for _, t := range tracks {
 		out = append(out, vo.SubtitleTrackItem{
 			ID:        t.ID,
+			ShortID:   t.ShortID,
 			Lang:      t.Lang,
 			Label:     t.Label,
 			URL:       subtitlePublicURL(t.ObjectKey),
@@ -191,6 +192,26 @@ func ListSubtitleTracks(ctx *gin.Context, resourceShortID string) ([]vo.Subtitle
 		})
 	}
 	return out, nil
+}
+
+// ParseSubtitleTrackID 兼容对外 shortId 与数字自增 id。
+func ParseSubtitleTrackID(raw string) (uint, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, errors.New("字幕ID不能为空")
+	}
+	if utils.IsAllASCIIDigits(raw) {
+		id := utils.StringToUint(raw)
+		if id == 0 {
+			return 0, errors.New("字幕不存在")
+		}
+		return id, nil
+	}
+	var track model.SubtitleTrack
+	if err := global.Mysql.Where("short_id = ?", raw).First(&track).Error; err != nil || track.ID == 0 {
+		return 0, errors.New("字幕不存在")
+	}
+	return track.ID, nil
 }
 
 // CreateSubtitleTrack 上传新建字幕轨
@@ -232,7 +253,14 @@ func CreateSubtitleTrack(ctx *gin.Context, resourceShortID, lang, label string, 
 	}
 
 	uid := ctx.GetUint("userId")
+	
+	sid, err := AllocateUniqueSubtitleShortID()
+	if err != nil {
+		return errors.New("分配字幕ID失败")
+	}
+	
 	track := model.SubtitleTrack{
+		ShortID:         sid,
 		ResourceShortID: res.ShortID,
 		Vid:             v.ID,
 		Lang:            lang,
