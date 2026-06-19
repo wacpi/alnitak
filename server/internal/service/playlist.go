@@ -434,6 +434,7 @@ func GetPlaylistVideoListWithParts(ctx *gin.Context, videoId uint) gin.H {
 				"p":        i + 1,
 				"title":    r.Title,
 				"duration": r.Duration,
+				"shortId":  r.ShortID,
 			})
 		}
 		return gin.H{
@@ -515,6 +516,7 @@ func GetPlaylistVideoListWithParts(ctx *gin.Context, videoId uint) gin.H {
 			"p":        i + 1,
 			"title":    r.Title,
 			"duration": r.Duration,
+			"shortId":  r.ShortID,
 		})
 	}
 
