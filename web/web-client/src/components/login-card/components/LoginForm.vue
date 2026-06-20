@@ -27,6 +27,12 @@
         </div>
         <div class="error-text">{{ errorTips.codeError }}</div>
       </div>
+      <div class="remember-row">
+        <label class="remember-label">
+          <input type="checkbox" v-model="loginForm.rememberMe" class="remember-checkbox" />
+          <span class="remember-text">记住登录</span>
+        </label>
+      </div>
       <div class="button-group">
         <button class="btn-other" type="button" @click="emit('changeForm')">注册</button>
         <button class="btn-primary" type="submit" :disabled="loading">
@@ -84,7 +90,8 @@ const loginForm = reactive<UserLoginType>({
   email: '',
   password: '',
   code: '',
-  captchaId: ''
+  captchaId: '',
+  rememberMe: true,
 })
 const handleLogin = () => {
   initErrorTips();
@@ -331,6 +338,33 @@ const handleLoginRes = async (res: AxiosResponse<any, any>) => {
 
   &:hover {
     color: var(--font-primary-3) !important;
+  }
+}
+
+.remember-row {
+  display: flex;
+  align-items: center;
+  margin-top: 12px;
+  padding: 0 10px;
+
+  .remember-label {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .remember-checkbox {
+    width: 15px;
+    height: 15px;
+    accent-color: var(--primary-color);
+    cursor: pointer;
+  }
+
+  .remember-text {
+    margin-left: 6px;
+    font-size: 13px;
+    color: var(--font-primary-3);
   }
 }
 </style>
