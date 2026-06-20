@@ -155,6 +155,8 @@ watch(() => props.initialActiveSeasonId, (val) => {
 defineExpose({
   autonext: computed(() => autonext.value),
   getNextVideo,
+  orderedEpisodes,
+  isActiveEpisode,
 });
 </script>
 

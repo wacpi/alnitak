@@ -60,13 +60,20 @@ const props = withDefaults(defineProps<{
   videoInfo: VideoType;
   part: number;
   progress: number | null;
+  episodePickerList?: Array<{ label: string; index: number; vid?: string; part?: number; rid?: string; epId?: number }>;
+  episodePickerActiveIndex?: number;
+  episodePickerType?: 'none' | 'parts' | 'collection' | 'pgc';
 }>(), {
   part: 1,
-  progress: null
+  progress: null,
+  episodePickerList: () => [],
+  episodePickerActiveIndex: 0,
+  episodePickerType: 'none',
 })
 
 const emit = defineEmits<{
-  danmakuSent: []
+  danmakuSent: [];
+  episodePick: [item: { vid?: string; part?: number; rid?: string; epId?: number }];
 }>()
 
 // 获取当前分P的资源ShortID
@@ -87,6 +94,7 @@ const getResourceShortIdForPart = (partNum: number): string | undefined => {
 // ===== 播放器与弹幕相关变量 =====
 let player: any = null;
 let dashPlayer: any = null;
+let loadingPart = false;
 const defaultQuality = ref('');
 const hlsPlayerState: HlsPlayerState = { instance: null, videoElement: null, playPromise: null };
 const dash = shallowRef<any>(null);
@@ -116,6 +124,11 @@ const DASH_END_FALLBACK_DELAY_MS = 220;
 // ===== HLS 清晰度切换时保存播放状态（HLS 模式下 Wplayer 仍会创建新 video 元素） =====
 let lastPlaybackState: { time: number; playing: boolean } = { time: 0, playing: false };
 const danmakuSendRef = ref<InstanceType<typeof DanmakuSend> | null>(null);
+
+// ===== 全屏选集状态 =====
+let pickerBtnEl: HTMLElement | null = null;
+let pickerOverlayEl: HTMLElement | null = null;
+let pickerCleanup: (() => void) | null = null;
 const auth = useAuthStore();
 const isLoggedIn = computed(() => auth.isLoggedIn);
 const options: PlayerOptionsType = {
@@ -520,6 +533,9 @@ const setOnEnded = (callback: () => void) => {
 };
 
 const loadPart = async (part: number) => {
+  if (loadingPart) return;
+  loadingPart = true;
+  try {
   // 重置播放结束标记
   hasEnded.value = false;
   // 新实例未 ready，允许下次 pendingSeek 消费
@@ -533,7 +549,20 @@ const loadPart = async (part: number) => {
       return;
     }
     /* === 播放器销毁与重建实例化片段 start === */
-    if (player) player.destroy();
+    if (player) {
+      // 清理选集注入的 DOM
+      if (pickerBtnEl && pickerBtnEl.parentNode) {
+        pickerBtnEl.parentNode.removeChild(pickerBtnEl);
+      }
+      if (pickerOverlayEl && pickerOverlayEl.parentNode) {
+        pickerOverlayEl.parentNode.removeChild(pickerOverlayEl);
+      }
+      if (pickerCleanup) pickerCleanup();
+      pickerBtnEl = null;
+      pickerOverlayEl = null;
+      pickerCleanup = null;
+      player.destroy();
+    }
     // 复用同一 options 时上一分 P 的 subtitles 会污染新实例，导致轨加载失败、CC 一直 disabled
     options.video.subtitles = [];
     options.container = el;
@@ -655,10 +684,135 @@ const loadPart = async (part: number) => {
       if (v) resetReportingAfterReplay(v);
     });
 
+    renderEpisodePicker();
     queueProgressRestoreForNewPlayer();
     attachPlayerReadyAndProgressFlush(part);
   }
+  } finally {
+    loadingPart = false;
+  }
 }
+
+// ===== 全屏选集：注入按钮 + 下拉弹窗到 Wplayer 控制栏 =====
+const renderEpisodePicker = () => {
+  // 清理上一轮注入的 DOM
+  if (pickerBtnEl && pickerBtnEl.parentNode) {
+    pickerBtnEl.parentNode.removeChild(pickerBtnEl);
+  }
+  if (pickerOverlayEl && pickerOverlayEl.parentNode) {
+    pickerOverlayEl.parentNode.removeChild(pickerOverlayEl);
+  }
+  if (pickerCleanup) pickerCleanup();
+  pickerBtnEl = null;
+  pickerOverlayEl = null;
+  pickerCleanup = null;
+
+  const list = props.episodePickerList;
+  if (!list || list.length === 0) return;
+
+  const container = player?.container;
+  if (!container) return;
+  // 注入到右侧控制栏
+  const rightIcons = container.querySelector('.wplayer-icons-right');
+  if (!rightIcons) return;
+
+  // ----- 按钮（直接用 wplayer-icon，避免包裹层导致对齐问题） -----
+  const btn = document.createElement('button');
+  btn.className = 'wplayer-icon';
+  btn.style.cssText = 'position:relative;';
+  btn.setAttribute('data-balloon', '选集');
+  btn.setAttribute('data-balloon-pos', 'up');
+  btn.innerHTML = `<span class="wplayer-icon-content">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+        <path d="M3 3h7v7H3V3zm0 11h7v7H3v-7zm11-11h7v7h-7V3zm4 15.5L14 16h2.5v-2h-5v5h2v-2.5L17 19l2-1.5z"/>
+      </svg>
+    </span>`;
+
+  // ----- 弹窗(挂到按钮上，向上弹出) -----
+  const overlay = document.createElement('div');
+  overlay.className = 'wplayer-episode-picker-overlay';
+  overlay.style.cssText = 'display:none;position:absolute;bottom:calc(100% + 4px);right:0;z-index:999;background:rgba(28,28,32,0.96);border-radius:6px;border:1px solid rgba(255,255,255,0.1);max-height:320px;overflow-y:auto;min-width:200px;box-shadow:0 4px 20px rgba(0,0,0,0.5);';
+
+  const type = props.episodePickerType;
+  const activeIdx = props.episodePickerActiveIndex || 0;
+
+  list.forEach((item, i) => {
+    const row = document.createElement('div');
+    const isActive = item.index === activeIdx;
+    row.style.cssText = `display:flex;align-items:center;padding:7px 14px;cursor:pointer;font-size:13px;gap:8px;color:${isActive ? '#00a1d6' : '#ddd'};background:${isActive ? 'rgba(0,161,214,0.08)' : 'transparent'};border-bottom:1px solid rgba(255,255,255,0.04);transition:background 0.15s;`;
+
+    // 序号
+    const idxSpan = document.createElement('span');
+    idxSpan.style.cssText = 'color:#888;font-size:12px;min-width:28px;text-align:center;flex-shrink:0;';
+    idxSpan.textContent = String(item.index);
+    row.appendChild(idxSpan);
+
+    // 标题
+    const labelSpan = document.createElement('span');
+    labelSpan.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;';
+    labelSpan.textContent = item.label;
+    row.appendChild(labelSpan);
+
+    // "正在播放"标记
+    if (isActive) {
+      const tag = document.createElement('span');
+      tag.style.cssText = 'font-size:11px;color:#00a1d6;flex-shrink:0;';
+      tag.textContent = '正在播放';
+      row.appendChild(tag);
+    }
+
+    row.addEventListener('mouseenter', () => {
+      if (!isActive) row.style.background = 'rgba(255,255,255,0.06)';
+    });
+    row.addEventListener('mouseleave', () => {
+      if (!isActive) row.style.background = 'transparent';
+    });
+    row.addEventListener('click', (e) => {
+      e.stopPropagation();
+      overlay.style.display = 'none';
+      emit('episodePick', { vid: item.vid, part: item.part, rid: item.rid, epId: item.epId });
+    });
+    overlay.appendChild(row);
+  });
+
+  // 悬停展开/收起（带延迟，避免移到弹窗时误关）
+  let hoverTimer = null;
+  const showOverlay = () => { clearTimeout(hoverTimer); overlay.style.display = 'block'; };
+  const scheduleHide = () => { hoverTimer = setTimeout(() => { overlay.style.display = 'none'; }, 300); };
+  btn.addEventListener('mouseenter', showOverlay);
+  btn.addEventListener('mouseleave', scheduleHide);
+  overlay.addEventListener('mouseenter', showOverlay);
+  overlay.addEventListener('mouseleave', scheduleHide);
+
+  btn.style.position = 'relative';
+  // 插到右侧图标最前面（全屏按钮等之前）
+  rightIcons.insertBefore(btn, rightIcons.firstChild);
+  btn.appendChild(overlay);
+
+  // 控制栏隐藏时自动关闭弹窗
+  const hideObserver = new MutationObserver(() => {
+    if (container.classList.contains('wplayer-hide-controller')) {
+      overlay.style.display = 'none';
+    }
+  });
+  hideObserver.observe(container, { attributeFilter: ['class'] });
+
+  // 只在全屏时显示按钮
+  const updateFs = () => {
+    const isFs = player.fullScreen && (player.fullScreen.isFullScreen('browser') || player.fullScreen.isFullScreen('web'));
+    btn.style.display = isFs ? '' : 'none';
+    if (!isFs) overlay.style.display = 'none';
+  };
+  player.on('fullscreen', updateFs);
+  player.on('fullscreen_cancel', updateFs);
+  updateFs();
+
+  pickerBtnEl = btn;
+  pickerOverlayEl = overlay;
+  pickerCleanup = () => {
+    hideObserver.disconnect();
+  };
+};
 
 // ===== 清晰度映射表与资源加载 =====
 const resourceNameMap: Record<string, string> = {
@@ -1073,6 +1227,15 @@ watch(
   }
 );
 
+// ===== 选集列表变化时重新渲染 =====
+watch(
+  () => [props.episodePickerList, props.episodePickerActiveIndex, props.episodePickerType],
+  () => {
+    if (player) renderEpisodePicker();
+  },
+  { deep: true }
+);
+
 onMounted(async () => {
   const quality = localStorage.getItem('default-video-quality');
   if (quality) {
@@ -1105,6 +1268,13 @@ onMounted(async () => {
   }, 10000)
 })
 
+// 分P/视频切换：原地重载播放器，保持容器不卸载（全屏状态由浏览器保留）
+watch([() => props.part, () => props.videoInfo?.vid], ([newPart, newVid], [oldPart, oldVid]) => {
+  if ((newPart !== oldPart || newVid !== oldVid) && newPart > 0 && !loadingPart) {
+    void loadPart(newPart);
+  }
+});
+
 // ===== 页面关闭/离开时上报进度，已看完则不再上报 =====
 const reportOnLeave = () => {
   if (player && player.video && typeof player.video.currentTime === 'number' && !isWatched()) {
@@ -1123,6 +1293,13 @@ onBeforeUnmount(() => {
     window.removeEventListener('beforeunload', reportOnLeave);
   }
   if (player) {
+    // 清理选集注入
+    if (pickerBtnEl && pickerBtnEl.parentNode) pickerBtnEl.parentNode.removeChild(pickerBtnEl);
+    if (pickerOverlayEl && pickerOverlayEl.parentNode) pickerOverlayEl.parentNode.removeChild(pickerOverlayEl);
+    if (pickerCleanup) pickerCleanup();
+    pickerBtnEl = null;
+    pickerOverlayEl = null;
+    pickerCleanup = null;
     player.destroy();
     player = null;
   }
@@ -1140,13 +1317,19 @@ const seek = (time: number) => {
   }
 };
 
+const getCurrentTime = () => player?.video?.currentTime ?? 0;
+const getDuration = () => player?.video?.duration ?? 0;
+
 defineExpose({
   seek,
+  getCurrentTime,
+  getDuration,
   setOnReady,
   uploadHistory,
   setDanmaku,
   addDanmaku,
   setOnEnded,
+  player,
   // 备用 OSS URL（供父组件/embed-player 使用）
   backupVideoUrl,
   backupAudioUrl,

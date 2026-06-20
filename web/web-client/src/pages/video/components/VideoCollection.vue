@@ -449,7 +449,10 @@ defineExpose({
   getNextVideo,
   getNextPart,
   listType,
-  hasPlaylist
+  hasPlaylist,
+  mergedList,
+  currentIndex,
+  goVideo,
 })
 </script>
 
