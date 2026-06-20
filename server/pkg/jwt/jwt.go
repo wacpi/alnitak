@@ -44,10 +44,13 @@ func GenerateAccessToken(id uint) (string, error) {
  * param: id 用户id
  * return: token字符串、错误信息
  */
-func GenerateRefreshToken(id uint) (string, error) {
+func GenerateRefreshToken(id uint, ttl ...time.Duration) (string, error) {
 	refreshJwtKey := []byte(global.Config.Security.RefreshJwtSecret)
-	// token过期时间
-	expirationTime := time.Now().Add(cache.REFRESH_TOKEN_EXPIRATION_TIME) // 7天有效
+	duration := cache.REFRESH_TOKEN_EXPIRATION_TIME
+	if len(ttl) > 0 && ttl[0] > 0 {
+		duration = ttl[0]
+	}
+	expirationTime := time.Now().Add(duration)
 
 	refreshClaims := &Claims{
 		UserId:    id,

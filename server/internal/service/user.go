@@ -55,14 +55,22 @@ func UserRegister(ctx *gin.Context, registerReq dto.RegisterReq) error {
 }
 
 // generateTokenPair 生成 accessToken + refreshToken 并存入缓存
-func generateTokenPair(userId uint) (accessToken, refreshToken string, err error) {
+func generateTokenPair(userId uint, rememberMe ...bool) (accessToken, refreshToken string, err error) {
 	if accessToken, err = jwt.GenerateAccessToken(userId); err != nil {
 		return "", "", errors.New("验证token生成失败")
 	}
-	if refreshToken, err = jwt.GenerateRefreshToken(userId); err != nil {
+
+	useLong := len(rememberMe) > 0 && rememberMe[0]
+	var refreshTTL time.Duration
+	if useLong {
+		refreshTTL = cache.REFRESH_TOKEN_LONG_EXPIRATION_TIME
+	} else {
+		refreshTTL = cache.REFRESH_TOKEN_EXPIRATION_TIME
+	}
+	if refreshToken, err = jwt.GenerateRefreshToken(userId, refreshTTL); err != nil {
 		return "", "", errors.New("刷新token生成失败")
 	}
-	cache.SetRefreshToken(userId, refreshToken)
+	cache.SetRefreshToken(userId, refreshToken, refreshTTL)
 	return accessToken, refreshToken, nil
 }
 
@@ -81,7 +89,7 @@ func UserLogin(ctx *gin.Context, loginReq dto.LoginReq) (accessToken, refreshTok
 		return "", "", 0, errors.New("用户名密码不匹配")
 	}
 
-	accessToken, refreshToken, err = generateTokenPair(user.ID)
+	accessToken, refreshToken, err = generateTokenPair(user.ID, loginReq.RememberMe)
 	if err != nil {
 		return "", "", 0, err
 	}
@@ -103,7 +111,7 @@ func EmailLogin(ctx *gin.Context, loginReq dto.EmailLoginReq) (accessToken, refr
 		return "", "", 0, errors.New("邮箱验证错误")
 	}
 
-	accessToken, refreshToken, err = generateTokenPair(user.ID)
+	accessToken, refreshToken, err = generateTokenPair(user.ID, loginReq.RememberMe)
 	if err != nil {
 		return "", "", 0, err
 	}
@@ -133,8 +141,8 @@ func UpdateToken(ctx *gin.Context, tokenReq dto.TokenReq) (accessToken, refreshT
 	if claims.ExpiresAt.Before(time.Now().Add(cache.REFRESH_TOKEN_BUFFER_TIME)) {
 		// 移除refreshToken
 		cache.DelRefreshToken(claims.UserId, tokenReq.RefreshToken)
-		// 重新生成refreshToken
-		refreshToken, err = jwt.GenerateRefreshToken(claims.UserId)
+		// 重新生成refreshToken（活跃用户用长过期时间）
+		refreshToken, err = jwt.GenerateRefreshToken(claims.UserId, cache.REFRESH_TOKEN_LONG_EXPIRATION_TIME)
 		if err != nil {
 			utils.ErrorLog("Token生成失败", "user", err.Error())
 			return "", "", 0, errors.New("Token生成失败")
@@ -148,9 +156,9 @@ func UpdateToken(ctx *gin.Context, tokenReq dto.TokenReq) (accessToken, refreshT
 		return "", "", 0, errors.New("Token生成失败")
 	}
 
-	// 存入缓存
+	// 存入缓存（新 token 用长过期时间）
 	if refreshToken != "" {
-		cache.SetRefreshToken(claims.UserId, refreshToken)
+		cache.SetRefreshToken(claims.UserId, refreshToken, cache.REFRESH_TOKEN_LONG_EXPIRATION_TIME)
 	}
 
 	return accessToken, refreshToken, claims.UserId, nil

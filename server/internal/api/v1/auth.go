@@ -17,10 +17,9 @@ import (
 const refreshCookieName = "refresh_token"
 
 // 设置 refresh_token 的 HttpOnly Cookie
-func setRefreshCookie(ctx *gin.Context, refreshToken string) {
+func setRefreshCookie(ctx *gin.Context, refreshToken string, maxAge int) {
 	secure := ctx.Request.TLS != nil
 	ctx.SetSameSite(http.SameSiteLaxMode)
-	maxAge := 7 * 24 * 60 * 60
 	ctx.SetCookie(refreshCookieName, refreshToken, maxAge, "/", "", secure, true)
 }
 
@@ -99,7 +98,11 @@ func Login(ctx *gin.Context) {
 		return
 	}
 
-	setRefreshCookie(ctx, refreshToken)
+	maxAge := 7 * 24 * 60 * 60 // 默认 7 天
+	if loginReq.RememberMe {
+		maxAge = 30 * 24 * 60 * 60 // 勾选"记住我" 30 天
+	}
+	setRefreshCookie(ctx, refreshToken, maxAge)
 	resp.OkWithData(ctx, gin.H{"token": accessToken, "refreshToken": refreshToken, "userId": userId})
 }
 
@@ -136,7 +139,11 @@ func EmailLogin(ctx *gin.Context) {
 		return
 	}
 
-	setRefreshCookie(ctx, refreshToken)
+	maxAge := 7 * 24 * 60 * 60
+	if loginReq.RememberMe {
+		maxAge = 30 * 24 * 60 * 60
+	}
+	setRefreshCookie(ctx, refreshToken, maxAge)
 	resp.OkWithData(ctx, gin.H{"token": accessToken, "refreshToken": refreshToken, "userId": userId})
 }
 
@@ -161,7 +168,8 @@ func UpdateToken(ctx *gin.Context) {
 	}
 
 	if refreshToken != "" {
-		setRefreshCookie(ctx, refreshToken)
+		// 活跃用户刷新 token 用长过期时间
+		setRefreshCookie(ctx, refreshToken, 30*24*60*60)
 	}
 
 	resp.OkWithData(ctx, gin.H{"token": accessToken, "refreshToken": refreshToken, "userId": userId})
@@ -191,7 +199,7 @@ func Me(ctx *gin.Context) {
 		return
 	}
 	if refreshToken != "" {
-		setRefreshCookie(ctx, refreshToken)
+		setRefreshCookie(ctx, refreshToken, 30*24*60*60)
 	}
 
 	user := service.GetUserInfo(userId)

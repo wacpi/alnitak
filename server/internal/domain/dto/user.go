@@ -16,6 +16,8 @@ type LoginReq struct {
 	Password string
 	// 验证ID
 	CaptchaId string
+	// 记住登录
+	RememberMe bool `json:"rememberMe"`
 }
 
 type EmailLoginReq struct {
@@ -25,6 +27,8 @@ type EmailLoginReq struct {
 	Code string
 	// 验证ID
 	CaptchaId string
+	// 记住登录
+	RememberMe bool `json:"rememberMe"`
 }
 
 type RegisterReq struct {
