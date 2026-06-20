@@ -18,6 +18,7 @@ import (
 )
 
 var sliceMediaFileRegexp = regexp.MustCompile(`^[A-Za-z0-9_.-]+\.(m4s|ts)$`)
+var imgFileRegexp = regexp.MustCompile(`^[A-Za-z0-9_.-]+\.(jpg|jpeg|png|gif|webp|bmp|svg)$`)
 
 func sanitizeSliceMediaFileName(file string) (string, error) {
 	file = strings.TrimSpace(file)
@@ -194,7 +195,12 @@ func GetVideoStream(ctx *gin.Context) {
 
 // 获取图片文件
 func GetImgFile(ctx *gin.Context) {
-	file := ctx.Param("file")
+	file := strings.TrimSpace(ctx.Param("file"))
+	// 防路径穿越：必须是纯文件名，不允许目录分隔符
+	if file == "" || filepath.Base(file) != file || !imgFileRegexp.MatchString(file) {
+		ctx.Status(http.StatusForbidden)
+		return
+	}
 	useBackup := ctx.Query("backup") == "true"
 
 	// 使用本地存储
