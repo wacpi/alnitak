@@ -440,6 +440,16 @@ const computeNextAdvance = (): { label: string; handler: () => void } | null => 
     }
   }
 
+  // 合集没有下一个，检查推荐列表
+  const rv = recommendListRef.value;
+  if (isFollowAutonextOn() && rv) {
+    const nextVideo = rv.getNextVideo?.();
+    if (nextVideo) {
+      const item = nextVideo as any;
+      return { label: item.title || '推荐视频', handler: () => scheduleNavigateToWatchNext(item, 0) };
+    }
+  }
+
   return null;
 };
 
