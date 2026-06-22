@@ -618,9 +618,22 @@ const loadPart = async (part: number) => {
         player.events.trigger('quality_start', quality);
       };
     } else {
-      // 非统一模式（HLS 或降级 DASH）：保存清晰度偏好
+      // 非统一模式（HLS 或降级 DASH）：用户主动切换清晰度时保存偏好
+      // 不依赖 quality_start（初始化时也会触发，会误存降级后的清晰度）
+      {
+        const origSwitchQuality = player.switchQuality;
+        if (origSwitchQuality) {
+          player.switchQuality = function (index: number | string) {
+            const idx = typeof index === 'string' ? parseInt(index) : index;
+            const quality = player.options.video.quality[idx];
+            if (quality) {
+              localStorage.setItem('default-video-quality', quality.name);
+            }
+            return origSwitchQuality.call(this, index);
+          };
+        }
+      }
       player.on('quality_start', (quality: PlayerQualityType) => {
-        localStorage.setItem('default-video-quality', quality.name);
         // 切清晰度会更换 video 元素，需用 WPlayer.updateSubtitles 重新挂载 data-wplayer-subtitle 轨
         void fetchAndApplySubtitles(getResourceShortIdForPart(part), player);
       });
@@ -718,9 +731,9 @@ const loadPart = async (part: number) => {
           player.switchQuality(qIdx);
         }
       } else {
-        // 当前视频不包含该清晰度，选择最高档
+        // 当前视频不包含该清晰度，用最高档但不覆盖用户偏好
         defaultQuality.value = player.options.video.quality[0]?.name || '720p';
-        localStorage.setItem('default-video-quality', defaultQuality.value);
+        // 不写 localStorage，保留用户选择的清晰度给下一个视频用
       }
     }
 
@@ -954,13 +967,10 @@ const loadResource = async (part: number) => {
     const useDash = supportsDashJs() && serverSupportsDash
     const qualityOrderFromServer = (res.data.data.qualityOrder as string[]) || []
 
-    // 当前视频不包含上次保存的清晰度名时，回退到本视频的最高档（不记住选择，避免影响其他视频）
+    // 当前视频不包含用户偏好清晰度时，用最高档但不覆盖 defaultQuality.value
     const qualityNames = qualities.map((q) => getQualityDisplayName(q))
-    if (!qualityNames.includes(defaultQuality.value)) {
-      const highestName = qualityNames[0] || '720p'
-      defaultQuality.value = highestName
-      // 不更新 localStorage，避免影响其他视频
-    }
+    // 不更新 defaultQuality.value，保持用户偏好给下一个视频用
+    // options.video.defaultQuality 自动回退到最高档
 
     if (useDash && qualityOrderFromServer.length > 0) {
       // ===== 统一 DASH MPD 模式：所有清晰度在一个 MPD 内 =====
@@ -1206,7 +1216,6 @@ const filterDanmaku = (filter: FilterDanmakuType) => {
 
   const onLoaded = () => {
     console.log("danmaku_load_end");
-    player.off('danmaku_loaded', onLoaded);
   };
   player.on('danmaku_loaded', onLoaded);
 }
