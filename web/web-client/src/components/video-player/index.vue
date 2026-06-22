@@ -561,6 +561,25 @@ const loadPart = async (part: number) => {
       pickerBtnEl = null;
       pickerOverlayEl = null;
       pickerCleanup = null;
+
+      // 全屏保护：Wplayer.fullScreen.destroy() 会调用 document.exitFullscreen()，
+      // 分P切换时会强制退出浏览器全屏。在销毁前暂替 fullScreen.destroy 为无退出版本，
+      // 保留容器(#dplayer)的全屏状态，新实例创建后自动继承。
+      const wasFullscreen = !!(document.fullscreenElement || (document as any).webkitFullscreenElement);
+      if (wasFullscreen && (player as any).fullScreen) {
+        const origFS = (player as any).fullScreen;
+        (player as any).fullScreen = {
+          destroy() {
+            // 只清理事件监听器，不调 exitFullscreen → 容器保持全屏
+            document.removeEventListener('fullscreenchange', origFS.handler);
+            document.removeEventListener('mozfullscreenchange', origFS.handler);
+            document.removeEventListener('webkitfullscreenchange', origFS.handler);
+            (origFS as any).handler = null;
+            (origFS as any).isFullscreen = true;
+          },
+        };
+      }
+
       player.destroy();
     }
     // 复用同一 options 时上一分 P 的 subtitles 会污染新实例，导致轨加载失败、CC 一直 disabled
@@ -687,6 +706,33 @@ const loadPart = async (part: number) => {
     renderEpisodePicker();
     queueProgressRestoreForNewPlayer();
     attachPlayerReadyAndProgressFlush(part);
+
+    // Bug 01 fix: 连播切换分P时重新从 localStorage 读取清晰度偏好并强制应用
+    const savedQuality = localStorage.getItem('default-video-quality');
+    if (savedQuality && player && player.options && player.options.video) {
+      const qIdx = player.options.video.quality.findIndex((q: any) => q.name === savedQuality);
+      if (qIdx >= 0) {
+        // 同步 ref，防止 DASH 模式下 streamInitialized 异步事件用 stale defaultQuality 覆盖
+        defaultQuality.value = savedQuality;
+        if (qIdx !== player.qualityIndex) {
+          player.switchQuality(qIdx);
+        }
+      } else {
+        // 当前视频不包含该清晰度，选择最高档
+        defaultQuality.value = player.options.video.quality[0]?.name || '720p';
+        localStorage.setItem('default-video-quality', defaultQuality.value);
+      }
+    }
+
+    // Bug 03 fix: 全屏模式下连播重建播放器后保持控制栏可见
+    if (document.fullscreenElement || (document as any).webkitFullscreenElement) {
+      setTimeout(() => {
+        if (player && player.container) {
+          const evt = new MouseEvent('mousemove', { bubbles: true });
+          player.container.dispatchEvent(evt);
+        }
+      }, 100);
+    }
   }
   } finally {
     loadingPart = false;
@@ -1043,10 +1089,26 @@ const switchAudioTrack = (lang: string) => {
 
 // ===== 弹幕相关方法 =====
 const originalDanmaku = shallowRef<DanmakuType[]>([]);
+
+/** 将 originalDanmaku 按当前屏蔽规则过滤后同步到 WPlayer 弹幕渲染引擎 */
+const syncDanmakuToPlayer = () => {
+  if (!player || !player.danmaku) return;
+  const filtered = originalDanmaku.value.filter((item: DanmakuType) => {
+    return !isDisableType(item, disableType) && (Math.floor(Math.random() * 10) + 1) > disableLeave;
+  }).map((d: DanmakuType) => ({ ...d }));
+  player.danmaku.update(filtered);
+};
+
 const setDanmaku = (data: DanmakuType[]) => {
   originalDanmaku.value = data;
-  // 更新弹幕数量统计
+  // 更新弹幕数量统计（总数，不含屏蔽）
   danmakuSendRef.value?.updateDanmakuCount(data.length);
+  // 按当前屏蔽规则过滤后同步到播放器渲染引擎
+  try {
+    syncDanmakuToPlayer();
+  } catch (e) {
+    console.error('[video-player] setDanmaku sync error:', e);
+  }
 }
 // 本地刚发出、正在等 ws 回广播的弹幕键（避免自己的弹幕被当成他人弹幕二次渲染）
 const recentlySent = new Map<string, number>();
@@ -1135,21 +1197,18 @@ const sendDanmaku = (danmakuForm: DrawDanmakuType) => {
 
 //过滤弹幕
 const filterDanmaku = (filter: FilterDanmakuType) => {
+  disableType = filter.disableType;
+  disableLeave = filter.disableLeave;
   localStorage.setItem('danmaku-disable-type', filter.disableType.toString());
   localStorage.setItem('danmaku-disable-leave', filter.disableLeave.toString());
 
-  const data = originalDanmaku.value.filter((item: DanmakuType) => {
-    return !isDisableType(item, filter.disableType) && (Math.floor(Math.random() * 10) + 1) > filter.disableLeave;
-  }).map((d: DanmakuType) => { return { ...d } });
+  syncDanmakuToPlayer();
 
-  player.danmaku.update(data);
-
-  player.on('danmaku_loaded', () => {
-    console.log("danmaku_load_end")
-  })
-
-  // 更新弹幕数量
-  danmakuSendRef.value?.updateDanmakuCount(data.length);
+  const onLoaded = () => {
+    console.log("danmaku_load_end");
+    player.off('danmaku_loaded', onLoaded);
+  };
+  player.on('danmaku_loaded', onLoaded);
 }
 
 //是否为屏蔽类型
@@ -1319,6 +1378,8 @@ const seek = (time: number) => {
 
 const getCurrentTime = () => player?.video?.currentTime ?? 0;
 const getDuration = () => player?.video?.duration ?? 0;
+/** 通过闭包暴露循环状态（player 为 let 变量，defineExpose 直接暴露始终为 null） */
+const isLoopEnabled = () => player?.setting?.loop ?? false;
 
 defineExpose({
   seek,
@@ -1329,6 +1390,7 @@ defineExpose({
   setDanmaku,
   addDanmaku,
   setOnEnded,
+  isLoopEnabled,
   player,
   // 备用 OSS URL（供父组件/embed-player 使用）
   backupVideoUrl,
