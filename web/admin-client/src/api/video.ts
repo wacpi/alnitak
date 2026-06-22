@@ -56,11 +56,15 @@ export const getProcessingVideoListAPI = (data: VideoListParam) => {
 }
 
 // 重新转码视频
-export const reTranscodeVideoAPI = (vid: number, resourceId?: number) => {
+export const reTranscodeVideoAPI = (vid: number) => {
 	const query = new URLSearchParams();
 	query.set('vid', String(vid));
-	if (typeof resourceId === 'number') query.set('resourceId', String(resourceId));
 	return request.post(`v1/video/reTranscodeVideo?${query.toString()}`);
+}
+
+// 重新转码单个分P（后台管理专用）
+export const reTranscodeResourceAPI = (resourceID: number) => {
+	return request.post(`v1/video/reTranscodeResource?resourceID=${resourceID}`);
 }
 
 // 重新上传OSS（转码成功但上传失败时重试）

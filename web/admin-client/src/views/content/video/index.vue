@@ -41,7 +41,7 @@ import { h, onBeforeMount, onBeforeUnmount, reactive, ref, computed } from 'vue'
 import { Refresh } from "@vicons/ionicons5";
 import useLoading from '@/hooks/loading-hooks';
 import { statusCode } from '@/utils/status-code';
-import { getVideoListAPI, getFailedVideoListAPI, getProcessingVideoListAPI, deleteVideoAPI, reTranscodeVideoAPI, reUploadVideoAPI } from '@/api/video';
+import { getVideoListAPI, getFailedVideoListAPI, getProcessingVideoListAPI, deleteVideoAPI, reTranscodeVideoAPI, reTranscodeResourceAPI, reUploadVideoAPI } from '@/api/video';
 import type { DataTableColumns } from 'naive-ui';
 import { getResourceUrl } from '@/utils/resource';
 import usePartition from '@/hooks/partition-hooks';
@@ -85,6 +85,17 @@ const deleteVideo = async (row: VideoType) => {
     await getTableData();
     if (activeTab.value !== 'failed') await fetchFailedCount();
     if (activeTab.value !== 'processing') await fetchProcessingCount();
+  } else {
+    message.error(res.data.msg);
+  }
+}
+
+// 重新转码单个分P（仅重试失败的资源，不影响其他分P）
+const reTranscodeResource = async (resourceID: number) => {
+  const res = await reTranscodeResourceAPI(resourceID);
+  if (res.data.code === statusCode.OK) {
+    message.success('单分P转码任务已提交');
+    await refreshAfterReTranscode();
   } else {
     message.error(res.data.msg);
   }
@@ -292,7 +303,14 @@ const processingColumns: DataTableColumns<VideoType> = [
               status: item.status === 'fail' ? 'error' : (item.status === 'success' ? 'success' : 'default'),
               showIndicator: true,
               indicatorPlacement: 'inside',
-            })
+            }),
+            item.status === 'fail' ? h('div', { style: 'margin-top: 6px;' }, [
+              h(NButton, {
+                size: 'tiny',
+                type: 'warning',
+                onClick: () => reTranscodeResource(item.resourceId)
+              }, { default: () => '单P重试' })
+            ]) : null
           ]);
         }));
       }
@@ -415,6 +433,40 @@ const processingColumns: DataTableColumns<VideoType> = [
 
 // 失败列
 const failedColumns: DataTableColumns<VideoType> = [
+  {
+    type: 'expand',
+    renderExpand: row => {
+      const parts: any[] = [];
+      const details = row.transcodingDetails || [];
+      if (details.length > 0) {
+        parts.push(
+          h('div', { style: 'font-size: 13px; font-weight: 600; margin-bottom: 8px;' }, '分P状态')
+        );
+        parts.push(h('div', { style: 'display: flex; flex-direction: column; gap: 8px;' }, details.map(item => {
+          const isFail = item.status === 'process_failed' || item.status === 'upload_failed';
+          const isSuccess = item.status === 'approved';
+          const statusLabel = isFail ? '失败' : (isSuccess ? '成功' : item.status);
+          return h('div', { style: 'display: flex; align-items: center; gap: 10px; padding: 4px 0;' }, [
+            h('span', { style: 'font-size: 12px; min-width: 120px;' }, item.resourceTitle || `资源#${item.resourceId}`),
+            isFail
+              ? h(NTag, { size: 'tiny', type: 'error' }, { default: () => statusLabel })
+              : isSuccess
+                ? h(NTag, { size: 'tiny', type: 'success' }, { default: () => statusLabel })
+                : h(NTag, { size: 'tiny', type: 'default' }, { default: () => statusLabel }),
+            isFail ? h(NButton, {
+              size: 'tiny',
+              type: 'warning',
+              onClick: () => reTranscodeResource(item.resourceId)
+            }, { default: () => '单P重试' }) : null
+          ]);
+        })));
+      }
+      if (parts.length === 0) {
+        return h('div', { style: 'padding: 8px 4px; color: var(--n-text-color-3);' }, '暂无分P信息');
+      }
+      return h('div', { style: 'padding: 6px 0;' }, parts);
+    }
+  },
   {
     key: 'vid',
     title: 'ID',
