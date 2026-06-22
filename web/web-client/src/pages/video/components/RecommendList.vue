@@ -52,13 +52,21 @@ const props = defineProps<{
 const autonext = useVideoAutonextFollow();
 
 const videoList = ref<VideoType[]>([])
-const { data } = await asyncGetRelatedVideoList(props.vid);
-if ((data.value as any).code === statusCode.OK) {
-  videoList.value = (data.value as any).data.videos;
-}
-
-// 添加当前播放索引，初始值为 -1
 const currentPlayIndex = ref(-1);
+
+const loadRelatedVideos = async (vid: number | string) => {
+  const { data } = await asyncGetRelatedVideoList(vid);
+  if ((data.value as any).code === statusCode.OK) {
+    videoList.value = (data.value as any).data.videos;
+    currentPlayIndex.value = -1;
+  }
+};
+
+await loadRelatedVideos(props.vid);
+
+watch(() => props.vid, (newVid) => {
+  if (newVid) loadRelatedVideos(newVid);
+});
 
 // 获取下一个视频
 const getNextVideo = () => {
