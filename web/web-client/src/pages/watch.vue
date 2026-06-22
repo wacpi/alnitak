@@ -438,30 +438,30 @@ const computeNextAdvance = (): { label: string; handler: () => void } | null => 
 
   const cv = collectionRef.value;
   if (isFollowAutonextOn() && cv) {
-    const merged = (cv as any).mergedList as any[] | undefined;
-    const idx = (cv as any).currentIndex as number | undefined;
-    if (merged && typeof idx === 'number' && idx > 0 && idx < merged.length) {
-      const item = merged[idx] as any;
-      const cur = videoInfo.value;
+    const nextVideo = (cv as any).getNextVideo?.();
+    const cur = videoInfo.value;
+    if (nextVideo) {
       console.log('[autonext] computeNextAdvance collection', {
         currentVid: cur?.vid,
         currentShortId: cur?.shortId,
         currentTitle: cur?.title,
-        currentIndex: idx,
-        mergedTotal: merged.length,
-        nextVid: item.vid,
-        nextShortId: item.shortId,
-        nextResourceRid: item.resourceRid,
-        nextTitle: item.title,
-        nextPartTitle: item.partTitle,
-        nextP: item.p,
+        nextVid: nextVideo.vid,
+        nextShortId: nextVideo.shortId,
+        nextResourceRid: nextVideo.resourceRid,
+        nextTitle: nextVideo.title,
+        nextPartTitle: nextVideo.partTitle,
+        nextP: nextVideo.p,
       });
-      const label = item.partTitle || item.title || `P${item.p || 1}`;
-      return { label, handler: () => scheduleNavigateToWatchNext(item, 0) };
+      const label = nextVideo.partTitle || nextVideo.title || `P${nextVideo.p || 1}`;
+      return { label, handler: () => scheduleNavigateToWatchNext(nextVideo, 0) };
     }
 
     // 没有下一项（已到列表末尾）
-    console.log('[autonext] computeNextAdvance collection: no more items', { currentIndex: idx, mergedTotal: merged?.length });
+    console.log('[autonext] computeNextAdvance collection: no more items', {
+      currentVid: cur?.vid,
+      currentShortId: cur?.shortId,
+      currentTitle: cur?.title,
+    });
   }
 
   // 合集没有下一个，检查推荐列表
@@ -654,33 +654,27 @@ const onVideoEnded = () => {
     }
   }
 
-  // 合集续播（按位置索引取下一项，绕过 vid/shortId 匹配）
+  // 合集续播
   const collectionRefVal = collectionRef.value;
   if (isFollowAutonextOn() && collectionRefVal) {
-    const merged = (collectionRefVal as any).mergedList as any[] | undefined;
-    const idx = (collectionRefVal as any).currentIndex as number | undefined;
+    const nextVideo = (collectionRefVal as any).getNextVideo?.();
     const cur = videoInfo.value;
     console.log('[autonext] onVideoEnded collection', {
       currentVid: cur?.vid,
       currentShortId: cur?.shortId,
       currentTitle: cur?.title,
-      currentIndex: idx,
-      mergedTotal: merged?.length,
       hasAdvancePending: !!advancePending.value,
     });
-    if (merged && typeof idx === 'number' && idx > 0 && idx < merged.length) {
-      const nextVideo = merged[idx] as { shortId?: string; vid?: number | string; title?: string; partTitle?: string };
-      if (nextVideo) {
-        console.log('[autonext] navigating to next', {
-          vid: nextVideo.vid,
-          shortId: nextVideo.shortId,
-          resourceRid: (nextVideo as any).resourceRid,
-          title: nextVideo.title,
-          partTitle: (nextVideo as any).partTitle,
-        });
-        scheduleNavigateToWatchNext(nextVideo, 0);
-        return;
-      }
+    if (nextVideo) {
+      console.log('[autonext] navigating to next', {
+        vid: nextVideo.vid,
+        shortId: nextVideo.shortId,
+        resourceRid: nextVideo.resourceRid,
+        title: nextVideo.title,
+        partTitle: nextVideo.partTitle,
+      });
+      scheduleNavigateToWatchNext(nextVideo, 0);
+      return;
     }
     console.log('[autonext] onVideoEnded collection: no next video');
   }
