@@ -641,25 +641,30 @@ func (s *TranscodeService) completeTransaction(ctx context.Context, info *dto.Tr
 			updateVideoFileStatus(tx, currentResource, info.ResourceID)
 		}
 
-		var pendingCount int64
-		tx.Model(&model.Resource{}).Where("vid = ? and status = ? and id != ?", info.VideoID, global.VIDEO_PROCESSING, info.ResourceID).Count(&pendingCount)
-		if pendingCount > 0 {
-			return nil
-		}
-
 		var totalCount, failedCount int64
 		tx.Model(&model.Resource{}).Where("vid = ?", info.VideoID).Count(&totalCount)
 		tx.Model(&model.Resource{}).Where("vid = ? and status = ?", info.VideoID, global.PROCESSING_FAIL).Count(&failedCount)
 
+		var successCount int64
+		tx.Model(&model.Resource{}).Where("vid = ? and status in ?", info.VideoID, []int{global.WAITING_REVIEW, global.AUDIT_APPROVED}).Count(&successCount)
+
 		finalVideoStatus := global.WAITING_REVIEW
 		if targetStatus == global.PROCESSING_FAIL {
-			// 转码失败：除非视频原本已审核通过（重新转码场景），否则标记为失败
+			// 当前分P失败：如果已有其他分P成功，不标记视频为失败（可单独重试失败的分P）
+			if successCount > 0 {
+				return nil
+			}
 			if currentVideo.Status == global.AUDIT_APPROVED || info.OriginalVideoStatus == global.AUDIT_APPROVED {
 				finalVideoStatus = global.AUDIT_APPROVED
-			} else {
+			} else if failedCount == totalCount {
+				// 全部分P都失败时才标记视频失败
 				finalVideoStatus = global.PROCESSING_FAIL
+			} else {
+				// 还有分P在处理中，等待
+				return nil
 			}
 		} else if failedCount == totalCount {
+			// 当前成功但其他全失败了——不可能，但兜底
 			finalVideoStatus = global.PROCESSING_FAIL
 		} else if currentVideo.Status == global.AUDIT_APPROVED || info.OriginalVideoStatus == global.AUDIT_APPROVED {
 			finalVideoStatus = global.AUDIT_APPROVED

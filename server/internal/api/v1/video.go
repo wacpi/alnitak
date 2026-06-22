@@ -381,6 +381,24 @@ func ReTranscodeVideo(ctx *gin.Context) {
 	resp.OkWithMessage(ctx, "已触发重新转码")
 }
 
+func ReTranscodeResource(ctx *gin.Context) {
+	resourceID := utils.StringToUint(ctx.Query("resourceID"))
+	if resourceID == 0 {
+		resp.FailWithMessage(ctx, "分PID不能为空")
+		return
+	}
+	resource, err := service.ReTranscodeResource(ctx, resourceID)
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+	resp.OkWithDetailed(ctx, gin.H{
+		"resourceID": resource.ID,
+		"videoID":    resource.Vid,
+		"status":     resource.Status,
+	}, "已触发分P重新转码")
+}
+
 func ReUploadVideo(ctx *gin.Context) {
 	vid := utils.StringToUint(ctx.Query("vid"))
 

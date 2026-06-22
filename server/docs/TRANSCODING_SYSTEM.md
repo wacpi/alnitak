@@ -257,6 +257,28 @@ storage:
 
 ---
 
+## 转码相关 API
+
+| 方法 | 路径 | 描述 | 鉴权 |
+|------|------|------|------|
+| POST | `/api/v1/video/reTranscodeVideo?vid={id}` | 重新转码整个视频（所有分P入队） | 后台管理 |
+| POST | `/api/v1/video/reTranscodeResource?resourceID={id}` | 重新转码单个分P（仅失败/卡住的分P） | 后台管理 |
+
+### reTranscodeResource 说明
+
+用于在源文件问题修复后单独重试失败分P，不影响其他分P的状态。
+
+- **请求参数**: `resourceID` — Resource 表主键
+- **允许状态**: `PROCESSING_FAIL` 或 `VIDEO_PROCESSING`
+- **响应**:
+```json
+{
+  "code": 200,
+  "data": { "resourceID": 123, "videoID": 456, "status": 1 },
+  "msg": "已触发分P重新转码"
+}
+```
+
 ## 近期修复
 
 | 问题 | 原因 | 修复 |

@@ -685,13 +685,22 @@ func (w *Worker) writeStatus(key, status string, progress float64, errMsg string
 // OSS 操作
 // =============================================================================
 
-// downloadInput 从 OSS 下载输入文件到本地临时路径
+// downloadInput 从 OSS 下载输入文件到本地临时路径。
+// 主 OSS 失败时自动尝试备用 OSS（多源容灾）。
 func (w *Worker) downloadInput(info *dto.TranscodingInfo, localPath string) error {
 	if w.storage == nil {
 		return fmt.Errorf("no OSS storage configured")
 	}
 	objectKey := fmt.Sprintf("video/%s/upload%s", info.DirName, info.Suffix)
-	return w.storage.GetObjectToFile(objectKey, localPath)
+
+	err := w.storage.GetObjectToFile(objectKey, localPath)
+	if err != nil && w.backupStorage != nil {
+		zap.L().Warn("Primary OSS download failed, trying backup",
+			zap.String("objectKey", objectKey),
+			zap.Error(err))
+		return w.backupStorage.GetObjectToFile(objectKey, localPath)
+	}
+	return err
 }
 
 // probeInput 对已下载的源文件执行 ffprobe，补充 Width/Height 等元数据。

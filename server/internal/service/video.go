@@ -1341,6 +1341,27 @@ func GetFailedVideoList(videoListReq dto.VideoListReq) (total int64, videos []vo
 		videos[i].Clicks += GetVideoClicks(videos[i].ID)
 		videos[i].Author = GetUserBaseInfo(videos[i].Uid)
 		videos[i].Tags = LoadVideoTagNames(videos[i].ID)
+
+		// 加载每个失败视频的分P资源状态，用于展示具体失败的分P
+		var resources []model.Resource
+		global.Mysql.Where("vid = ?", videos[i].ID).Order("sort_order ASC").Find(&resources)
+		if len(resources) > 0 {
+			details := make([]vo.TranscodingProgressItem, 0, len(resources))
+			for _, res := range resources {
+				statusStr := global.ResourceStatusName(res.Status)
+				progress := 0.0
+				if res.Status == global.AUDIT_APPROVED {
+					progress = 100.0
+				}
+				details = append(details, vo.TranscodingProgressItem{
+					ResourceID:    res.ID,
+					ResourceTitle: res.Title,
+					Status:        statusStr,
+					Progress:      progress,
+				})
+			}
+			videos[i].TranscodingDetails = details
+		}
 	}
 
 	return
@@ -2073,6 +2094,101 @@ func getVideoStatus(videoId uint) int {
 
 	// 3. 全部资源都转码完成且无失败，进入待审核状态
 	return global.WAITING_REVIEW
+}
+
+// ReTranscodeResource 重新入队单个分P（资源级别）的转码任务。
+// 用于在修复源文件问题后单独重试失败的分P，不影响其他分P的状态。
+// 返回更新后的 resource 指针，供 API 层返回 data。
+func ReTranscodeResource(ctx *gin.Context, resourceID uint) (*model.Resource, error) {
+	var resource model.Resource
+	if err := global.Mysql.Where("id = ?", resourceID).First(&resource).Error; err != nil {
+		return nil, errors.New("分P不存在")
+	}
+
+	// 只允许重试失败或卡住的分P
+	if resource.Status != global.PROCESSING_FAIL && resource.Status != global.VIDEO_PROCESSING {
+		return nil, errors.New("该分P当前状态不允许重新转码，仅失败或卡住的分P可重试")
+	}
+
+	// 查找 VideoFile
+	var vf model.VideoFile
+	if resource.FileID != 0 {
+		if err := global.Mysql.Where("id = ?", resource.FileID).First(&vf).Error; err != nil || vf.DirName == "" {
+			// 通过 FileID 找不到，尝试从 VideoIndexFile 恢复
+			var indexFile model.VideoIndexFile
+			if err := global.Mysql.Unscoped().Where("resource_id = ?", resource.ID).First(&indexFile).Error; err == nil && indexFile.DirName != "" {
+				if foundVF, err := findVideoFileByDirName(global.Mysql, indexFile.DirName); err == nil && foundVF != nil && foundVF.DirName != "" {
+					vf = *foundVF
+				}
+			}
+		}
+	}
+	if vf.DirName == "" {
+		return nil, errors.New("找不到该分P的原始视频文件记录")
+	}
+
+	suffix := utils.GetFileSuffix(vf.OriginalName)
+
+	// 远程模式不需要本地文件存在，Worker 会从 OSS 下载
+	if global.Config.Transcoding.Mode != "remote" {
+		inputPath := "./upload/video/" + vf.DirName + "/upload" + suffix
+		if _, err := os.Stat(inputPath); os.IsNotExist(err) {
+			return nil, fmt.Errorf("源文件不存在: %s", inputPath)
+		}
+	}
+
+	// 获取原始审核状态（优先从 Redis 读取，兜底用视频当前状态）
+	origStatus := getOriginalVideoStatus(resource.Vid)
+	if origStatus < 0 {
+		var currentStatus int
+		global.Mysql.Model(&model.Video{}).Select("status").Where("id = ?", resource.Vid).Scan(&currentStatus)
+		origStatus = currentStatus
+	}
+
+	// 重置资源状态为转码中
+	global.Mysql.Model(&resource).Update("status", global.VIDEO_PROCESSING)
+	resource.Status = global.VIDEO_PROCESSING
+
+	// 清理 Redis 中可能残留的进度哈希
+	rdb := global.Redis.RawClient()
+	statusKey := fmt.Sprintf("transcoding:status:%d", resource.ID)
+	rdb.Del(context.Background(), statusKey)
+
+	// 构建 TranscodingInfo 并入队
+	info := &dto.TranscodingInfo{
+		VideoID:             resource.Vid,
+		ResourceID:          resource.ID,
+		InputFile:           "./upload/video/" + vf.DirName + "/upload" + suffix,
+		OutputDir:           "./upload/video/" + vf.DirName + "/",
+		DirName:             vf.DirName,
+		Suffix:              suffix,
+		CodecName:           resource.CodecName,
+		Duration:            float64(resource.Duration),
+		OriginalVideoStatus: origStatus,
+	}
+
+	if err := GetCurrentTranscoder().Enqueue(context.Background(), info); err != nil {
+		// 入队失败，回滚资源状态
+		global.Mysql.Model(&resource).Update("status", global.PROCESSING_FAIL)
+		return nil, fmt.Errorf("入队失败: %w", err)
+	}
+
+	utils.InfoLog(fmt.Sprintf("【重新转码-单分P】ResourceID=%d, VideoID=%d, DirName=%s",
+		resource.ID, resource.Vid, vf.DirName), "transcoding")
+	return &resource, nil
+}
+
+// getOriginalVideoStatus 从 Redis 读取原始审核状态。
+// 如果键不存在或已过期，返回 -1。
+func getOriginalVideoStatus(videoID uint) int {
+	rdb := global.Redis.RawClient()
+	ctx := context.Background()
+	key := fmt.Sprintf("transcoding:orig_status:%d", videoID)
+	val, err := rdb.Get(ctx, key).Int()
+	if err != nil {
+		return -1
+	}
+	return val
 }
 
 func xmlEscape(s string) string {
