@@ -414,9 +414,15 @@ let advanceToastEl: HTMLElement | null = null;
 let advanceCountTimer: number | null = null;
 let nearEndPollTimer: number | null = null;
 
+/** 用户已取消推荐列表连播（本次会话内不再弹出） */
+const recommendCancelled = ref(false);
+
 /** 计算下一个自动连播项 */
 const computeNextAdvance = (): { label: string; handler: () => void } | null => {
   if (isPGCPage.value) return null;
+
+  // Bug 02: 循环播放开启时不显示连播倒计时，也不自动跳到下一集
+  if (playerRef.value?.isLoopEnabled?.()) return null;
 
   const partCount = videoInfo.value?.resources?.length || 0;
   const hasParts = partCount > 1;
@@ -432,12 +438,30 @@ const computeNextAdvance = (): { label: string; handler: () => void } | null => 
 
   const cv = collectionRef.value;
   if (isFollowAutonextOn() && cv) {
-    const nextVideo = cv.getNextVideo?.();
-    if (nextVideo) {
-      const item = nextVideo as any;
+    const merged = (cv as any).mergedList as any[] | undefined;
+    const idx = (cv as any).currentIndex as number | undefined;
+    if (merged && typeof idx === 'number' && idx > 0 && idx < merged.length) {
+      const item = merged[idx] as any;
+      const cur = videoInfo.value;
+      console.log('[autonext] computeNextAdvance collection', {
+        currentVid: cur?.vid,
+        currentShortId: cur?.shortId,
+        currentTitle: cur?.title,
+        currentIndex: idx,
+        mergedTotal: merged.length,
+        nextVid: item.vid,
+        nextShortId: item.shortId,
+        nextResourceRid: item.resourceRid,
+        nextTitle: item.title,
+        nextPartTitle: item.partTitle,
+        nextP: item.p,
+      });
       const label = item.partTitle || item.title || `P${item.p || 1}`;
       return { label, handler: () => scheduleNavigateToWatchNext(item, 0) };
     }
+
+    // 没有下一项（已到列表末尾）
+    console.log('[autonext] computeNextAdvance collection: no more items', { currentIndex: idx, mergedTotal: merged?.length });
   }
 
   // 合集没有下一个，检查推荐列表
@@ -543,6 +567,9 @@ const startNearEndPolling = () => {
 
     // 接近片尾（剩余 <= 2s）
     if (remaining <= 2 && remaining > 0) {
+      // 用户已取消推荐连播，本次会话不再弹出
+      if (recommendCancelled.value) return;
+
       const next = computeNextAdvance();
       if (next) {
         advanceCancelled.value = false;
@@ -572,19 +599,23 @@ function scheduleNavigateToWatchNext(
   delayMs: number,
 ) {
   const v = String(item.shortId ?? item.vid ?? '').trim();
-  if (!v) return;
+  if (!v) {
+    console.log('[autonext] scheduleNavigateToWatchNext: empty vid, abort');
+    return;
+  }
   const resourceRid = item.resourceRid;
   const p = item.p;
   window.setTimeout(() => {
+    let url: string;
     if (resourceRid) {
-      void navigateTo(`/watch?v=${v}&rid=${encodeURIComponent(resourceRid)}`);
-      return;
+      url = `/watch?v=${v}&rid=${encodeURIComponent(resourceRid)}`;
+    } else if (typeof p === 'number' && p > 1) {
+      url = `/watch?v=${v}&p=${p}`;
+    } else {
+      url = `/watch?v=${v}`;
     }
-    if (typeof p === 'number' && p > 1) {
-      void navigateTo(`/watch?v=${v}&p=${p}`);
-      return;
-    }
-    void navigateTo(`/watch?v=${v}`);
+    console.log('[autonext] navigateTo', { url, fromVid: v, resourceRid, p });
+    void navigateTo(url);
   }, delayMs);
 }
 
@@ -595,20 +626,23 @@ const onVideoEnded = () => {
 
   // 用户取消了连播
   if (advanceCancelled.value) {
+    // 检测是否推荐列表场景（无分P且无合集下一项）→ 本次会话不再弹出
+    const cv = collectionRef.value;
+    const noMoreParts = !((videoInfo.value?.resources?.length || 0) > 1 && currentPart.value < (videoInfo.value?.resources?.length || 0));
+    const noMoreCollection = !(cv?.hasPlaylist && cv.getNextVideo?.());
+    if (noMoreParts && noMoreCollection) {
+      recommendCancelled.value = true;
+    }
     resetAdvanceState();
     return;
   }
 
-  // 有预设的下一项 → 立即执行（无延迟）
-  if (advancePending.value) {
-    const h = advancePending.value.handler;
-    advancePending.value = null;
-    hideAdvanceToast();
-    h();
-    return;
-  }
+  // 清除 polling 阶段缓存的 advancePending（仅作 UI 倒计时用），
+  // 导航目标始终在结束时重新计算，避免闭包捕获与数据过渡期的时间差
+  advancePending.value = null;
+  hideAdvanceToast();
 
-  // 兜底：轮询未命中时直接检查（不带延迟）
+  // 分P续播（单P合集不命中）
   const partCount = videoInfo.value?.resources?.length || 0;
   const hasParts = partCount > 1;
   const curPart = currentPart.value;
@@ -620,9 +654,41 @@ const onVideoEnded = () => {
     }
   }
 
+  // 合集续播（按位置索引取下一项，绕过 vid/shortId 匹配）
   const collectionRefVal = collectionRef.value;
   if (isFollowAutonextOn() && collectionRefVal) {
-    const nextVideo = collectionRefVal.getNextVideo?.();
+    const merged = (collectionRefVal as any).mergedList as any[] | undefined;
+    const idx = (collectionRefVal as any).currentIndex as number | undefined;
+    const cur = videoInfo.value;
+    console.log('[autonext] onVideoEnded collection', {
+      currentVid: cur?.vid,
+      currentShortId: cur?.shortId,
+      currentTitle: cur?.title,
+      currentIndex: idx,
+      mergedTotal: merged?.length,
+      hasAdvancePending: !!advancePending.value,
+    });
+    if (merged && typeof idx === 'number' && idx > 0 && idx < merged.length) {
+      const nextVideo = merged[idx] as { shortId?: string; vid?: number | string; title?: string; partTitle?: string };
+      if (nextVideo) {
+        console.log('[autonext] navigating to next', {
+          vid: nextVideo.vid,
+          shortId: nextVideo.shortId,
+          resourceRid: (nextVideo as any).resourceRid,
+          title: nextVideo.title,
+          partTitle: (nextVideo as any).partTitle,
+        });
+        scheduleNavigateToWatchNext(nextVideo, 0);
+        return;
+      }
+    }
+    console.log('[autonext] onVideoEnded collection: no next video');
+  }
+
+  // 推荐列表续播
+  const rv = recommendListRef.value;
+  if (isFollowAutonextOn() && rv) {
+    const nextVideo = rv.getNextVideo?.();
     if (nextVideo) {
       scheduleNavigateToWatchNext(nextVideo as { shortId?: string; vid?: number | string }, 0);
     }
