@@ -252,7 +252,10 @@ func ReviewVideoFailed(ctx *gin.Context, reviewVideoReq dto.ReviewVideoReq) erro
 		return errors.New("更新状态失败")
 	}
 
-	tx.Commit()
+	if err := tx.Commit().Error; err != nil {
+		utils.ErrorLog("提交事务失败", "review", err.Error())
+		return errors.New("更新状态失败")
+	}
 
 	// 清除视频信息缓存和视频ID缓存
 	video, _ := FindVideoById(reviewVideoReq.Vid)
@@ -308,7 +311,10 @@ func ReviewArticleApproved(ctx *gin.Context, reviewArticleReq dto.ReviewArticleR
 	// 文章ID添加到redis中
 	cache.SetArticleId(reviewArticleReq.Aid)
 
-	tx.Commit()
+	if err := tx.Commit().Error; err != nil {
+		utils.ErrorLog("提交事务失败", "review", err.Error())
+		return errors.New("更新状态失败")
+	}
 	return nil
 }
 
@@ -337,7 +343,10 @@ func ReviewArticleFailed(ctx *gin.Context, reviewArticleReq dto.ReviewArticleReq
 		return errors.New("更新状态失败")
 	}
 
-	tx.Commit()
+	if err := tx.Commit().Error; err != nil {
+		utils.ErrorLog("提交事务失败", "review", err.Error())
+		return errors.New("更新状态失败")
+	}
 	return nil
 }
 
@@ -394,7 +403,10 @@ func ReviewPlaylistApproved(ctx *gin.Context, req dto.ReviewPlaylistReq) error {
 		return errors.New("更新状态失败")
 	}
 
-	tx.Commit()
+	if err := tx.Commit().Error; err != nil {
+		utils.ErrorLog("提交事务失败", "review", err.Error())
+		return errors.New("更新状态失败")
+	}
 	return nil
 }
 
@@ -421,7 +433,10 @@ func ReviewPlaylistFailed(ctx *gin.Context, req dto.ReviewPlaylistReq) error {
 		return errors.New("更新状态失败")
 	}
 
-	tx.Commit()
+	if err := tx.Commit().Error; err != nil {
+		utils.ErrorLog("提交事务失败", "review", err.Error())
+		return errors.New("更新状态失败")
+	}
 	return nil
 }
 
