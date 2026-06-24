@@ -52,6 +52,22 @@ func Register(ctx *gin.Context) {
 		return
 	}
 
+	// 人机验证
+	if utils.VerifyStringLength(registerReq.CaptchaId, "=", 0) {
+		captchaId := cache.CreateCaptchaStatus()
+		resp.Result(ctx, -1, gin.H{"captchaId": captchaId}, "需要人机验证")
+		return
+	}
+
+	switch cache.GetCaptchaStatus(registerReq.CaptchaId) {
+	case global.CAPTCHA_STATUS_ABSENT:
+		captchaId := cache.CreateCaptchaStatus()
+		resp.Result(ctx, -1, gin.H{"captchaId": captchaId}, "需要人机验证")
+		return
+	case global.CAPTCHA_STATUS_PASS:
+		cache.DelCaptchaStatus(registerReq.CaptchaId)
+	}
+
 	if err := service.UserRegister(ctx, registerReq); err != nil {
 		resp.FailWithMessage(ctx, err.Error())
 		return
@@ -116,6 +132,11 @@ func EmailLogin(ctx *gin.Context) {
 
 	if !utils.VerifyEmail(loginReq.Email) {
 		resp.FailWithMessage(ctx, "邮箱格式错误")
+		return
+	}
+
+	if !utils.VerifyStringLength(loginReq.Code, "=", 6) {
+		resp.FailWithMessage(ctx, "验证码长度为6位")
 		return
 	}
 
