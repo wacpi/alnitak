@@ -719,11 +719,8 @@ func (s *TranscodeService) completeTransaction(ctx context.Context, info *dto.Tr
 					Update("visible_status", global.VISIBLE_SHOWN)
 			} else {
 				// 替换分P：仍保持隐藏，等审核通过后再可见
-				// 隐藏被替换的旧资源（替换期间旧资源保持可见，现在新资源已就绪）
-				tx.Model(&model.Resource{}).
-					Where("id = ?", currentResource.ReplaceID).
-					Update("visible_status", global.VISIBLE_HIDDEN)
-				utils.InfoLog(fmt.Sprintf("【资源替换】新ResourceID=%d 转码完成，等待审核，已隐藏旧ResourceID=%d",
+				// 旧资源保持可见（VisibleStatus=1），审核期间用户仍能观看旧内容
+				utils.InfoLog(fmt.Sprintf("【资源替换】新ResourceID=%d 转码完成，等待审核，旧ResourceID=%d 仍可见",
 					info.ResourceID, currentResource.ReplaceID), "transcoding")
 			}
 		}

@@ -56,6 +56,15 @@ func ReviewVideoApproved(ctx *gin.Context, reviewVideoReq dto.ReviewVideoReq) er
 		return errors.New("更新状态失败")
 	}
 
+	// 隐藏被替换的旧资源：刚审核通过的替换资源，其旧资源不再对外可见
+	// （替换期间旧资源保持可见，新资源审核通过后才隐藏，避免审核期间空窗）
+	var replacementResources []model.Resource
+	tx.Model(&model.Resource{}).Where("vid = ? AND replace_id > 0 AND status = ?", reviewVideoReq.Vid, global.AUDIT_APPROVED).Find(&replacementResources)
+	for _, r := range replacementResources {
+		tx.Model(&model.Resource{}).Where("id = ?", r.ReplaceID).Update("visible_status", global.VISIBLE_HIDDEN)
+		utils.InfoLog(fmt.Sprintf("【审核通过-替换】新ResourceID=%d 已批准，隐藏旧ResourceID=%d", r.ID, r.ReplaceID), "review")
+	}
+
 	// 先提交事务
 	if err := tx.Commit().Error; err != nil {
 		utils.ErrorLog("提交事务失败", "review", err.Error())
