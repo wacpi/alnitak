@@ -6,9 +6,10 @@ type VideoListReq struct {
 }
 
 type VideoFileReq struct {
-	Hash   string `json:"hash"`
-	FileID uint   `json:"fileID"`
-	Size   int64  `json:"size"`
+	Hash              string `json:"hash"`
+	FileID            uint   `json:"fileID"`
+	Size              int64  `json:"size"`
+	ReplaceResourceID uint   `json:"replaceResourceID"` // >0 表示替换该旧资源
 }
 
 type VideoCheckResp struct {

@@ -713,6 +713,16 @@ func (s *TranscodeService) completeTransaction(ctx context.Context, info *dto.Tr
 			tx.Model(&model.Resource{}).
 				Where("id = ?", info.ResourceID).
 				Update("visible_status", global.VISIBLE_SHOWN)
+
+			// 如果是替换资源，隐藏被替换的旧资源（延迟替换：旧资源保持可见到新资源成功为止）
+			if currentResource.ReplaceID > 0 {
+				tx.Model(&model.Resource{}).
+					Where("id = ?", currentResource.ReplaceID).
+					Update("visible_status", global.VISIBLE_HIDDEN)
+				utils.InfoLog(fmt.Sprintf("【资源替换】新ResourceID=%d 已完成，隐藏旧ResourceID=%d",
+					info.ResourceID, currentResource.ReplaceID), "transcoding")
+			}
+
 			// 清除视频缓存，使公开端能立即看到新完成的分P
 			cache.DelVideoInfo(info.VideoID)
 		}

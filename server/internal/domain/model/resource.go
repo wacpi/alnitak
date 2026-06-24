@@ -22,6 +22,10 @@ type Resource struct {
 	// 全局去重相关字段
 	FileID uint `gorm:"comment:关联的视频文件ID;index"`
 
+	// 替换关联字段：ReplaceID > 0 表示此资源是用于替换 ReplaceID 所指的旧资源
+	// 旧资源在替换资源转码成功后才被隐藏，保证无空窗期
+	ReplaceID uint `gorm:"comment:被替换的旧资源ID（0表示非替换）;default:0;index"`
+
 	// 审核冲突关联字段
 	ConflictResourceID uint   `gorm:"comment:冲突稿件ID（驳回时设置）;index"`
 	ConflictReason     string `gorm:"type:varchar(500);comment:冲突原因"`

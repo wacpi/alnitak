@@ -201,7 +201,7 @@ func UploadVideoAdd(ctx *gin.Context, vid uint, videoFileReq dto.VideoFileReq) (
 		return vo.ResourceResp{}, errors.New("创建文件引用失败")
 	}
 
-	resource, err := CompleteUploadVideo(vid, userId, fileInfo.ID, fileInfo.DirName, fileInfo.OriginalName, fileInfo.Status == model.FileStatusReady)
+	resource, err := CompleteUploadVideo(vid, userId, fileInfo.ID, fileInfo.DirName, fileInfo.OriginalName, fileInfo.Status == model.FileStatusReady, videoFileReq.ReplaceResourceID)
 	if err != nil {
 		// 补偿：创建资源失败时回滚临时引用关系，避免 resource_id=0 悬挂记录
 		decreaseVideoFileRefCount(fileInfo.ID, userId, 0, fileInfo.DirName)
@@ -613,13 +613,49 @@ func decreaseVideoFileRefCount(fileID, uid, resourceID uint, dirName string) {
 // CompleteUploadVideo 完成视频上传（支持全局去重）
 // fileID: 关联的视频文件ID
 // skipTranscode: 如果文件已转码完成，跳过转码直接使用
-func CompleteUploadVideo(vid, userId, fileID uint, videoName, title string, skipTranscode bool) (vo.ResourceResp, error) {
+func CompleteUploadVideo(vid, userId, fileID uint, videoName, title string, skipTranscode bool, replaceResourceID ...uint) (vo.ResourceResp, error) {
 	suffix := utils.GetFileSuffix(title)
 	uploadVideoPath := "./upload/video/" + videoName + "/upload" + suffix
 
 	// 去掉后缀名并截断过长标题
 	titleWithoutExt := title[:len(title)-len(path.Ext(title))]
 	titleWithoutExt = truncateString(titleWithoutExt, 255)
+
+	// 处理替换场景：获取被替换资源的排序序号和 ShortID
+	replaceID := uint(0)
+	replaceShortID := "" // 替换时复用旧资源 ShortID，确保弹幕/字幕/历史绑定不丢失
+	sortOrder := -1      // 默认为append到末尾
+	if len(replaceResourceID) > 0 && replaceResourceID[0] > 0 {
+		replaceID = replaceResourceID[0]
+		// 校验旧资源属于同一视频
+		var oldResource model.Resource
+		if err := global.Mysql.Where("id = ? AND vid = ?", replaceID, vid).First(&oldResource).Error; err != nil {
+			return vo.ResourceResp{}, errors.New("被替换的资源不存在")
+		}
+		sortOrder = oldResource.SortOrder
+		replaceShortID = oldResource.ShortID
+
+		// 先清除旧资源的 ShortID，避免 unique 约束冲突
+		if replaceShortID != "" {
+			global.Mysql.Model(&model.Resource{}).Where("id = ?", replaceID).
+				Update("short_id", "")
+		}
+	} else {
+		// append模式：取当前最大排序序号+1
+		global.Mysql.Model(&model.Resource{}).Where("vid = ?", vid).
+			Select("COALESCE(MAX(sort_order), -1)").Scan(&sortOrder)
+		sortOrder++ // sortOrder 现在是 maxOrder+1
+	}
+
+	// 确定新资源的 ShortID（替换时复用旧的，否则分配新的）
+	rSid := replaceShortID
+	if rSid == "" {
+		var errSid error
+		rSid, errSid = AllocateUniqueResourceShortID()
+		if errSid != nil {
+			return vo.ResourceResp{}, errSid
+		}
+	}
 
 	// 如果文件已就绪（秒传），直接复用已有转码结果
 	if skipTranscode {
@@ -628,15 +664,6 @@ func CompleteUploadVideo(vid, userId, fileID uint, videoName, title string, skip
 		if err := global.Mysql.Where("file_id = ?", fileID).First(&existingResource).Error; err == nil {
 			// 【重要】秒传的资源也需要审核，状态设为 WAITING_REVIEW
 			// 审核员决定是否通过，不能因为别人上传过就自动通过
-			// 获取当前最大排序序号
-			var maxOrder int
-			global.Mysql.Model(&model.Resource{}).Where("vid = ?", vid).
-				Select("COALESCE(MAX(sort_order), -1)").Scan(&maxOrder)
-
-			rSid, errSid := AllocateUniqueResourceShortID()
-			if errSid != nil {
-				return vo.ResourceResp{}, errSid
-			}
 			resource := model.Resource{
 				Vid:            vid,
 				Uid:            userId,
@@ -645,9 +672,10 @@ func CompleteUploadVideo(vid, userId, fileID uint, videoName, title string, skip
 				VisibleStatus:  global.VISIBLE_HIDDEN, // 审核通过前对外隐藏
 				Duration:       existingResource.Duration,
 				FileID:         fileID,
-				SortOrder:      maxOrder + 1,
+				SortOrder:      sortOrder,
 				ShortID:        rSid,
 				CodecName:      existingResource.CodecName,
+				ReplaceID:      replaceID,
 			}
 			if err := global.Mysql.Create(&resource).Error; err != nil {
 				return vo.ResourceResp{}, errors.New("保存视频失败")
@@ -669,17 +697,9 @@ func CompleteUploadVideo(vid, userId, fileID uint, videoName, title string, skip
 		return vo.ResourceResp{}, errors.New("读取视频信息失败")
 	}
 
-	// 获取当前最大排序序号
-	var maxOrder int
-	global.Mysql.Model(&model.Resource{}).Where("vid = ?", vid).
-		Select("COALESCE(MAX(sort_order), -1)").Scan(&maxOrder)
-
-	rSid, errSid := AllocateUniqueResourceShortID()
-	if errSid != nil {
-		return vo.ResourceResp{}, errSid
-	}
 	// 存入数据库
 	// 如果视频已公开，新分P对外隐藏，等转码完成后再改为可见
+	// 替换场景：新资源排在同一位置，复用旧 ShortID（弹幕/字幕/历史继承），旧资源等新资源成功后再隐藏
 	resource := model.Resource{
 		Vid:            vid,
 		Uid:            userId,
@@ -689,8 +709,9 @@ func CompleteUploadVideo(vid, userId, fileID uint, videoName, title string, skip
 		VisibleStatus:  global.VISIBLE_HIDDEN,
 		Duration:       utils.SecFromFloat(transcodingInfo.Duration),
 		FileID:         fileID,
-		SortOrder:      maxOrder + 1,
+		SortOrder:      sortOrder,
 		ShortID:        rSid,
+		ReplaceID:      replaceID,
 	}
 	if err := global.Mysql.Create(&resource).Error; err != nil {
 		return vo.ResourceResp{}, errors.New("保存视频失败")
