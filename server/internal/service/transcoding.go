@@ -704,25 +704,28 @@ func (s *TranscodeService) completeTransaction(ctx context.Context, info *dto.Tr
 			return err
 		}
 
-		if targetStatus == global.WAITING_REVIEW && info.OriginalVideoStatus == global.AUDIT_APPROVED {
+		// 替换资源需要审核，不走无降级捷径（防绕过：先传正经内容→审核通过→替换成违规内容）
+		isReplace := currentResource.ReplaceID > 0
+		if targetStatus == global.WAITING_REVIEW && info.OriginalVideoStatus == global.AUDIT_APPROVED && !isReplace {
 			targetStatus = global.AUDIT_APPROVED
 		}
 
 		// 转码成功后，分P对外可见（仅当成功时）
 		if targetStatus != global.PROCESSING_FAIL && targetStatus != global.UPLOAD_FAILED {
-			tx.Model(&model.Resource{}).
-				Where("id = ?", info.ResourceID).
-				Update("visible_status", global.VISIBLE_SHOWN)
-
-			// 如果是替换资源，隐藏被替换的旧资源（延迟替换：旧资源保持可见到新资源成功为止）
-			if currentResource.ReplaceID > 0 {
+			if !isReplace {
+				// 普通分P（非替换）：转码完成即可见
+				tx.Model(&model.Resource{}).
+					Where("id = ?", info.ResourceID).
+					Update("visible_status", global.VISIBLE_SHOWN)
+			} else {
+				// 替换分P：仍保持隐藏，等审核通过后再可见
+				// 隐藏被替换的旧资源（替换期间旧资源保持可见，现在新资源已就绪）
 				tx.Model(&model.Resource{}).
 					Where("id = ?", currentResource.ReplaceID).
 					Update("visible_status", global.VISIBLE_HIDDEN)
-				utils.InfoLog(fmt.Sprintf("【资源替换】新ResourceID=%d 已完成，隐藏旧ResourceID=%d",
+				utils.InfoLog(fmt.Sprintf("【资源替换】新ResourceID=%d 转码完成，等待审核，已隐藏旧ResourceID=%d",
 					info.ResourceID, currentResource.ReplaceID), "transcoding")
 			}
-
 		}
 
 		result := tx.Model(&model.Resource{}).
