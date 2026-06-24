@@ -124,7 +124,7 @@ const sendEmailCode = async () => {
   if (disabledSend.value) return;
   //禁用发送按钮
   disabledSend.value = true;
-  const res = await sendEmailCodeAPI(registerForm);
+  const res = await sendEmailCodeAPI({ email: registerForm.email, captchaId: registerForm.captchaId });
   switch (res.data.code) {
     case statusCode.OK:
       //开启倒计时，使用后端返回的冷却时间
