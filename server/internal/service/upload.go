@@ -621,10 +621,9 @@ func CompleteUploadVideo(vid, userId, fileID uint, videoName, title string, skip
 	titleWithoutExt := title[:len(title)-len(path.Ext(title))]
 	titleWithoutExt = truncateString(titleWithoutExt, 255)
 
-	// 处理替换场景：获取被替换资源的排序序号和 ShortID
+	// 处理替换场景
 	replaceID := uint(0)
-	replaceShortID := "" // 替换时复用旧资源 ShortID，确保弹幕/字幕/历史绑定不丢失
-	sortOrder := -1      // 默认为append到末尾
+	sortOrder := -1 // 默认为append到末尾
 	if len(replaceResourceID) > 0 && replaceResourceID[0] > 0 {
 		replaceID = replaceResourceID[0]
 		// 校验旧资源属于同一视频
@@ -633,13 +632,8 @@ func CompleteUploadVideo(vid, userId, fileID uint, videoName, title string, skip
 			return vo.ResourceResp{}, errors.New("被替换的资源不存在")
 		}
 		sortOrder = oldResource.SortOrder
-		replaceShortID = oldResource.ShortID
-
-		// 先清除旧资源的 ShortID，避免 unique 约束冲突
-		if replaceShortID != "" {
-			global.Mysql.Model(&model.Resource{}).Where("id = ?", replaceID).
-				Update("short_id", "")
-		}
+		// ShortID 不提前转移：审核期间旧资源保留 ShortID，保证弹幕/字幕/历史正常
+		// 审核通过时再由 ReviewVideoApproved 统一转移
 	} else {
 		// append模式：取当前最大排序序号+1
 		global.Mysql.Model(&model.Resource{}).Where("vid = ?", vid).
@@ -647,14 +641,10 @@ func CompleteUploadVideo(vid, userId, fileID uint, videoName, title string, skip
 		sortOrder++ // sortOrder 现在是 maxOrder+1
 	}
 
-	// 确定新资源的 ShortID（替换时复用旧的，否则分配新的）
-	rSid := replaceShortID
-	if rSid == "" {
-		var errSid error
-		rSid, errSid = AllocateUniqueResourceShortID()
-		if errSid != nil {
-			return vo.ResourceResp{}, errSid
-		}
+	// 分配新资源的 ShortID
+	rSid, errSid := AllocateUniqueResourceShortID()
+	if errSid != nil {
+		return vo.ResourceResp{}, errSid
 	}
 
 	// 如果文件已就绪（秒传），直接复用已有转码结果
