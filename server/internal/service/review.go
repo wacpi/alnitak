@@ -17,9 +17,13 @@ import (
 func ReviewVideoApproved(ctx *gin.Context, reviewVideoReq dto.ReviewVideoReq) error {
 	tx := global.Mysql.Begin()
 	// 只把待审核的资源改为审核通过（不影响转码中、已通过等其他状态的资源）
+	// 同时设为对外可见（处理中的分P仍为隐藏，等转码完成后再改为可见）
 	if err := tx.Model(&model.Resource{}).
 		Where("vid = ? AND status = ?", reviewVideoReq.Vid, global.WAITING_REVIEW).
-		Updates(map[string]interface{}{"status": global.AUDIT_APPROVED}).Error; err != nil {
+		Updates(map[string]interface{}{
+			"status":         global.AUDIT_APPROVED,
+			"visible_status": global.VISIBLE_SHOWN,
+		}).Error; err != nil {
 		tx.Rollback()
 		utils.ErrorLog("更新资源状态失败", "review", err.Error())
 		return errors.New("更新状态失败")

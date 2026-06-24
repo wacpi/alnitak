@@ -621,11 +621,6 @@ func CompleteUploadVideo(vid, userId, fileID uint, videoName, title string, skip
 	titleWithoutExt := title[:len(title)-len(path.Ext(title))]
 	titleWithoutExt = truncateString(titleWithoutExt, 255)
 
-	// 查询视频当前状态，决定新分P的可见性
-	var videoStatus int
-	global.Mysql.Model(&model.Video{}).Select("status").Where("id = ?", vid).Scan(&videoStatus)
-	isAlreadyPublished := videoStatus == global.AUDIT_APPROVED
-
 	// 如果文件已就绪（秒传），直接复用已有转码结果
 	if skipTranscode {
 		// 查询已有的资源获取视频信息（duration, codecName等）
