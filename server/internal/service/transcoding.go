@@ -190,9 +190,15 @@ func getRemoteVideoTranscodingProgress(videoID uint) (float64, []vo.TranscodingP
 	var totalProgress float64
 	var totalCount int
 	var uploadInfo *vo.UploadProgressInfo
+	resourceUploads := make(map[uint]*vo.UploadProgressInfo)
 
 	rdb := global.Redis.RawClient()
 	ctx := context.Background()
+
+	// 记录有 Redis 数据的 resource，用于后续补齐排队中的分P
+	foundInRedis := make(map[uint]bool, len(resources))
+	// 收集已有的画质名称，用于排队中分P的占位
+	knownQualities := make([]string, 0)
 
 	for _, res := range resources {
 		statusKey := fmt.Sprintf("transcoding:status:%d", res.ID)
@@ -200,6 +206,7 @@ func getRemoteVideoTranscodingProgress(videoID uint) (float64, []vo.TranscodingP
 		if err != nil || len(statusMap) == 0 {
 			continue
 		}
+		foundInRedis[res.ID] = true
 
 		status := statusMap["status"]
 
@@ -217,6 +224,18 @@ func getRemoteVideoTranscodingProgress(videoID uint) (float64, []vo.TranscodingP
 				continue
 			}
 			qualityName := strings.TrimPrefix(key, "progress_")
+			// 收集已知画质名
+			seen := false
+			for _, q := range knownQualities {
+				if q == qualityName {
+					seen = true
+					break
+				}
+			}
+			if !seen {
+				knownQualities = append(knownQualities, qualityName)
+			}
+
 			// 读取画质独立状态（success/failed），没有则沿用整体状态
 			qStatus := status
 			if s, ok := statusMap["status_"+qualityName]; ok {
@@ -246,7 +265,7 @@ func getRemoteVideoTranscodingProgress(videoID uint) (float64, []vo.TranscodingP
 			totalCount += resProgressCount
 		}
 
-		// 解析上传进度
+		// 解析上传进度（按分P存储）
 		if uploadStr, ok := statusMap["upload"]; ok && uploadStr != "" {
 			var up struct {
 				OssType  string  `json:"ossType"`
@@ -254,12 +273,59 @@ func getRemoteVideoTranscodingProgress(videoID uint) (float64, []vo.TranscodingP
 				Status   string  `json:"status"`
 			}
 			if err := json.Unmarshal([]byte(uploadStr), &up); err == nil {
-				uploadInfo = &vo.UploadProgressInfo{
+				info := &vo.UploadProgressInfo{
 					OssType:  up.OssType,
 					Progress: up.Progress,
 					Status:   up.Status,
 				}
+				resourceUploads[res.ID] = info
+				uploadInfo = info
 			}
+		}
+	}
+
+	// 补齐没有 Redis 数据的 resource（排队中 / 已完成清理）
+	// 让前端能看见全部分P的状态，而不是只显示正在处理的那几个
+	for _, res := range resources {
+		if foundInRedis[res.ID] {
+			continue
+		}
+
+		var displayStatus string
+		switch res.Status {
+		case global.CREATED_VIDEO, global.VIDEO_PROCESSING:
+			displayStatus = "waiting"
+		case global.WAITING_REVIEW, global.AUDIT_APPROVED:
+			displayStatus = "success"
+		case global.PROCESSING_FAIL:
+			displayStatus = "fail"
+		default:
+			continue
+		}
+
+		// 如果已有其他分P的已知画质，为每个画质生成一条排队/完成占位
+		if len(knownQualities) > 0 {
+			for _, q := range knownQualities {
+				var pct float64
+				if displayStatus == "success" {
+					pct = 100
+				}
+				details = append(details, vo.TranscodingProgressItem{
+					ResourceID: res.ID,
+					Quality:    q,
+					Progress:   pct,
+					Status:     displayStatus,
+				})
+				totalProgress += pct
+				totalCount++
+			}
+		} else {
+			// 没有任何资源有 Redis 数据（首次启动，全排队中），加一条无画质占位
+			details = append(details, vo.TranscodingProgressItem{
+				ResourceID: res.ID,
+				ResourceTitle: res.Title,
+				Status:        displayStatus,
+			})
 		}
 	}
 
@@ -268,6 +334,13 @@ func getRemoteVideoTranscodingProgress(videoID uint) (float64, []vo.TranscodingP
 	}
 
 	sort.Slice(details, func(i, j int) bool {
+		// 无画质的放最后
+		if details[i].Quality == "" {
+			return false
+		}
+		if details[j].Quality == "" {
+			return true
+		}
 		iw, ih, ifps, _ := parseProgressQualitySortKey(details[i].Quality)
 		jw, jh, jfps, _ := parseProgressQualitySortKey(details[j].Quality)
 		if ih != jh {
@@ -281,6 +354,17 @@ func getRemoteVideoTranscodingProgress(videoID uint) (float64, []vo.TranscodingP
 		}
 		return iw < jw
 	})
+
+	// 将上传进度挂到对应分P的第一个画质条目上
+	assignedUpload := make(map[uint]bool)
+	for i := range details {
+		if !assignedUpload[details[i].ResourceID] {
+			if up, ok := resourceUploads[details[i].ResourceID]; ok {
+				details[i].Upload = up
+				assignedUpload[details[i].ResourceID] = true
+			}
+		}
+	}
 
 	return totalProgress / float64(totalCount), details, uploadInfo
 }
@@ -647,6 +731,13 @@ func (s *TranscodeService) completeTransaction(ctx context.Context, info *dto.Tr
 
 		var successCount int64
 		tx.Model(&model.Resource{}).Where("vid = ? and status in ?", info.VideoID, []int{global.WAITING_REVIEW, global.AUDIT_APPROVED}).Count(&successCount)
+
+		// 成功路径：等全部分P都完成再更新视频状态，避免单P完成就提前暴露稿件
+		if targetStatus != global.PROCESSING_FAIL && successCount < totalCount {
+			utils.InfoLog(fmt.Sprintf("多分P等待: VideoID=%d, 已处理 %d/%d 个分P, 暂不更新视频状态",
+				info.VideoID, successCount, totalCount), "transcoding")
+			return nil
+		}
 
 		finalVideoStatus := global.WAITING_REVIEW
 		if targetStatus == global.PROCESSING_FAIL {

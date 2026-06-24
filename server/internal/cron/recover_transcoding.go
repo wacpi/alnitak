@@ -72,20 +72,47 @@ func RecoverStuckTranscoding() {
 				errors++
 				continue
 			}
-			if status == "completed" || status == "failed" || status == "partial_fail" {
+			switch status {
+			case "completed", "failed", "partial_fail":
 				// pollProgress 丢失（主服务重启）导致无人处理此完成状态，
 				// 删掉哈希后重新入队，新的 pollProgress 会接管。
-				utils.InfoLog(fmt.Sprintf("发现过期完成状态，重新入队: ResourceID=%d, VideoID=%d, status=%s",
+				utils.InfoLog(fmt.Sprintf("发现过期终态，重新入队: ResourceID=%d, VideoID=%d, status=%s",
 					res.ID, res.Vid, status), "cron")
-				if err := rdb.Del(ctx, redisKey).Err(); err != nil {
-					utils.ErrorLog("删除过期哈希失败", "cron",
+			case "processing":
+				// "processing" → 检查 updated 字段判断是否过期
+				updatedStr, err := rdb.HGet(ctx, redisKey, "updated").Result()
+				if err != nil {
+					utils.ErrorLog("读取 updated 字段失败", "cron",
 						fmt.Sprintf("ResourceID=%d, err=%v", res.ID, err))
+					errors++
+					continue
 				}
-				// 继续执行下面的重新入队逻辑
-			} else {
-				// 任务正常进行中，跳过
+				updatedUnix, err := strconv.ParseInt(updatedStr, 10, 64)
+				if err != nil {
+					utils.ErrorLog("解析 updated 字段失败", "cron",
+						fmt.Sprintf("ResourceID=%d, val=%s", res.ID, updatedStr))
+					errors++
+					continue
+				}
+				updatedAt := time.Unix(updatedUnix, 0)
+				if time.Since(updatedAt) < 5*time.Minute {
+					// 5分钟内更新过 → 任务正常进行中
+					skipped++
+					continue
+				}
+				// 超过5分钟未更新 → pollProgress 丢失（服务重启），重新入队
+				utils.InfoLog(fmt.Sprintf("发现过期 processing 状态（updated=%v），重新入队: ResourceID=%d, VideoID=%d",
+					time.Since(updatedAt).Round(time.Second), res.ID, res.Vid), "cron")
+			default:
+				// 未知 status，跳过
 				skipped++
 				continue
+			}
+
+			// 到达这里说明需要重新入队 → 删哈希，继续执行下面的 reenqueue 逻辑
+			if err := rdb.Del(ctx, redisKey).Err(); err != nil {
+				utils.ErrorLog("删除过期哈希失败", "cron",
+					fmt.Sprintf("ResourceID=%d, err=%v", res.ID, err))
 			}
 		}
 

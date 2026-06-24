@@ -29,21 +29,27 @@ func VideoEncodeArgs(inputFile, quality, rate, fps string, totalDuration float64
 	switch {
 	case useGpu && useAv1:
 		args = append(args,
-			"-c:v", "av1_nvenc", "-cq", "30", "-preset", "p6", "-rc", "vbr",
-			"-profile:v", "main", "-pix_fmt", "yuv420p", "-bf", "2",
-			"-b_ref_mode", "middle", "-multipass", "qres",
+			"-c:v", "av1_nvenc", "-cq", "30", "-preset", "p7", "-rc", "vbr",
+			"-pix_fmt", "yuv420p", "-bf", "2",
+			"-b_ref_mode", "middle", "-multipass", "fullres",
+			"-aq-strength", "8",
+			"-rc-lookahead", "32",
 		)
 	case useGpu && useHevc:
 		args = append(args,
-			"-c:v", "hevc_nvenc", "-cq", "24", "-preset", "p6", "-rc", "vbr",
+			"-c:v", "hevc_nvenc", "-cq", "24", "-preset", "p7", "-rc", "vbr",
 			"-profile:v", "main10", "-pix_fmt", "yuv420p10le", "-bf", "2", "-b_ref_mode", "middle",
-			"-forced-idr", "1", "-multipass", "qres",
+			"-forced-idr", "1", "-multipass", "fullres",
+			"-spatial_aq", "1", "-temporal_aq", "1", "-aq-strength", "8",
+			"-rc-lookahead", "32",
 		)
 	case useGpu && !useHevc:
 		args = append(args,
-			"-c:v", "h264_nvenc", "-cq", "23", "-preset", "p4", "-rc", "vbr",
+			"-c:v", "h264_nvenc", "-cq", "23", "-preset", "p7", "-rc", "vbr",
 			"-profile:v", "high", "-pix_fmt", "yuv420p", "-bf", "2", "-b_ref_mode", "middle",
-			"-forced-idr", "1",
+			"-forced-idr", "1", "-multipass", "fullres",
+			"-spatial_aq", "1", "-temporal_aq", "1", "-aq-strength", "8",
+			"-rc-lookahead", "32",
 		)
 	case !useGpu && useAv1:
 		args = append(args,
@@ -53,6 +59,7 @@ func VideoEncodeArgs(inputFile, quality, rate, fps string, totalDuration float64
 	case !useGpu && useHevc:
 		args = append(args,
 			"-c:v", "libx265", "-preset", "slow", "-tag:v", "hvc1",
+			"-crf", "22",
 			"-pix_fmt", "yuv420p10le",
 			"-x265-params", "profile=main10:aq-mode=3:aq-strength=0.8:deblock=-1,-1:no-sao=1",
 		)
@@ -78,7 +85,7 @@ func VideoEncodeArgs(inputFile, quality, rate, fps string, totalDuration float64
 	}
 
 	if useGpu {
-		args = append(args, "-strict_gop", "1", "-delay", "0")
+		args = append(args, "-strict_gop", "1")
 	}
 
 	args = append(args,

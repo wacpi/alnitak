@@ -86,11 +86,12 @@ type VideoInfoManageResp struct {
 }
 
 type TranscodingProgressItem struct {
-	ResourceID    uint    `json:"resourceId"`
-	ResourceTitle string  `json:"resourceTitle"`
-	Quality       string  `json:"quality"`
-	Progress      float64 `json:"progress"`
-	Status        string  `json:"status"` // processing/success/fail
+	ResourceID    uint               `json:"resourceId"`
+	ResourceTitle string             `json:"resourceTitle"`
+	Quality       string             `json:"quality"`
+	Progress      float64            `json:"progress"`
+	Status        string             `json:"status"` // processing/success/fail
+	Upload        *UploadProgressInfo `json:"upload,omitempty"`
 }
 
 type UploadProgressInfo struct {

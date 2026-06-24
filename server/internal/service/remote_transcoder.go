@@ -185,13 +185,16 @@ func (t *RemoteTranscoder) pollProgress(ctx context.Context, info *dto.Transcodi
 	cancelCh := pubsub.Channel()
 
 	timeout := time.After(24 * time.Hour) // 最长等待24小时
+	var offlineSince *time.Time
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-timeout:
-			utils.ErrorLog(fmt.Sprintf("【远程转码超时】ResourceID=%d", info.ResourceID), "transcoding", "")
+			utils.ErrorLog(fmt.Sprintf("【远程转码超时】ResourceID=%d，24h 上限到达，标记失败", info.ResourceID), "transcoding", "")
+			GetTranscoder().completeTransaction(ctx, info, global.PROCESSING_FAIL)
+			t.rdb.Del(ctx, statusKey)
 			return
 		case msg, ok := <-cancelCh:
 			if ok && msg.Payload == fmt.Sprintf("%d", info.VideoID) {
@@ -199,6 +202,22 @@ func (t *RemoteTranscoder) pollProgress(ctx context.Context, info *dto.Transcodi
 				return
 			}
 		case <-ticker.C:
+			// 查 Worker 心跳，离线时不读进度但不标记失败
+			alive := HasAliveWorker(ctx)
+			if !alive {
+				if offlineSince == nil {
+					now := time.Now()
+					offlineSince = &now
+					utils.InfoLog(fmt.Sprintf("【远程转码】Worker 离线，等待恢复... ResourceID=%d", info.ResourceID), "transcoding")
+				}
+				continue // Worker 离线期间不读进度
+			}
+			if offlineSince != nil {
+				utils.InfoLog(fmt.Sprintf("【远程转码】Worker 已恢复在线（离线 %v），ResourceID=%d",
+					time.Since(*offlineSince), info.ResourceID), "transcoding")
+				offlineSince = nil
+			}
+
 			statusMap, err := t.rdb.HGetAll(ctx, statusKey).Result()
 			if err != nil || len(statusMap) == 0 {
 				continue
@@ -207,14 +226,12 @@ func (t *RemoteTranscoder) pollProgress(ctx context.Context, info *dto.Transcodi
 			if status == "failed" {
 				utils.InfoLog(fmt.Sprintf("【远程转码失败】ResourceID=%d", info.ResourceID), "transcoding")
 				GetTranscoder().completeTransaction(ctx, info, global.PROCESSING_FAIL)
-				// 清理 Redis 进度哈希，避免垃圾数据堆积
 				t.rdb.Del(ctx, statusKey)
 				return
 			}
 			if status == "completed" {
 				utils.InfoLog(fmt.Sprintf("【远程转码完成】ResourceID=%d", info.ResourceID), "transcoding")
 				t.handleRemoteCompletion(ctx, info, statusMap)
-				// 清理 Redis 进度哈希（statusMap 已读取完，删了不影响）
 				t.rdb.Del(ctx, statusKey)
 				return
 			}

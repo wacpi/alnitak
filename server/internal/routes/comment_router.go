@@ -13,7 +13,7 @@ func CollectCommentRoutes(r *gin.RouterGroup) {
 	commentAuth.Use(middleware.Auth())
 	{
 		// 发表评论或回复
-		commentAuth.POST("video/addComment", middleware.Ban(), api.AddVideoComment)
+		commentAuth.POST("video/addComment", middleware.Ban(), middleware.RateLimiter(middleware.CommentRateLimit), api.AddVideoComment)
 		// 删除评论或回复
 		commentAuth.DELETE("video/deleteComment/:id", api.DeleteVideoComment)
 		// 获取评论列表
@@ -27,7 +27,7 @@ func CollectCommentRoutes(r *gin.RouterGroup) {
 		// 取消点踩评论
 		commentAuth.DELETE("video/dislike/:id", api.UndislikeComment)
 		// 发表文章评论或回复
-		commentAuth.POST("article/addComment", middleware.Ban(), api.AddArticleComment)
+		commentAuth.POST("article/addComment", middleware.Ban(), middleware.RateLimiter(middleware.CommentRateLimit), api.AddArticleComment)
 		// 删除评论或回复
 		commentAuth.DELETE("article/deleteComment/:id", api.DeleteArticleComment)
 		// 获取评论列表

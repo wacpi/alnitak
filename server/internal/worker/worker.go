@@ -45,7 +45,7 @@ const (
 	heartbeatTTL = 30 * time.Second
 
 	// 超过此空闲时间的 pending 消息视为被遗弃（前一个 Worker crash）
-	maxPendingIdle = 5 * time.Minute
+	maxPendingIdle = 2 * time.Minute
 	// 单个消息最大重试次数（含重新投递），超限进入死信
 	maxRetryCount = 3
 	// XReadGroup 阻塞时长
@@ -341,7 +341,10 @@ func (w *Worker) Run(ctx context.Context) error {
 // Pending 消息恢复
 // =============================================================================
 
-// recoverPending 启动时处理其他 Worker crash 后遗留的 pending 消息。
+// recoverPending 启动时处理遗留的 pending 消息：
+//  1. 自己（相同 groupID）之前 crash 留下的 → 立即认领，不等 idle
+//  2. 其他 Worker 遗弃且 idle 超时的 → 按 maxPendingIdle 认领
+//  3. 超过重试上限的 → 移入死信
 func (w *Worker) recoverPending(ctx context.Context) error {
 	pendingItems, err := w.rdb.XPendingExt(ctx, &redis.XPendingExtArgs{
 		Stream: transcodingQueueStream,
@@ -360,68 +363,82 @@ func (w *Worker) recoverPending(ctx context.Context) error {
 	zap.L().Info("Found pending messages for recovery",
 		zap.Int("count", len(pendingItems)))
 
-	var expiredIDs []string
+	var ownIDs []string      // 自己 crash 留下的（立即认领）
+	var abandonedIDs []string // 其他 Worker 遗弃的（等 idle 超时）
 	for _, p := range pendingItems {
-		if p.Idle < maxPendingIdle {
-			continue // 仍在处理中，跳过
-		}
 		if p.RetryCount >= maxRetryCount {
-			// 超过重试上限 → 移入死信
-			w.sendToDeadLetter(ctx, p.ID, fmt.Sprintf("retry count %d exceeded max", p.RetryCount))
+			w.sendToDeadLetter(ctx, p.ID, fmt.Sprintf("retry count %d exceeded max (consumer=%s, idle=%s)", p.RetryCount, p.Consumer, p.Idle))
 			w.rdb.XAck(ctx, transcodingQueueStream, transcoderGroup, p.ID)
 			w.rdb.XDel(ctx, transcodingQueueStream, p.ID)
 			zap.L().Warn("Moved to dead letter",
 				zap.String("msgID", p.ID),
-				zap.Int64("retryCount", p.RetryCount))
+				zap.Int64("retryCount", p.RetryCount),
+				zap.String("consumer", p.Consumer))
 			continue
 		}
-		expiredIDs = append(expiredIDs, p.ID)
-	}
-
-	if len(expiredIDs) == 0 {
-		return nil
-	}
-
-	// 用 XClaim 将这些消息重新分配给当前消费者
-	claimed, err := w.rdb.XClaim(ctx, &redis.XClaimArgs{
-		Stream:   transcodingQueueStream,
-		Group:    transcoderGroup,
-		Consumer: w.groupID,
-		MinIdle:  maxPendingIdle,
-		Messages: expiredIDs,
-	}).Result()
-	if err != nil {
-		return fmt.Errorf("xclaim %d messages: %w", len(expiredIDs), err)
-	}
-
-	zap.L().Info("Claimed abandoned messages",
-		zap.Int("count", len(claimed)))
-
-	for _, msg := range claimed {
-		jobJSON, ok := msg.Values["job"].(string)
-		if !ok {
-			w.rdb.XAck(ctx, transcodingQueueStream, transcoderGroup, msg.ID)
-			w.rdb.XDel(ctx, transcodingQueueStream, msg.ID)
-			continue
+		if p.Consumer == w.groupID {
+			ownIDs = append(ownIDs, p.ID)
+		} else if p.Idle >= maxPendingIdle {
+			abandonedIDs = append(abandonedIDs, p.ID)
 		}
-		// recovery 阶段使用轻量 goroutine，受全局 sem 约束
-		w.sem <- struct{}{}
-		w.jobsActive.Add(1)
-		w.jobsTotal.Add(1)
-		go func(id, raw string) {
-			defer func() {
-				if r := recover(); r != nil {
-					w.jobsFailed.Add(1)
-					zap.L().Error("Recovered job goroutine panic", zap.String("msgID", id), zap.Any("panic", r))
-				}
-			}()
-			defer func() { <-w.sem }()
-			defer w.jobsActive.Add(-1)
-			if err := w.processJob(ctx, raw, id); err != nil {
-				w.jobsFailed.Add(1)
-				zap.L().Error("Recovered job failed", zap.String("msgID", id), zap.Error(err))
+	}
+
+	// 认领并处理一批消息，返回 claimed 的 msg 列表
+	claimAndRun := func(ids []string, minIdle time.Duration) {
+		if len(ids) == 0 {
+			return
+		}
+		claimed, err := w.rdb.XClaim(ctx, &redis.XClaimArgs{
+			Stream:   transcodingQueueStream,
+			Group:    transcoderGroup,
+			Consumer: w.groupID,
+			MinIdle:  minIdle,
+			Messages: ids,
+		}).Result()
+		if err != nil {
+			zap.L().Error("XClaim failed", zap.Error(err), zap.Int("count", len(ids)))
+			return
+		}
+		for _, msg := range claimed {
+			jobJSON, ok := msg.Values["job"].(string)
+			if !ok {
+				w.rdb.XAck(ctx, transcodingQueueStream, transcoderGroup, msg.ID)
+				w.rdb.XDel(ctx, transcodingQueueStream, msg.ID)
+				continue
 			}
-		}(msg.ID, jobJSON)
+			w.sem <- struct{}{}
+			w.jobsActive.Add(1)
+			w.jobsTotal.Add(1)
+			go func(id, raw string) {
+				defer func() {
+					if r := recover(); r != nil {
+						w.jobsFailed.Add(1)
+						zap.L().Error("Recovered job goroutine panic", zap.String("msgID", id), zap.Any("panic", r))
+					}
+				}()
+				defer func() { <-w.sem }()
+				defer w.jobsActive.Add(-1)
+				if err := w.processJob(ctx, raw, id); err != nil {
+					w.jobsFailed.Add(1)
+					zap.L().Error("Recovered job failed", zap.String("msgID", id), zap.Error(err))
+				}
+			}(msg.ID, jobJSON)
+		}
+	}
+
+	// 先认领自己的（立即，MinIdle=0），再认领遗弃的
+	claimAndRun(ownIDs, 0)
+	claimAndRun(abandonedIDs, maxPendingIdle)
+
+	msg := ""
+	if n := len(ownIDs); n > 0 {
+		msg += fmt.Sprintf("own=%d ", n)
+	}
+	if n := len(abandonedIDs); n > 0 {
+		msg += fmt.Sprintf("abandoned=%d", n)
+	}
+	if msg != "" {
+		zap.L().Info("Recovered pending messages", zap.String("summary", msg))
 	}
 
 	return nil

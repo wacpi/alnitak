@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -54,6 +55,21 @@ func RateLimiter(cfg RateLimitConfig) gin.HandlerFunc {
 	}
 }
 
+// 按用户ID+路径限流（用于已认证的写接口）
+func userEndpointKey(ctx *gin.Context) string {
+	userID := ctx.GetInt("userId")
+	path := ctx.FullPath()
+	return rateLimitPrefix + "user:" + itoa(userID) + ":" + path
+}
+
+// strconv.Itoa 别名，避免引入新 import
+func itoa(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	return fmt.Sprintf("%d", i)
+}
+
 // 预定义敏感接口的限流配置
 var (
 	// 登录/注册：每 IP 每分钟 10 次
@@ -75,6 +91,27 @@ var (
 		Window: 1 * time.Minute,
 		Limit:  5,
 		KeyFn:  ipEndpointKey,
+	}
+
+	// 弹幕：每用户每分钟 30 条
+	DanmakuRateLimit = RateLimitConfig{
+		Window: 1 * time.Minute,
+		Limit:  30,
+		KeyFn:  userEndpointKey,
+	}
+
+	// 评论：每用户每分钟 5 条
+	CommentRateLimit = RateLimitConfig{
+		Window: 1 * time.Minute,
+		Limit:  5,
+		KeyFn:  userEndpointKey,
+	}
+
+	// 私信：每用户每分钟 10 条
+	WhisperRateLimit = RateLimitConfig{
+		Window: 1 * time.Minute,
+		Limit:  10,
+		KeyFn:  userEndpointKey,
 	}
 )
 
