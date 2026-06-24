@@ -10,6 +10,10 @@ type Resource struct {
 	CodecName string  `gorm:"type:varchar(10);comment:视频编码名称"`
 	Duration  int `gorm:"comment:视频时长秒;default:0"`
 	Status    int     `gorm:"comment:审核状态;not null;index"`
+	// 对外可见性：0=隐藏(处理中/排队中), 1=可见(转码完成+已上线)
+	// 与 Status 不同，VisibleStatus 仅控制前端是否展示，
+	// 新分P 加到已公开视频时保持隐藏，转码完成后改为可见
+	VisibleStatus int  `gorm:"type:tinyint(1);default:0;comment:对外可见性:0隐藏,1可见;index"`
 	ShortID   string  `gorm:"type:varchar(16);comment:短ID;uniqueIndex" json:"shortId"`
 
 	// 排序字段（值越小越靠前，类似B站默认按上传顺序）
