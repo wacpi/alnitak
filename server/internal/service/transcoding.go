@@ -723,8 +723,6 @@ func (s *TranscodeService) completeTransaction(ctx context.Context, info *dto.Tr
 					info.ResourceID, currentResource.ReplaceID), "transcoding")
 			}
 
-			// 清除视频缓存，使公开端能立即看到新完成的分P
-			cache.DelVideoInfo(info.VideoID)
 		}
 
 		result := tx.Model(&model.Resource{}).
