@@ -621,6 +621,11 @@ func CompleteUploadVideo(vid, userId, fileID uint, videoName, title string, skip
 	titleWithoutExt := title[:len(title)-len(path.Ext(title))]
 	titleWithoutExt = truncateString(titleWithoutExt, 255)
 
+	// 查询视频当前状态，决定新分P的可见性
+	var videoStatus int
+	global.Mysql.Model(&model.Video{}).Select("status").Where("id = ?", vid).Scan(&videoStatus)
+	isAlreadyPublished := videoStatus == global.AUDIT_APPROVED
+
 	// 如果文件已就绪（秒传），直接复用已有转码结果
 	if skipTranscode {
 		// 查询已有的资源获取视频信息（duration, codecName等）
@@ -638,15 +643,16 @@ func CompleteUploadVideo(vid, userId, fileID uint, videoName, title string, skip
 				return vo.ResourceResp{}, errSid
 			}
 			resource := model.Resource{
-				Vid:       vid,
-				Uid:       userId,
-				Title:     titleWithoutExt,
-				Status:    global.WAITING_REVIEW, // 等待审核，不直接通过
-				Duration:  existingResource.Duration,
-				FileID:    fileID,
-				SortOrder: maxOrder + 1,
-				ShortID:   rSid,
-				CodecName: existingResource.CodecName,
+				Vid:            vid,
+				Uid:            userId,
+				Title:          titleWithoutExt,
+				Status:         global.WAITING_REVIEW, // 等待审核，不直接通过
+				VisibleStatus:  global.VISIBLE_HIDDEN, // 审核通过前对外隐藏
+				Duration:       existingResource.Duration,
+				FileID:         fileID,
+				SortOrder:      maxOrder + 1,
+				ShortID:        rSid,
+				CodecName:      existingResource.CodecName,
 			}
 			if err := global.Mysql.Create(&resource).Error; err != nil {
 				return vo.ResourceResp{}, errors.New("保存视频失败")
@@ -678,16 +684,18 @@ func CompleteUploadVideo(vid, userId, fileID uint, videoName, title string, skip
 		return vo.ResourceResp{}, errSid
 	}
 	// 存入数据库
+	// 如果视频已公开，新分P对外隐藏，等转码完成后再改为可见
 	resource := model.Resource{
-		Vid:       vid,
-		Uid:       userId,
-		Title:     titleWithoutExt,
-		CodecName: transcodingInfo.CodecName,
-		Status:    global.VIDEO_PROCESSING,
-		Duration:  utils.SecFromFloat(transcodingInfo.Duration),
-		FileID:    fileID,
-		SortOrder: maxOrder + 1,
-		ShortID:   rSid,
+		Vid:            vid,
+		Uid:            userId,
+		Title:          titleWithoutExt,
+		CodecName:      transcodingInfo.CodecName,
+		Status:         global.VIDEO_PROCESSING,
+		VisibleStatus:  global.VISIBLE_HIDDEN,
+		Duration:       utils.SecFromFloat(transcodingInfo.Duration),
+		FileID:         fileID,
+		SortOrder:      maxOrder + 1,
+		ShortID:        rSid,
 	}
 	if err := global.Mysql.Create(&resource).Error; err != nil {
 		return vo.ResourceResp{}, errors.New("保存视频失败")

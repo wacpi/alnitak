@@ -2051,7 +2051,8 @@ func VideoWriteCache(videoId uint) (video vo.VideoResp) {
 	video.Author = GetAuthorPublic(video.Uid)
 	video.Tags = LoadVideoTagNames(videoId)
 	// 获取视频资源
-	video.Resources = GetVideoResourceByStatus(videoId, global.AUDIT_APPROVED)
+	// 只返回对外可见的分P（VisibleStatus=1），处理中的新分P对观众隐藏
+	video.Resources = GetVisibleResources(videoId)
 	// 确保Resources不是nil，如果是nil则初始化为空切片，避免JSON序列化为null
 	if video.Resources == nil {
 		video.Resources = []vo.ResourceResp{}

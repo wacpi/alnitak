@@ -100,6 +100,16 @@ func GetVideoResourceByStatus(videoId uint, status int) (resources []vo.Resource
 	return
 }
 
+// 获取对外可见的视频资源（仅返回 VisibleStatus=1 的分P，用于公开播放页）
+func GetVisibleResources(videoId uint) (resources []vo.ResourceResp) {
+	global.Mysql.Model(&model.Resource{}).
+		Select("id, short_id, created_at, vid, title, duration, status, file_id, uid, sort_order").
+		Where("vid = ? and visible_status = ?", videoId, global.VISIBLE_SHOWN).
+		Order("sort_order ASC, id ASC").
+		Scan(&resources)
+	return
+}
+
 // 获取视频资源（含fileId和uid用于全局去重）
 func GetReviewResourceList(videoId uint) (resources []vo.ResourceResp) {
 	global.Mysql.Model(&model.Resource{}).

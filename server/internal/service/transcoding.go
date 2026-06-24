@@ -708,6 +708,15 @@ func (s *TranscodeService) completeTransaction(ctx context.Context, info *dto.Tr
 			targetStatus = global.AUDIT_APPROVED
 		}
 
+		// 转码成功后，分P对外可见（仅当成功时）
+		if targetStatus != global.PROCESSING_FAIL && targetStatus != global.UPLOAD_FAILED {
+			tx.Model(&model.Resource{}).
+				Where("id = ?", info.ResourceID).
+				Update("visible_status", global.VISIBLE_SHOWN)
+			// 清除视频缓存，使公开端能立即看到新完成的分P
+			cache.DelVideoInfo(info.VideoID)
+		}
+
 		result := tx.Model(&model.Resource{}).
 			Where("id = ? and status = ?", info.ResourceID, global.VIDEO_PROCESSING).
 			Update("status", targetStatus)
