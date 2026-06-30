@@ -113,6 +113,34 @@ var (
 		Limit:  10,
 		KeyFn:  userEndpointKey,
 	}
+
+	// 创建视频/新增分P（写数据库+OSS）：每用户每分钟 3 次
+	UploadCreateRateLimit = RateLimitConfig{
+		Window: 1 * time.Minute,
+		Limit:  3,
+		KeyFn:  userEndpointKey,
+	}
+
+	// 上传视频分片+合并：每用户每分钟 60 次
+	UploadChunkRateLimit = RateLimitConfig{
+		Window: 1 * time.Minute,
+		Limit:  60,
+		KeyFn:  userEndpointKey,
+	}
+
+	// 上传图片：每用户每分钟 10 次
+	UploadImgRateLimit = RateLimitConfig{
+		Window: 1 * time.Minute,
+		Limit:  10,
+		KeyFn:  userEndpointKey,
+	}
+
+	// 查询分片（checkVideo）：每用户每分钟 30 次
+	UploadCheckRateLimit = RateLimitConfig{
+		Window: 1 * time.Minute,
+		Limit:  30,
+		KeyFn:  userEndpointKey,
+	}
 )
 
 // IsSensitiveAuthPath 判断是否属于敏感认证路径（与 operation.go 脱敏逻辑保持一致）
