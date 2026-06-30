@@ -68,6 +68,10 @@ func InitTables() {
 
 	// 字幕绑定迁移：resource_id → resource_short_id
 	backfillSubtitleShortID()
+
+	// 资源对外可见性补齐：AutoMigrate 新增 visible_status 列后，
+	// 已有已审核通过的分P默认值为 0（隐藏），需要改为 1（可见）
+	backfillResourceVisibleStatus()
 }
 
 // backfillPGCMedia 为历史 pgc_content（media_id=0）补齐 pgc_media 记录
@@ -203,6 +207,27 @@ func backfillSubtitleShortID() {
 
 	// 为已有字幕回填 short_id
 	backfillSubtitleTrackShortID()
+}
+
+// backfillResourceVisibleStatus 资源对外可见性补齐
+// AutoMigrate 新增 visible_status 列后，已有已审核通过的分P默认值为 0（隐藏），
+// 将它们改为 1（可见），避免存量资源在前端不显示。
+func backfillResourceVisibleStatus() {
+	var count int64
+	global.Mysql.Model(&model.Resource{}).
+		Where("status = ? AND visible_status = ?", global.AUDIT_APPROVED, 0).
+		Count(&count)
+	if count == 0 {
+		return
+	}
+	utils.InfoLog(fmt.Sprintf("【资源可见性补齐】%d条已审核分P visible_status=0 → 1", count), "init")
+	if err := global.Mysql.Model(&model.Resource{}).
+		Where("status = ? AND visible_status = ?", global.AUDIT_APPROVED, 0).
+		Update("visible_status", global.VISIBLE_SHOWN).Error; err != nil {
+		utils.ErrorLog("资源可见性补齐失败", "init", err.Error())
+	} else {
+		utils.InfoLog("【资源可见性补齐】完成", "init")
+	}
 }
 
 // backfillSubtitleTrackShortID 为已有字幕轨分配短ID
