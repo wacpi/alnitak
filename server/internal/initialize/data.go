@@ -18,6 +18,7 @@ func InitDefaultData() {
 	initUserData()       // 初始化用户数据
 	// 每次启动将 authApiDesc 中尚未入库的接口写入 API 表，并补全 001/002 的 Casbin 规则（须在 InitCasbin 之前执行）
 	SyncApiData()
+	FixPGCCopyright()
 }
 
 // 初始化API数据
@@ -994,4 +995,24 @@ func inferCategory(path string) string {
 		return category
 	}
 	return "其他"
+}
+
+// FixPGCCopyright 修正已标记PGC的视频版权字段
+// 历史遗留数据：pgc_attached=true 但 copyright 仍为 0/1（旧 bool 迁移而来）
+// 每次启动自动修复，确保新旧数据一致
+func FixPGCCopyright() {
+	result := global.Mysql.Exec(
+		"UPDATE video SET copyright = ? WHERE pgc_attached = 1 AND copyright != ?",
+		global.CopyrightPGC, global.CopyrightPGC,
+	)
+	if result.Error != nil {
+		zap.L().Error("修正PGC版权字段失败", zap.String("err", result.Error.Error()), zap.String("module", "initialize"))
+		return
+	}
+	if result.RowsAffected > 0 {
+		zap.L().Info("修正PGC版权字段",
+			zap.Int64("count", result.RowsAffected),
+			zap.Int("to", global.CopyrightPGC),
+			zap.String("module", "initialize"))
+	}
 }
