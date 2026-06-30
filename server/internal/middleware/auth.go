@@ -110,6 +110,19 @@ func OptionalAuth() gin.HandlerFunc {
 	}
 }
 
+// CsrfCheck 校验 X-Requested-With 头，防止 Cookie 类接口遭受简单 CSRF 攻击。
+// 浏览器跨域请求无法手动设置 X-Requested-With，该中间件配合 SameSite=Lax 提供深度防御。
+func CsrfCheck() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		if ctx.GetHeader("X-Requested-With") != "XMLHttpRequest" {
+			resp.Result(ctx, http.StatusForbidden, nil, "非法请求")
+			ctx.Abort()
+			return
+		}
+		ctx.Next()
+	}
+}
+
 func WsAuth() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		// 优先从 Authorization header 读取（非浏览器客户端），其次从 query param 读取（浏览器 WebSocket API）
@@ -145,19 +158,6 @@ func WsAuth() gin.HandlerFunc {
 		}
 
 		ctx.Set("userId", claims.UserId)
-		ctx.Next()
-	}
-}
-
-// CsrfCheck 校验 X-Requested-With 头，防止 Cookie 类接口遭受简单 CSRF 攻击。
-// 浏览器跨域请求无法手动设置 X-Requested-With，该中间件配合 SameSite=Lax 提供深度防御。
-func CsrfCheck() gin.HandlerFunc {
-	return func(ctx *gin.Context) {
-		if ctx.GetHeader("X-Requested-With") != "XMLHttpRequest" {
-			resp.Result(ctx, http.StatusForbidden, nil, "非法请求")
-			ctx.Abort()
-			return
-		}
 		ctx.Next()
 	}
 }
