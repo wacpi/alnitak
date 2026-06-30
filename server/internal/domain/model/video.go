@@ -12,7 +12,7 @@ type Video struct {
 	Clicks      int64   `gorm:"comment:点击量;default:0"`
 	Status      int     `gorm:"comment:审核状态;not null;index"`
 	PGCAttached   bool   `gorm:"column:pgc_attached;comment:是否被PGC剧集绑定;not null;default:0;index"`
-	PGCEpisodeID  uint   `gorm:"column:ep_id;comment:关联的PGC剧集ID（反查）;default:0"`
+	PGCEpisodeRef uint   `gorm:"column:ep_id;comment:关联的PGC剧集ID（引用pgc_episode.id）;default:0"`
 	PartitionId uint    `gorm:"comment:分区ID"`
 	Tags        string  `gorm:"type:varchar(100);comment:标签冗余(CSV,便于搜索);"`
 	Duration    int     `gorm:"comment:视频时长秒;default:0"`
