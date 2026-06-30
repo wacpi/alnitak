@@ -940,6 +940,15 @@ func markVideosAsPGCAttached(db *gorm.DB, vids []uint) error {
 		return nil
 	}
 
+	// 绑定前保存原始版权值，便于无损解绑
+	if err := db.Model(&model.Video{}).
+		Where("id IN ?", uniq).
+		Where("pgc_attached = 0").
+		Update("copyright_original", gorm.Expr("copyright")).Error; err != nil {
+		utils.ErrorLog("保存原始版权值失败", "pgc", err.Error())
+		return errors.New("保存原始版权值失败")
+	}
+
 	if err := db.Model(&model.Video{}).
 		Where("id IN ?", uniq).
 		Updates(map[string]interface{}{

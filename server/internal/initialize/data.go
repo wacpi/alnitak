@@ -1029,4 +1029,19 @@ func FixPGCCopyright() {
 			zap.Int64("count", result2.RowsAffected),
 			zap.String("module", "initialize"))
 	}
+
+	// 补填 copyright_original（旧数据绑定前未保存原始版权）
+	result3 := global.Mysql.Exec(
+		"UPDATE video SET copyright_original = ? "+
+			"WHERE pgc_attached = 1 AND copyright_original = 0 AND copyright = ?",
+		global.CopyrightUnknown, global.CopyrightPGC,
+	)
+	if result3.Error != nil {
+		zap.L().Error("补填PGC原始版权字段失败", zap.String("err", result3.Error.Error()), zap.String("module", "initialize"))
+	} else if result3.RowsAffected > 0 {
+		zap.L().Info("补填PGC原始版权字段",
+			zap.Int64("count", result3.RowsAffected),
+			zap.Int("to", global.CopyrightUnknown),
+			zap.String("module", "initialize"))
+	}
 }
