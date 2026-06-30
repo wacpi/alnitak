@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm/clause"
 	"interastral-peace.com/alnitak/internal/cache"
 	"interastral-peace.com/alnitak/internal/domain/dto"
 	"interastral-peace.com/alnitak/internal/domain/model"
@@ -18,8 +19,9 @@ func ReviewVideoApproved(ctx *gin.Context, reviewVideoReq dto.ReviewVideoReq) er
 	tx := global.Mysql.Begin()
 
 	// 校验视频状态：只有 WAITING_REVIEW（首次审核）或 AUDIT_APPROVED（新增分P）才允许通过
+	// 使用 FOR UPDATE 行锁防止并发审核导致状态不一致
 	var curVideo model.Video
-	if err := tx.Where("id = ?", reviewVideoReq.Vid).First(&curVideo).Error; err != nil {
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", reviewVideoReq.Vid).First(&curVideo).Error; err != nil {
 		tx.Rollback()
 		return errors.New("视频不存在")
 	}
@@ -165,8 +167,9 @@ func ReviewVideoFailed(ctx *gin.Context, reviewVideoReq dto.ReviewVideoReq) erro
 	tx := global.Mysql.Begin()
 
 	// 校验视频状态
+	// 使用 FOR UPDATE 行锁防止并发审核导致状态不一致
 	var curVideo model.Video
-	if err := tx.Where("id = ?", reviewVideoReq.Vid).First(&curVideo).Error; err != nil {
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", reviewVideoReq.Vid).First(&curVideo).Error; err != nil {
 		tx.Rollback()
 		return errors.New("视频不存在")
 	}
