@@ -625,14 +625,14 @@ func GetPGCPlayPanelByVideo(ctx *gin.Context) {
 	vidStr := ctx.Query("vid")
 	seasonStr := ctx.DefaultQuery("season_id", "0")
 
-	vidInt, err1 := convertToInt(vidStr)
+	vid, err1 := service.ParseVideoID(vidStr)
 	seasonUint, err2 := convertToUint(seasonStr)
-	if err1 != nil || err2 != nil || vidInt <= 0 {
+	if err1 != nil || err2 != nil || vid == 0 {
 		resp.FailWithMessage(ctx, "无效的参数")
 		return
 	}
 
-	current, seasons, episodes, activeSeasonID, err := service.GetPGCPlayPanelByVideo(uint(vidInt), seasonUint)
+	current, seasons, episodes, activeSeasonID, err := service.GetPGCPlayPanelByVideo(vid, seasonUint)
 	if err != nil {
 		resp.FailWithMessage(ctx, err.Error())
 		return
