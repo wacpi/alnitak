@@ -997,22 +997,36 @@ func inferCategory(path string) string {
 	return "其他"
 }
 
-// FixPGCCopyright 修正已标记PGC的视频版权字段
+// FixPGCCopyright 修正已标记PGC的视频版权字段 + 反查剧集ID
 // 历史遗留数据：pgc_attached=true 但 copyright 仍为 0/1（旧 bool 迁移而来）
 // 每次启动自动修复，确保新旧数据一致
 func FixPGCCopyright() {
+	// 修正 copyright
 	result := global.Mysql.Exec(
 		"UPDATE video SET copyright = ? WHERE pgc_attached = 1 AND copyright != ?",
 		global.CopyrightPGC, global.CopyrightPGC,
 	)
 	if result.Error != nil {
 		zap.L().Error("修正PGC版权字段失败", zap.String("err", result.Error.Error()), zap.String("module", "initialize"))
-		return
-	}
-	if result.RowsAffected > 0 {
+	} else if result.RowsAffected > 0 {
 		zap.L().Info("修正PGC版权字段",
 			zap.Int64("count", result.RowsAffected),
 			zap.Int("to", global.CopyrightPGC),
+			zap.String("module", "initialize"))
+	}
+
+	// 反填 ep_id（pgc_attached=1 但有剧集绑定的视频）
+	result2 := global.Mysql.Exec(
+		"UPDATE video v " +
+			"INNER JOIN pgc_episode e ON e.vid = v.id " +
+			"SET v.ep_id = e.id " +
+			"WHERE v.pgc_attached = 1 AND v.ep_id = 0",
+	)
+	if result2.Error != nil {
+		zap.L().Error("反填PGC剧集ID失败", zap.String("err", result2.Error.Error()), zap.String("module", "initialize"))
+	} else if result2.RowsAffected > 0 {
+		zap.L().Info("反填PGC剧集ID",
+			zap.Int64("count", result2.RowsAffected),
 			zap.String("module", "initialize"))
 	}
 }

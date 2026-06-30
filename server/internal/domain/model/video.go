@@ -11,7 +11,8 @@ type Video struct {
 	Copyright   int8    `gorm:"comment:版权类型 0=未知 1=原创 2=转载 3=PGC授权;not null;default:0"`
 	Clicks      int64   `gorm:"comment:点击量;default:0"`
 	Status      int     `gorm:"comment:审核状态;not null;index"`
-	PGCAttached bool    `gorm:"column:pgc_attached;comment:是否被PGC剧集绑定;not null;default:0;index"`
+	PGCAttached   bool   `gorm:"column:pgc_attached;comment:是否被PGC剧集绑定;not null;default:0;index"`
+	PGCEpisodeID  uint   `gorm:"column:ep_id;comment:关联的PGC剧集ID（反查）;default:0"`
 	PartitionId uint    `gorm:"comment:分区ID"`
 	Tags        string  `gorm:"type:varchar(100);comment:标签冗余(CSV,便于搜索);"`
 	Duration    int     `gorm:"comment:视频时长秒;default:0"`
