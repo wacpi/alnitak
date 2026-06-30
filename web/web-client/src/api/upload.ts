@@ -46,7 +46,7 @@ export const uploadFileAPI = ({ name, file, action, onProgress, onFinish, onErro
   })
 }
 
-export const uploadFileChunkAPI = async ({ name, file, action, onProgress, onFinish, onError }: UploadOptionsType) => {
+export const uploadFileChunkAPI = async ({ name, file, action, replaceResourceID, onProgress, onFinish, onError }: UploadOptionsType) => {
   onProgress(0);
   const hash = await getFileMD5(file)
   const size = file.size
@@ -63,7 +63,7 @@ export const uploadFileChunkAPI = async ({ name, file, action, onProgress, onFin
     onProgress(100);
     // 秒传时跳过合并，直接调用创建接口
     try {
-      const res = await request.post(action, { hash, fileID, size }, {
+      const res = await request.post(action, { hash, fileID, size, replaceResourceID }, {
         timeout: MERGE_TIMEOUT,
       });
       if (res.data.code === statusCode.OK) {
@@ -86,7 +86,7 @@ export const uploadFileChunkAPI = async ({ name, file, action, onProgress, onFin
   }
 
   if (tasks.length === 0) {
-    finishUploadAPI({ hash, fileID, size, action, onFinish, onError })
+    finishUploadAPI({ hash, fileID, size, action, replaceResourceID, onFinish, onError })
     return { controllers: [], fileID };
   }
 
@@ -105,7 +105,7 @@ export const uploadFileChunkAPI = async ({ name, file, action, onProgress, onFin
           tasks.splice(tasks.indexOf(0), 1);
       // 检查是否完成所有分片上传（针对小文件只有一个分片的情况）
       if (uploadedChunks.length === totalChunks) {
-        finishUploadAPI({ hash, fileID, size, action, onFinish, onError });
+        finishUploadAPI({ hash, fileID, size, action, replaceResourceID, onFinish, onError });
         return { controllers: [controller], fileID };
       }
           firstChunkSuccess = true;
@@ -155,7 +155,7 @@ export const uploadFileChunkAPI = async ({ name, file, action, onProgress, onFin
         // 更新进度
         const progress = Math.floor((uploadedChunksCount / totalChunks) * 100);
         if (uploadedChunksCount === totalChunks) {
-          finishUploadAPI({ hash, fileID, size, action, onFinish, onError });
+          finishUploadAPI({ hash, fileID, size, action, replaceResourceID, onFinish, onError });
         } else {
           onProgress(progress);
         }
@@ -266,10 +266,10 @@ const mergeUploadedChunksAPI = async (hash: string, fileID: number, size: number
   }
 }
 
-const finishUploadAPI = async ({ hash, fileID, size, action, onFinish, onError }: FinishUploadType) => {
+const finishUploadAPI = async ({ hash, fileID, size, action, replaceResourceID, onFinish, onError }: FinishUploadType) => {
   if (await mergeUploadedChunksAPI(hash, fileID, size)) {
     try {
-      const res = await request.post(action, { hash, fileID, size }, {
+      const res = await request.post(action, { hash, fileID, size, replaceResourceID }, {
         timeout: MERGE_TIMEOUT,
       });
       if (res.data.code === statusCode.OK) {

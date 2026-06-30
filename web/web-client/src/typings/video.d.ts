@@ -53,6 +53,7 @@ interface TranscodingProgressDetail {
   quality: string;
   progress: number;
   status: 'processing' | 'success' | 'fail' | string;
+  upload?: UploadProgressInfo;
 }
 
 // 视频信息

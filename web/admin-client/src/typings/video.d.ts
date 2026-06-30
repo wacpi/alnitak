@@ -27,6 +27,7 @@ interface TranscodingProgressItem {
   quality: string;
   progress: number;
   status: 'waiting' | 'processing' | 'success' | 'fail' | string;
+  upload?: UploadProgressInfo;
 }
 
 interface UploadProgressInfo {
