@@ -1048,7 +1048,7 @@ func SearchPGC(keyword string, pgcType int, page, pageSize int) (total int64, li
 	if keyword != "" {
 		likeKeyword := "%" + escapeLikeKeyword(keyword) + "%"
 		// `desc` 是 SQL 关键字，查询时必须转义列名
-		query = query.Where("title LIKE ? OR `desc` LIKE ? ESCAPE '\\'", likeKeyword, likeKeyword)
+		query = query.Where("title LIKE ? OR `desc` LIKE ?", likeKeyword, likeKeyword)
 	}
 
 	if pgcType > 0 {
