@@ -27,7 +27,7 @@ type UploadVideoReq struct {
 	Title       string
 	Cover       string
 	Desc        string
-	Copyright   bool
+	Copyright   int8  `form:"copyright"`
 	Tags        string
 	PartitionId uint //分区ID
 }

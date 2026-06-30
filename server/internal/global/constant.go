@@ -73,6 +73,18 @@ const (
 	PGCAuditOffline = -1
 )
 
+// ========== 版权类型 ==========
+const (
+	// CopyrightUnknown 未知版权（默认/历史遗留）
+	CopyrightUnknown = 0
+	// CopyrightOriginal 原创
+	CopyrightOriginal = 1
+	// CopyrightReprint 转载/搬运
+	CopyrightReprint = 2
+	// CopyrightPGC PGC 授权内容（原上传者授权转化为 PGC 资产）
+	CopyrightPGC = 3
+)
+
 // ========== PGC剧集状态 ==========
 const (
 	// PGCEpisodeNormal 正常

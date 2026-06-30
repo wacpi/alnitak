@@ -9,7 +9,7 @@ type Article struct {
 	Content     string `gorm:"type:text;comment:内容;not null"`
 	ContentDesc string `gorm:"type:varchar(300);comment:内容简介"`
 	Uid         uint   `gorm:"comment:用户ID;not null;index"`
-	Copyright   bool   `gorm:"comment:是否为原创;not null"`
+	Copyright   int8   `gorm:"comment:版权类型 0=未知 1=原创 2=转载 3=PGC授权;not null;default:0"`
 	Clicks      int64  `gorm:"comment:点击量;default:0"`
 	Status      int    `gorm:"comment:审核状态;not null"`
 	PartitionId uint   `gorm:"comment:分区ID;default:0"`

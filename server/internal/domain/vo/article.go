@@ -16,7 +16,7 @@ type ArticleStatusResp struct {
 	Title       string `json:"title"`
 	Cover       string `json:"cover"`
 	Content     string `json:"content"`
-	Copyright   bool   `json:"copyright"`
+	Copyright   int8   `json:"copyright"`
 	Status      int    `json:"status"`
 	PartitionId uint   `json:"partitionId"`
 	Tags        string `json:"tags"`

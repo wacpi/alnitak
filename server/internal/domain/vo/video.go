@@ -17,7 +17,7 @@ type VideoResp struct {
 	Cover        string         `json:"cover"`
 	Desc         string         `json:"desc"`
 	CreatedAt    time.Time      `json:"createdAt"`
-	Copyright    bool           `json:"copyright"`
+	Copyright    int8           `json:"copyright"`
 	Tags         []string       `json:"tags" gorm:"-"` // 非表字段，避免 Scan 时 GORM 将 []string 误判为关联
 	Duration     int            `json:"duration"` // 秒，整数
 	Clicks       int64          `json:"clicks"`
@@ -34,7 +34,7 @@ type VideoStatusResp struct {
 	Title       string         `json:"title"`
 	Cover       string         `json:"cover"`
 	Desc        string         `json:"desc"`
-	Copyright   bool           `json:"copyright"`
+	Copyright   int8           `json:"copyright"`
 	Status      int            `json:"status"`
 	PartitionId uint           `json:"partitionId"`
 	Tags        []string       `json:"tags" gorm:"-"`

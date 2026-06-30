@@ -942,7 +942,10 @@ func markVideosAsPGCAttached(db *gorm.DB, vids []uint) error {
 
 	if err := db.Model(&model.Video{}).
 		Where("id IN ?", uniq).
-		Update("pgc_attached", true).Error; err != nil {
+		Updates(map[string]interface{}{
+			"pgc_attached": true,
+			"copyright":    global.CopyrightPGC,
+		}).Error; err != nil {
 		utils.ErrorLog("标记PGC绑定视频失败", "pgc", err.Error())
 		return errors.New("更新关联视频状态失败")
 	}

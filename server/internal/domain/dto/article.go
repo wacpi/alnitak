@@ -8,7 +8,7 @@ type ArticleListReq struct {
 type UploadArticleReq struct {
 	Title       string
 	Cover       string
-	Copyright   bool
+	Copyright   int8  `form:"copyright"`
 	Tags        string
 	Content     string
 	PartitionId uint //分区ID

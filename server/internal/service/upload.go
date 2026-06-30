@@ -782,7 +782,8 @@ func initVideo(userId uint, videoPath, title string) (uint, error) {
 		Uid:       userId,
 		Cover:     coverUrl,
 		Title:     titleWithoutExt,
-		Copyright: true,
+		Copyright: global.CopyrightReprint, // 默认转载（用户上传多为搬运）
+		// 用户可在投稿页修改为原创
 		Status:    global.CREATED_VIDEO,
 	})
 	if err != nil {

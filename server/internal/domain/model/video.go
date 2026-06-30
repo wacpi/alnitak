@@ -8,7 +8,7 @@ type Video struct {
 	Cover       string  `gorm:"type:varchar(255);comment:封面图;not null"`      // 修复typo: cmment -> comment
 	Desc        string  `gorm:"type:varchar(200);comment:视频简介;default:什么都没有~"`
 	Uid         uint    `gorm:"comment:用户ID;not null;index"`
-	Copyright   bool    `gorm:"comment:是否为原创;not null"`
+	Copyright   int8    `gorm:"comment:版权类型 0=未知 1=原创 2=转载 3=PGC授权;not null;default:0"`
 	Clicks      int64   `gorm:"comment:点击量;default:0"`
 	Status      int     `gorm:"comment:审核状态;not null;index"`
 	PGCAttached bool    `gorm:"column:pgc_attached;comment:是否被PGC剧集绑定;not null;default:0;index"`
