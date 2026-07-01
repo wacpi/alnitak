@@ -592,13 +592,19 @@ func syncMenuData() {
 		Desc: "", Sort: 2, Title: "PGC管理", Icon: "FilmOutline", Hidden: false, KeepAlive: false,
 	})
 
-	// 同步内容管理子菜单排序：视频(1) → PGC(2) → 其余(3+)
 	// Workers 状态页（系统管理下）
 	ensureMenuExists("System", "SystemMenu", model.Menu{
 		Name: "SystemWorkers", Path: "system/workers", Component: "views/system/workers/index.vue",
 		Desc: "", Sort: 6, Title: "转码Worker", Icon: "ServerOutline", Hidden: false, KeepAlive: false,
 	})
 
+	// 备用 OSS 上传失败记录（系统管理下）
+	ensureMenuExists("System", "SystemMenu", model.Menu{
+		Name: "SystemBackupOSS", Path: "system/backup-oss", Component: "views/system/backup-oss/index.vue",
+		Desc: "", Sort: 7, Title: "备用OSS重试", Icon: "CloudOutline", Hidden: false, KeepAlive: false,
+	})
+
+	// 同步内容管理子菜单排序：视频(1) → PGC(2) → 其余(3+)
 	contentSortOrder := map[string]uint{
 		"ContentVideo":     1,
 		"ContentPGC":       2,
