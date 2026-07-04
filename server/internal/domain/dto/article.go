@@ -6,20 +6,20 @@ type ArticleListReq struct {
 }
 
 type UploadArticleReq struct {
-	Title       string
-	Cover       string
-	Copyright   int8  `form:"copyright"`
-	Tags        string
-	Content     string
-	PartitionId uint //分区ID
+	Title       string `json:"title"`
+	Cover       string `json:"cover"`
+	Copyright   bool   `json:"copyright"`
+	Tags        string `json:"tags"`
+	Content     string `json:"content"`
+	PartitionId uint   `json:"partitionId"`
 }
 
 type EditArticleReq struct {
-	Aid     uint
-	Title   string
-	Cover   string
-	Tags    string
-	Content string
+	Aid     uint   `json:"aid"`
+	Title   string `json:"title"`
+	Cover   string `json:"cover"`
+	Tags    string `json:"tags"`
+	Content string `json:"content"`
 }
 
 type ReviewArticleListReq struct {

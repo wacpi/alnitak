@@ -23,21 +23,21 @@ type ReviewListReq struct {
 }
 
 type UploadVideoReq struct {
-	Vid         uint
-	Title       string
-	Cover       string
-	Desc        string
-	Copyright   int8  `form:"copyright"`
-	Tags        string
-	PartitionId uint //分区ID
+	Vid         uint   `json:"vid"`
+	Title       string `json:"title"`
+	Cover       string `json:"cover"`
+	Desc        string `json:"desc"`
+	Copyright   bool   `json:"copyright"`
+	Tags        string `json:"tags"`
+	PartitionId uint   `json:"partitionId"`
 }
 
 type EditVideoReq struct {
-	Vid   uint
-	Title string
-	Cover string
-	Desc  string
-	Tags  string
+	Vid   uint   `json:"vid"`
+	Title string `json:"title"`
+	Cover string `json:"cover"`
+	Desc  string `json:"desc"`
+	Tags  string `json:"tags"`
 }
 
 type SearchVideoReq struct {
