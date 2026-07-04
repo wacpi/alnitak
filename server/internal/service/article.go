@@ -25,10 +25,14 @@ func UploadArticleInfo(ctx *gin.Context, uploadArticleReq dto.UploadArticleReq) 
 		return errors.New("分区不存在")
 	}
 
+	copyrightVal := int8(2) // 默认转载
+	if uploadArticleReq.Copyright {
+		copyrightVal = 1 // 原创
+	}
 	if err := global.Mysql.Model(&model.Article{}).Create(&model.Article{
 		Title:       uploadArticleReq.Title,
 		Cover:       uploadArticleReq.Cover,
-		Copyright:   uploadArticleReq.Copyright,
+		Copyright:   copyrightVal,
 		Tags:        uploadArticleReq.Tags,
 		Uid:         userId,
 		Content:     uploadArticleReq.Content,
