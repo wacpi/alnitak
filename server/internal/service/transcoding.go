@@ -1133,39 +1133,6 @@ func (s *TranscodeService) GetVideoTranscodingProgress(videoID uint) (float64, [
 	return totalProgress / float64(totalCount), details, uploadInfo
 }
 
-func (s *TranscodeService) registerProcess(videoID, resourceID uint, cmd *exec.Cmd, cancelFunc context.CancelFunc, outputDir string) {
-	s.processMu.Lock()
-	defer s.processMu.Unlock()
-	s.processes[videoID] = append(s.processes[videoID], TranscodingProcess{
-		VideoID:    videoID,
-		ResourceID: resourceID,
-		PID:        cmd.Process.Pid,
-		Cmd:        cmd,
-		CancelFunc: cancelFunc,
-		OutputDir:  outputDir,
-	})
-}
-
-func (s *TranscodeService) unregisterProcess(videoID uint, pid int) {
-	s.processMu.Lock()
-	defer s.processMu.Unlock()
-	processes, exists := s.processes[videoID]
-	if !exists {
-		return
-	}
-	newProcesses := make([]TranscodingProcess, 0)
-	for _, p := range processes {
-		if p.PID != pid {
-			newProcesses = append(newProcesses, p)
-		}
-	}
-	if len(newProcesses) == 0 {
-		delete(s.processes, videoID)
-	} else {
-		s.processes[videoID] = newProcesses
-	}
-}
-
 func (s *TranscodeService) StopTranscodingAndCleanup(videoID uint) error {
 	s.processMu.Lock()
 	processes, exists := s.processes[videoID]
@@ -1217,8 +1184,8 @@ func (s *TranscodeService) GetTranscodingProcessCount(videoID uint) int {
 // runVideoEncodeTask 执行视频编码：参数构建委托 ffmpeg.VideoEncodeArgs，
 // 进程管理与 GPU 错误检测在本地处理。
 func (s *TranscodeService) runVideoEncodeTask(
-	ctx context.Context, videoID, resourceID uint, inputFile, outputFile, quality, rate, fps, progressQuality string,
-	totalDuration float64, useGpu bool, useAv1 bool, useHevc bool, cancelFunc context.CancelFunc,
+	ctx context.Context, _ /*videoID*/, resourceID uint, inputFile, outputFile, quality, rate, fps, progressQuality string,
+	totalDuration float64, useGpu bool, useAv1 bool, useHevc bool, _ /*cancelFunc*/ context.CancelFunc,
 ) error {
 	args := ffmpeg.VideoEncodeArgs(inputFile, quality, rate, fps, totalDuration, useGpu, useAv1, useHevc)
 

@@ -21,14 +21,10 @@ import (
 const (
 	// Redis Stream 名称，用于转码任务队列
 	transcodingQueueStream = "transcoding:queue"
-	// Redis Stream 消费者组名
-	transcodingQueueGroup = "transcoder"
 	// Redis Hash 状态前缀，后接 resourceID
 	transcodingStatusPrefix = "transcoding:status:"
 	// Pub/Sub 频道：转码取消
 	transcodingCancelChannel = "transcoding:cancel"
-	// Pub/Sub 频道：转码完成通知
-	transcodingCompleteChannel = "transcoding:complete"
 	// 进度轮询间隔
 	progressPollInterval = 3 * time.Second
 )

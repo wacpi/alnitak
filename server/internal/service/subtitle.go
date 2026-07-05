@@ -69,16 +69,6 @@ func loadResourceWithVideoByRaw(resourceRaw string) (res model.Resource, v model
 	return res, v, nil
 }
 
-func loadResourceWithVideoByID(resourceID uint) (res model.Resource, v model.Video, err error) {
-	if err := global.Mysql.Where("id = ?", resourceID).First(&res).Error; err != nil || res.ID == 0 {
-		return res, v, errors.New("资源不存在")
-	}
-	if err := global.Mysql.Where("id = ?", res.Vid).First(&v).Error; err != nil || v.ID == 0 {
-		return res, v, errors.New("视频不存在")
-	}
-	return res, v, nil
-}
-
 func subtitleVisibleToViewer(ctx *gin.Context, v model.Video, res model.Resource) bool {
 	uid := ctx.GetUint("userId")
 	if uid != 0 && v.Uid == uid {

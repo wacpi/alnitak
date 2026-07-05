@@ -1,6 +1,9 @@
 package vo
 
-import "time"
+import (
+	"time"
+	"interastral-peace.com/alnitak/internal/domain/types"
+)
 
 const (
 	// 注意：包含 short_id；tags 由多对多 tag / video_tag 组装，不从此处直接 Scan
@@ -17,15 +20,15 @@ type VideoResp struct {
 	Cover        string         `json:"cover"`
 	Desc         string         `json:"desc"`
 	CreatedAt    time.Time      `json:"createdAt"`
-	Copyright    int8           `json:"copyright"`
-	Tags         []string       `json:"tags" gorm:"-"` // 非表字段，避免 Scan 时 GORM 将 []string 误判为关联
-	Duration     int            `json:"duration"` // 秒，整数
-	Clicks       int64          `json:"clicks"`
-	PartitionId  uint           `json:"partitionId"`
-	DanmakuCount int64          `json:"danmakuCount" gorm:"-"` // 弹幕数量
-	Fans         int64          `json:"fans" gorm:"-"`         // 作者粉丝数（与 author 解耦，避免在 author 内塞统计）
-	Author       AuthorPublicResp `json:"author" gorm:"-"`
-	Resources    []ResourceResp `json:"resources" gorm:"-"`
+	Copyright    types.CopyrightType `json:"copyright"`
+	Tags         []string            `json:"tags" gorm:"-"` // 非表字段，避免 Scan 时 GORM 将 []string 误判为关联
+	Duration     int                 `json:"duration"` // 秒，整数
+	Clicks       int64               `json:"clicks"`
+	PartitionId  uint                `json:"partitionId"`
+	DanmakuCount int64               `json:"danmakuCount" gorm:"-"` // 弹幕数量
+	Fans         int64               `json:"fans" gorm:"-"`         // 作者粉丝数（与 author 解耦，避免在 author 内塞统计）
+	Author       AuthorPublicResp    `json:"author" gorm:"-"`
+	Resources    []ResourceResp      `json:"resources" gorm:"-"`
 }
 
 type VideoStatusResp struct {
@@ -34,13 +37,13 @@ type VideoStatusResp struct {
 	Title       string         `json:"title"`
 	Cover       string         `json:"cover"`
 	Desc        string         `json:"desc"`
-	Copyright   int8           `json:"copyright"`
-	Status      int            `json:"status"`
-	PartitionId uint           `json:"partitionId"`
-	Tags        []string       `json:"tags" gorm:"-"`
-	Clicks      int64          `json:"clicks"`
-	Duration    int            `json:"duration"`
-	Resources   []ResourceResp `json:"resources" gorm:"-"`
+	Copyright   types.CopyrightType `json:"copyright"`
+	Status      int                 `json:"status"`
+	PartitionId uint                `json:"partitionId"`
+	Tags        []string            `json:"tags" gorm:"-"`
+	Clicks      int64               `json:"clicks"`
+	Duration    int                 `json:"duration"`
+	Resources   []ResourceResp      `json:"resources" gorm:"-"`
 }
 
 type UploadVideoResp struct {
@@ -50,11 +53,11 @@ type UploadVideoResp struct {
 	Cover               string                    `json:"cover"`
 	Desc                string                    `json:"desc"`
 	Status              int                       `json:"status"`
-	Copyright           bool                      `json:"copyright"`
-	CreatedAt           time.Time                 `json:"createdAt"`
-	Clicks              int64                     `json:"clicks"`
-	Duration            int                       `json:"duration"`
-	TranscodingProgress float64                   `json:"transcodingProgress,omitempty" gorm:"-"`
+	Copyright           types.CopyrightType        `json:"copyright"`
+	CreatedAt           time.Time                  `json:"createdAt"`
+	Clicks              int64                      `json:"clicks"`
+	Duration            int                        `json:"duration"`
+	TranscodingProgress float64                    `json:"transcodingProgress,omitempty" gorm:"-"`
 	TranscodingDetails  []TranscodingProgressItem `json:"transcodingDetails,omitempty" gorm:"-"`
 	UploadProgress      *UploadProgressInfo       `json:"uploadProgress,omitempty" gorm:"-"`
 }
@@ -74,13 +77,13 @@ type VideoInfoManageResp struct {
 	Cover               string                    `json:"cover"`
 	Desc                string                    `json:"desc"`
 	CreatedAt           time.Time                 `json:"createdAt"`
-	Copyright           bool                      `json:"copyright"`
-	Tags                []string                  `json:"tags" gorm:"-"`
-	Clicks              int64                     `json:"clicks"`
-	Duration            int                       `json:"duration"`
-	PartitionId         uint                      `json:"partitionId"`
-	Author              UserInfoResp              `json:"author" gorm:"-"`
-	TranscodingProgress float64                   `json:"transcodingProgress,omitempty" gorm:"-"`
+	Copyright           types.CopyrightType        `json:"copyright"`
+	Tags                []string                   `json:"tags" gorm:"-"`
+	Clicks              int64                      `json:"clicks"`
+	Duration            int                        `json:"duration"`
+	PartitionId         uint                       `json:"partitionId"`
+	Author              UserInfoResp               `json:"author" gorm:"-"`
+	TranscodingProgress float64                    `json:"transcodingProgress,omitempty" gorm:"-"`
 	TranscodingDetails  []TranscodingProgressItem `json:"transcodingDetails,omitempty" gorm:"-"`
 	UploadProgress      *UploadProgressInfo       `json:"uploadProgress,omitempty" gorm:"-"`
 }
@@ -108,9 +111,9 @@ type ReviewListResp struct {
 	Cover       string       `json:"cover"`
 	Desc        string       `json:"desc"`
 	CreatedAt   time.Time    `json:"createdAt"`
-	Copyright   bool         `json:"copyright"`
-	Tags        []string     `json:"tags" gorm:"-"`
-	Duration    int          `json:"duration"`
-	PartitionId uint         `json:"partitionId"`
-	Author      UserInfoResp `json:"author" gorm:"-"`
+	Copyright   types.CopyrightType `json:"copyright"`
+	Tags        []string            `json:"tags" gorm:"-"`
+	Duration    int                 `json:"duration"`
+	PartitionId uint                `json:"partitionId"`
+	Author      UserInfoResp        `json:"author" gorm:"-"`
 }

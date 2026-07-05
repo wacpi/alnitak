@@ -1,5 +1,7 @@
 package global
 
+import "interastral-peace.com/alnitak/internal/domain/types"
+
 const CAPTCHA_STATUS_ABSENT = 0   // 人机验证状态不存在
 const CAPTCHA_STATUS_NOT_USED = 1 // 人机验证状态未使用
 const CAPTCHA_STATUS_PASS = 2     // 人机验证状态已通过
@@ -74,15 +76,13 @@ const (
 )
 
 // ========== 版权类型 ==========
+// 类型定义和常量值在 types.CopyrightType 中统一管理
+// 此处为便利别名，让现有代码无需修改 import
 const (
-	// CopyrightUnknown 未知版权（默认/历史遗留）
-	CopyrightUnknown = 0
-	// CopyrightOriginal 原创
-	CopyrightOriginal = 1
-	// CopyrightReprint 转载/搬运
-	CopyrightReprint = 2
-	// CopyrightPGC PGC 授权内容（原上传者授权转化为 PGC 资产）
-	CopyrightPGC = 3
+	CopyrightUnknown types.CopyrightType = 0 // 未知版权（默认/历史遗留）
+	CopyrightOriginal types.CopyrightType = 1 // 原创
+	CopyrightReprint types.CopyrightType = 2 // 转载/搬运
+	CopyrightPGC types.CopyrightType = 3 // PGC 授权内容
 )
 
 // ========== PGC剧集状态 ==========

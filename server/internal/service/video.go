@@ -625,7 +625,8 @@ func buildM3U8MasterSegmentBase(file *model.VideoIndexFile, resourceId uint, key
 	fmt.Fprintf(&sb, "#EXT-X-STREAM-INF:BANDWIDTH=%d,RESOLUTION=%dx%d,FRAME-RATE=%.3f,CODECS=\"%s,%s\",AUDIO=\"audio\"\n",
 		file.VideoBandwidth+file.AudioBandwidth, file.Width, file.Height, file.FrameRate,
 		file.VideoCodec, file.AudioCodec)
-	sb.WriteString(videoURI + "\n")
+	sb.WriteString(videoURI)
+	sb.WriteByte('\n')
 
 	return sb.String()
 }
@@ -686,7 +687,8 @@ func buildByteRangeM3U8(entries []sidxEntry, streamURL, initRange string) string
 	for _, entry := range entries {
 		fmt.Fprintf(&sb, "#EXTINF:%.6f,\n", entry.Duration)
 		fmt.Fprintf(&sb, "#EXT-X-BYTERANGE:%d@%d\n", entry.Size, entry.Offset)
-		sb.WriteString(streamURL + "\n")
+		sb.WriteString(streamURL)
+		sb.WriteByte('\n')
 	}
 
 	sb.WriteString("#EXT-X-ENDLIST\n")
@@ -755,7 +757,8 @@ func buildM3U8SegmentList(file *model.VideoIndexFile, key string) string {
 		if baseURL != "" {
 			segmentURI = baseURL + segmentURI
 		}
-		sb.WriteString(segmentURI + "\n")
+		sb.WriteString(segmentURI)
+		sb.WriteByte('\n')
 	}
 
 	sb.WriteString("#EXT-X-ENDLIST\n")
@@ -835,9 +838,14 @@ func buildFromLegacyContent(file *model.VideoIndexFile, key, format string) (str
 	var res strings.Builder
 	for _, line := range strings.Split(file.Content, "\n") {
 		if strings.Contains(line, ".ts") || strings.Contains(line, ".m4s") {
-			res.WriteString("/api/v1/video/slice/" + line + "?key=" + key + "\n")
+			res.WriteString("/api/v1/video/slice/")
+			res.WriteString(line)
+			res.WriteString("?key=")
+			res.WriteString(key)
+			res.WriteByte('\n')
 		} else {
-			res.WriteString(line + "\n")
+			res.WriteString(line)
+			res.WriteByte('\n')
 		}
 	}
 	return res.String(), nil
@@ -1786,15 +1794,16 @@ func ReTranscodeVideo(ctx *gin.Context, videoId uint) error {
 				shortID, _ = AllocateUniqueResourceShortID()
 			}
 			newResource := model.Resource{
-				Vid:       videoId,
-				Uid:       video.Uid,
-				Title:     rf.resource.Title,
-				CodecName: info.CodecName,
-				Status:    global.VIDEO_PROCESSING,
-				Duration:  utils.SecFromFloat(info.Duration),
-				FileID:    rf.vf.ID,
-				ShortID:   shortID,
-				SortOrder: rf.resource.SortOrder,
+				Vid:           videoId,
+				Uid:           video.Uid,
+				Title:         rf.resource.Title,
+				CodecName:     info.CodecName,
+				Status:        global.VIDEO_PROCESSING,
+				Duration:      utils.SecFromFloat(info.Duration),
+				FileID:        rf.vf.ID,
+				ShortID:       shortID,
+				SortOrder:     rf.resource.SortOrder,
+				VisibleStatus: rf.resource.VisibleStatus, // 继承旧分P的可见性，避免重转码后变隐藏
 			}
 			if err := global.Mysql.Create(&newResource).Error; err != nil {
 				utils.ErrorLog("创建新资源记录失败", "transcoding", err.Error())

@@ -1,5 +1,7 @@
 package dto
 
+import "interastral-peace.com/alnitak/internal/domain/types"
+
 type ArticleListReq struct {
 	Page     int
 	PageSize int
@@ -8,7 +10,7 @@ type ArticleListReq struct {
 type UploadArticleReq struct {
 	Title       string `json:"title"`
 	Cover       string `json:"cover"`
-	Copyright   bool   `json:"copyright"`
+	Copyright   types.CopyrightType `json:"copyright"`
 	Tags        string `json:"tags"`
 	Content     string `json:"content"`
 	PartitionId uint   `json:"partitionId"`

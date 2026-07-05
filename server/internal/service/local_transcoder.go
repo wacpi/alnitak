@@ -92,9 +92,10 @@ func (t *LocalTranscoder) GetProgress(ctx context.Context, resourceID uint) (*Tr
 
 	status := "processing"
 	uploadStatus := state.UploadStatus
-	if uploadStatus == "success" || uploadStatus == "local" {
+	switch uploadStatus {
+	case "success", "local":
 		status = "success"
-	} else if uploadStatus == "fail" {
+	case "fail":
 		status = "fail"
 	}
 

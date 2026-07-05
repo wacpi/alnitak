@@ -2,6 +2,7 @@ package vo
 
 import (
 	"time"
+	"interastral-peace.com/alnitak/internal/domain/types"
 )
 
 const (
@@ -16,10 +17,10 @@ type ArticleStatusResp struct {
 	Title       string `json:"title"`
 	Cover       string `json:"cover"`
 	Content     string `json:"content"`
-	Copyright   int8   `json:"copyright"`
-	Status      int    `json:"status"`
-	PartitionId uint   `json:"partitionId"`
-	Tags        string `json:"tags"`
+	Copyright   types.CopyrightType `json:"copyright"`
+	Status      int                 `json:"status"`
+	PartitionId uint                `json:"partitionId"`
+	Tags        string              `json:"tags"`
 }
 
 type UploadArticleResp struct {
@@ -28,10 +29,10 @@ type UploadArticleResp struct {
 	Cover     string    `json:"cover"`
 	Content   string    `json:"content"`
 	Status    int       `json:"status"`
-	Copyright bool      `json:"copyright"`
-	CreatedAt time.Time `json:"createdAt"`
-	Tags      string    `json:"tags"`
-	Clicks    int64     `json:"clicks"`
+	Copyright types.CopyrightType `json:"copyright"`
+	CreatedAt time.Time           `json:"createdAt"`
+	Tags      string              `json:"tags"`
+	Clicks    int64               `json:"clicks"`
 }
 
 type ArticleResp struct {
@@ -41,12 +42,12 @@ type ArticleResp struct {
 	Cover       string       `json:"cover"`
 	Content     string       `json:"content"`
 	Status      int          `json:"status"`
-	Copyright   bool         `json:"copyright"`
-	CreatedAt   time.Time    `json:"createdAt"`
-	Tags        string       `json:"tags"`
-	Clicks      int64        `json:"clicks"`
-	PartitionId uint         `json:"partitionId"`
-	Author      UserInfoResp `json:"author" gorm:"-"`
+	Copyright   types.CopyrightType `json:"copyright"`
+	CreatedAt   time.Time           `json:"createdAt"`
+	Tags        string              `json:"tags"`
+	Clicks      int64               `json:"clicks"`
+	PartitionId uint                `json:"partitionId"`
+	Author      UserInfoResp        `json:"author" gorm:"-"`
 }
 
 type ReviewArticleListResp struct {
@@ -56,10 +57,10 @@ type ReviewArticleListResp struct {
 	Cover       string       `json:"cover"`
 	Content     string       `json:"content"`
 	CreatedAt   time.Time    `json:"createdAt"`
-	Copyright   bool         `json:"copyright"`
-	Tags        string       `json:"tags"`
-	PartitionId uint         `json:"partitionId"`
-	Author      UserInfoResp `json:"author" gorm:"-"`
+	Copyright   types.CopyrightType `json:"copyright"`
+	Tags        string              `json:"tags"`
+	PartitionId uint                `json:"partitionId"`
+	Author      UserInfoResp        `json:"author" gorm:"-"`
 }
 
 type AllArticleResp struct {

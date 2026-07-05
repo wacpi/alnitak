@@ -1017,7 +1017,7 @@ func FixPGCCopyright() {
 	} else if result.RowsAffected > 0 {
 		zap.L().Info("修正PGC版权字段",
 			zap.Int64("count", result.RowsAffected),
-			zap.Int("to", global.CopyrightPGC),
+			zap.Int("to", int(global.CopyrightPGC)),
 			zap.String("module", "initialize"))
 	}
 
@@ -1047,7 +1047,7 @@ func FixPGCCopyright() {
 	} else if result3.RowsAffected > 0 {
 		zap.L().Info("补填PGC原始版权字段",
 			zap.Int64("count", result3.RowsAffected),
-			zap.Int("to", global.CopyrightUnknown),
+			zap.Int("to", int(global.CopyrightUnknown)),
 			zap.String("module", "initialize"))
 	}
 }
