@@ -272,6 +272,14 @@ func (t *RemoteTranscoder) handleRemoteCompletion(ctx context.Context, info *dto
 		audioBitrate := info.AudioBitRate
 		audioSampleRate := info.AudioSampleRate
 
+		// 多音轨：取主音轨的语言（第一个 AudioStream 的语言）
+		// 单音轨回退：Worker 在无 AudioStreams 时始终上传 audio.m4s
+		audioLanguage := "und"
+		if len(info.AudioStreams) > 0 {
+			audioLanguage = info.AudioStreams[0].Language
+		}
+		audioFile := ffmpeg.AudioFileNameForTrack(audioLanguage)
+
 		indexRecords = append(indexRecords, model.VideoIndexFile{
 			ResourceID:      info.ResourceID,
 			Quality:         qualityName,
@@ -285,7 +293,7 @@ func (t *RemoteTranscoder) handleRemoteCompletion(ctx context.Context, info *dto
 			FrameRate:       frameRate,
 			VideoInitRange:  idx.VideoInitRange,
 			VideoIndexRange: idx.VideoIndexRange,
-			AudioFile:       "audio.m4s",
+			AudioFile:       audioFile,
 			AudioBandwidth:  audioBitrate,
 			AudioCodec:      audioCodec,
 			AudioSampleRate: audioSampleRate,

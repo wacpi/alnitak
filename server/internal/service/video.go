@@ -1377,7 +1377,7 @@ func GetFailedVideoList(videoListReq dto.VideoListReq) (total int64, videos []vo
 
 // 获取处理中视频列表（后台管理）
 func GetProcessingVideoList(videoListReq dto.VideoListReq) (total int64, videos []vo.VideoInfoManageResp) {
-	processingStatuses := []int{global.CREATED_VIDEO, global.VIDEO_PROCESSING, global.SUBMIT_REVIEW, global.WAITING_REVIEW}
+	processingStatuses := []int{global.CREATED_VIDEO, global.VIDEO_PROCESSING, global.SUBMIT_REVIEW}
 	global.Mysql.Model(&model.Video{}).Where("status IN ? AND pgc_attached = ?", processingStatuses, false).Count(&total)
 	global.Mysql.Model(&model.Video{}).Where("status IN ? AND pgc_attached = ?", processingStatuses, false).
 		Order("created_at DESC").
