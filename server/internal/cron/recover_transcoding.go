@@ -66,7 +66,17 @@ func RecoverStuckTranscoding() {
 		if exists > 0 {
 			// 有进度哈希 → 检查是否过期（pollProgress 丢失后留下的残渣）
 			status, err := rdb.HGet(ctx, redisKey, "status").Result()
-			if err != nil {
+			if err == redis.Nil {
+				// 键存在但无 status 字段：Worker 进度 HSet 重建了 key 但未写入 status。
+				// 检查是否有 progress_* 字段，有则任务仍在进行中。
+				fieldCount, _ := rdb.HLen(ctx, redisKey).Result()
+				if fieldCount > 0 {
+					skipped++
+					continue
+				}
+				// 空 key，删掉走下方 reenqueue 逻辑
+				rdb.Del(ctx, redisKey)
+			} else if err != nil {
 				utils.ErrorLog("读取哈希状态失败", "cron",
 					fmt.Sprintf("ResourceID=%d, err=%v", res.ID, err))
 				errors++

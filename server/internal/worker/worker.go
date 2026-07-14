@@ -983,6 +983,7 @@ func (w *Worker) doEncodeWithFallback(ctx context.Context, info *dto.Transcoding
 			qName := target.Resolution + "_" + target.BitrateRate + "_" + target.FpsName
 			_ = w.rdb.HSet(ctx, statusKey,
 				fmt.Sprintf("progress_%s", qName), fmt.Sprintf("%.1f", pct),
+				"updated", time.Now().Unix(),
 			).Err()
 		})
 		return err
