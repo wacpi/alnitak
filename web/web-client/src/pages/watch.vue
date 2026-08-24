@@ -16,7 +16,7 @@
           <!-- 标题和版权信息 -->
           <div class="video-title-box">
             <p class="video-title">{{ pgcInfo?.title || videoInfo?.title }}</p>
-            <p v-show="videoInfo?.copyright" class="copyright">
+            <p v-show="videoInfo.copyright === 1" class="copyright">
               <el-icon class="icon" color='#fd6d6f'>
                 <forbid-icon></forbid-icon>
               </el-icon>
@@ -274,7 +274,9 @@ if (process.client) {
   const targetPart = currentPart.value;
   const resources = videoInfo.value?.resources;
   const currentResource = resources?.[targetPart - 1];
-  if (currentResource?.shortId && !route.query.rid) {
+  // 单分P情况不自动添加 rid 到地址栏，避免冲路径
+  const isSinglePart = resources && resources.length <= 1;
+  if (currentResource?.shortId && !route.query.rid && !isSinglePart) {
     // 使用 history.replaceState 避免触发 Vue Router 的 watcher 导致重复拉取视频信息
     const newQuery: Record<string, string> = { v: currentWatchVQuery.value, rid: currentResource.shortId };
     if (route.query.ep) newQuery.ep = String(route.query.ep);
