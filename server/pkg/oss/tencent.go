@@ -137,5 +137,19 @@ func (t *TencentCOS) GetObjectUrl(objectKey string) string {
 		utils.ErrorLog("腾讯云COS生成文件URL失败", "transcoding", fmt.Sprintf("Error: %v, ObjectKey: %s", err, objectKey))
 		return ""
 	}
-	return presignedURL.String()
+	// GetPresignedURL 返回 *url.URL，直接 .String()
+	url := presignedURL.String()
+	if url == "" {
+		utils.ErrorLog("腾讯云COS生成文件URL失败", "transcoding", "empty url")
+	}
+	return url
+}
+
+// 获取对象读取器（用于代理流式传输）
+func (t *TencentCOS) GetObjectReader(objectKey string) (io.ReadCloser, error) {
+	resp, err := t.client.Object.Get(context.Background(), objectKey, nil)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Body, nil
 }

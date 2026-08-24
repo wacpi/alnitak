@@ -96,3 +96,8 @@ func (a *Aliyun) GetObjectUrl(objectKey string) string {
 
 	return url
 }
+
+// 获取对象读取器（用于代理流式传输）
+func (a *Aliyun) GetObjectReader(objectKey string) (io.ReadCloser, error) {
+	return a.bucket.GetObject(objectKey)
+}

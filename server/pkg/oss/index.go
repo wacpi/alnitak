@@ -23,6 +23,7 @@ type Storage interface {
 	PutObjectFromFile(objectKey, filePath string) error
 	IsExists(objectKey string) (bool, error)
 	GetObjectUrl(objectKey string) string
+	GetObjectReader(objectKey string) (io.ReadCloser, error)
 }
 
 func InitStorage(c config.Storage) Storage {

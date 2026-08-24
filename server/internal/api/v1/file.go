@@ -3,6 +3,8 @@ package api
 import (
 	"errors"
 	"fmt"
+	"io"
+	"mime"
 	"net/http"
 	"path/filepath"
 	"regexp"
@@ -137,9 +139,31 @@ func GetVideoSlice(ctx *gin.Context) {
 		return
 	}
 
-	// OSS 存储：重定向到公开URL
-	redirect := global.GetOssUrl("video/" + dir + "/" + file)
-	ctx.Redirect(http.StatusFound, redirect)
+	// OSS 存储：代理流式传输（避免 CORS/PNA 问题）
+	objectKey := "video/" + dir + "/" + file
+	reader, err := global.Storage.GetObjectReader(objectKey)
+	if err != nil || reader == nil {
+		// 尝试备用 OSS
+		if global.StorageBackup != nil {
+			reader, err = global.StorageBackup.GetObjectReader(objectKey)
+		}
+		if err != nil || reader == nil {
+			resp.Forbidden(ctx)
+			return
+		}
+	}
+	defer reader.Close()
+
+	// .m4s 文件 Go 标准库不识别 MIME 类型，需要手动设置
+	if strings.HasSuffix(file, ".m4s") {
+		ctx.Header("Content-Type", "video/iso.segment")
+	} else if strings.HasSuffix(file, ".ts") {
+		ctx.Header("Content-Type", "video/mp2t")
+	}
+	ctx.Header("Cache-Control", "public, max-age=18000, must-revalidate")
+	ctx.Header("Accept-Ranges", "bytes")
+
+	io.Copy(ctx.Writer, reader)
 }
 
 // GetVideoStream 获取视频流（B站风格：支持字节范围请求）
@@ -210,28 +234,45 @@ func GetImgFile(ctx *gin.Context) {
 		return
 	}
 
-	// OSS 存储：重定向到 OSS URL
-	var redirect string
-	if useBackup {
-		redirect = global.GetBackupOssUrl("image/" + file)
-		if redirect == "" {
-			// 没有配置备用 OSS，降级到主 OSS
-			redirect = global.GetOssUrl("image/" + file)
+	// OSS 存储：代理流式传输（避免 CORS/PNA 问题）
+	var reader io.ReadCloser
+	var err error
+	objectKey := "image/" + file
+
+	if useBackup && global.StorageBackup != nil {
+		reader, err = global.StorageBackup.GetObjectReader(objectKey)
+		if err != nil || reader == nil {
+			// 备用 OSS 失败，降级到主 OSS
+			reader, err = global.Storage.GetObjectReader(objectKey)
 		}
 	} else {
-		redirect = global.GetOssUrl("image/" + file)
+		reader, err = global.Storage.GetObjectReader(objectKey)
 	}
+
+	if err != nil || reader == nil {
+		ctx.Status(http.StatusNotFound)
+		return
+	}
+	defer reader.Close()
+
+	// 推断 Content-Type
+	contentType := mime.TypeByExtension(filepath.Ext(file))
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	ctx.Header("Content-Type", contentType)
+	ctx.Header("Cache-Control", "public, max-age=18000, must-revalidate")
+	ctx.Header("Accept-Ranges", "bytes")
 
 	if global.Config.Log.Mode == "dev" {
 		prefix := "primary"
 		if useBackup {
 			prefix = "backup"
 		}
-		fmt.Println(prefix, "redirect", redirect, "image/"+file)
+		fmt.Println(prefix, "proxy", objectKey)
 	}
 
-	ctx.Header("Cache-Control", "public, max-age=18000, must-revalidate")
-	ctx.Redirect(http.StatusFound, redirect)
+	io.Copy(ctx.Writer, reader)
 }
 
 // GetAudioTracks 获取指定资源的可用音轨列表（多音轨支持）
@@ -275,11 +316,37 @@ func GetSubtitleFile(ctx *gin.Context) {
 		return
 	}
 
-	// OSS：与图片路由相同，302 到公开 URL / 预签名 URL（播放端须在 <video crossorigin> + 存储 CORS）
-	redirect := global.GetOssUrl(objectKey)
-	if global.Config.Log.Mode == "dev" {
-		fmt.Println("redirect subtitle", redirect, objectKey)
+	// OSS：代理流式传输（避免 CORS/PNA 问题）
+	var reader io.ReadCloser
+	var err error
+
+	useBackup := ctx.Query("backup") == "true"
+	if useBackup && global.StorageBackup != nil {
+		reader, err = global.StorageBackup.GetObjectReader(objectKey)
+		if err != nil || reader == nil {
+			reader, err = global.Storage.GetObjectReader(objectKey)
+		}
+	} else {
+		reader, err = global.Storage.GetObjectReader(objectKey)
 	}
+
+	if err != nil || reader == nil {
+		ctx.Status(http.StatusNotFound)
+		return
+	}
+	defer reader.Close()
+
+	ctx.Header("Content-Type", "text/vtt; charset=utf-8")
 	ctx.Header("Cache-Control", "public, max-age=18000, must-revalidate")
-	ctx.Redirect(http.StatusFound, redirect)
+	ctx.Header("Accept-Ranges", "bytes")
+
+	if global.Config.Log.Mode == "dev" {
+		prefix := "primary"
+		if useBackup {
+			prefix = "backup"
+		}
+		fmt.Println(prefix, "proxy subtitle", objectKey)
+	}
+
+	io.Copy(ctx.Writer, reader)
 }

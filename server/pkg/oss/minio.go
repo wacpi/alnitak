@@ -163,3 +163,12 @@ func (m *MinIO) GetObjectUrl(objectKey string) string {
 	}
 	return presignedURL.String()
 }
+
+// 获取对象读取器（用于代理流式传输）
+func (m *MinIO) GetObjectReader(objectKey string) (io.ReadCloser, error) {
+	object, err := m.client.GetObject(context.Background(), m.config.Bucket, objectKey, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return object, nil
+}

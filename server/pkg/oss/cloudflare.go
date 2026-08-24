@@ -169,3 +169,15 @@ func (m *MinIOStorage) GetObjectUrl(objectKey string) string {
 	}
 	return presignedURL.URL
 }
+
+// 获取对象读取器（用于代理流式传输）
+func (m *MinIOStorage) GetObjectReader(objectKey string) (io.ReadCloser, error) {
+	output, err := m.client.GetObject(context.Background(), &s3.GetObjectInput{
+		Bucket: aws.String(m.bucket),
+		Key:    aws.String(objectKey),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return output.Body, nil
+}
