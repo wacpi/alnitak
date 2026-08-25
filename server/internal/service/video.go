@@ -19,7 +19,6 @@ import (
 	"interastral-peace.com/alnitak/internal/domain/model"
 	"interastral-peace.com/alnitak/internal/domain/vo"
 	"interastral-peace.com/alnitak/internal/global"
-	"interastral-peace.com/alnitak/pkg/playtoken"
 	"interastral-peace.com/alnitak/utils"
 )
 
@@ -733,13 +732,7 @@ func buildM3U8SegmentList(file *model.VideoIndexFile, key string) string {
 	baseURL := getLocalBaseURL()
 
 	if isFMP4 {
-		initToken, err := playtoken.IssueStreamToken(file.DirName, file.InitFile, streamSliceTTL)
-		var initURI string
-		if err != nil {
-			initURI = fmt.Sprintf("/api/v1/video/slice/%s?key=%s", file.InitFile, key)
-		} else {
-			initURI = fmt.Sprintf("/api/v1/video/slice/%s?st=%s", file.InitFile, initToken)
-		}
+		initURI := fmt.Sprintf("/api/v1/video/slice/%s?key=%s", file.InitFile, key)
 		if baseURL != "" {
 			initURI = baseURL + initURI
 		}
@@ -760,13 +753,7 @@ func buildM3U8SegmentList(file *model.VideoIndexFile, key string) string {
 
 		fmt.Fprintf(&sb, "#EXTINF:%.3f,\n", duration)
 
-		chunkToken, err := playtoken.IssueStreamToken(file.DirName, fileName, streamSliceTTL)
-		var segmentURI string
-		if err != nil {
-			segmentURI = fmt.Sprintf("/api/v1/video/slice/%s?key=%s", fileName, key)
-		} else {
-			segmentURI = fmt.Sprintf("/api/v1/video/slice/%s?st=%s", fileName, chunkToken)
-		}
+		segmentURI := fmt.Sprintf("/api/v1/video/slice/%s?key=%s", fileName, key)
 		if baseURL != "" {
 			segmentURI = baseURL + segmentURI
 		}
@@ -804,13 +791,7 @@ func buildMPDSegmentList(file *model.VideoIndexFile, key string) string {
 	fmt.Fprintf(&sb, `        <SegmentList timescale="1000" duration="%d">`, int(file.SegmentDuration*1000))
 	sb.WriteString("\n")
 	if file.InitFile != "" {
-		initToken, err := playtoken.IssueStreamToken(file.DirName, file.InitFile, streamSliceTTL)
-		var initURL string
-		if err != nil {
-			initURL = fmt.Sprintf("/api/v1/video/slice/%s?key=%s", file.InitFile, key)
-		} else {
-			initURL = fmt.Sprintf("/api/v1/video/slice/%s?st=%s", file.InitFile, initToken)
-		}
+		initURL := fmt.Sprintf("/api/v1/video/slice/%s?key=%s", file.InitFile, key)
 		if baseURL != "" {
 			initURL = baseURL + initURL
 		}
@@ -824,13 +805,7 @@ func buildMPDSegmentList(file *model.VideoIndexFile, key string) string {
 			ext = ".ts"
 		}
 		fileName := fmt.Sprintf("%s_%05d%s", file.Quality, i, ext)
-		chunkToken, err := playtoken.IssueStreamToken(file.DirName, fileName, streamSliceTTL)
-		var segmentURL string
-		if err != nil {
-			segmentURL = fmt.Sprintf("/api/v1/video/slice/%s?key=%s", fileName, key)
-		} else {
-			segmentURL = fmt.Sprintf("/api/v1/video/slice/%s?st=%s", fileName, chunkToken)
-		}
+		segmentURL := fmt.Sprintf("/api/v1/video/slice/%s?key=%s", fileName, key)
 		if baseURL != "" {
 			segmentURL = baseURL + segmentURL
 		}
