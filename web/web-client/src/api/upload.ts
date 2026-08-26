@@ -228,7 +228,7 @@ const uploadDirectToOSS = async ({
   onError: (err: any) => void;
 }): Promise<{ controllers: AbortController[]; fileID: string } | null> => {
 
-  // 1. 初始化分片直传
+  // 1. 初始化分片直传（只返回第一批预签名URL）
   const initRes = await request.post('v1/upload/initVideo', {
     hash, size, fileName: file.name, totalChunks,
   }, { timeout: 15000 });
@@ -258,75 +258,96 @@ const uploadDirectToOSS = async ({
     return { controllers: [], fileID: initData.fileID };
   }
 
-  console.log('【直传视频】使用 OSS 直传, uploadID:', initData.uploadID, 'chunks:', initData.chunks.length);
+  console.log('【直传视频】使用 OSS 直传, uploadID:', initData.uploadID, 'totalChunks:', totalChunks);
 
-  // 2. 逐片直传到 OSS
+  // 2. 分批上传：每次处理一批，上传完后续签下一批
   const parts: { partNumber: number; etag: string }[] = [];
   let uploadedCount = uploadedChunks.length;
   const controllers: AbortController[] = [];
 
-  for (const chunk of initData.chunks) {
-    // 跳过已上传的分片
-    if (uploadedChunks.includes(chunk.index)) {
-      const existingPart = parts.find(p => p.partNumber === chunk.partNumber);
-      if (!existingPart) {
-        // 已上传但没有 ETag 信息，需要重新上传
-      } else {
+  // 当前批次的预签名chunks
+  let currentChunks: { index: number; partNumber: number; presignURL: string }[] = initData.chunks || [];
+  let nextBatchStart: number = initData.nextBatchStart;
+
+  while (currentChunks.length > 0) {
+    for (const chunk of currentChunks) {
+      // 跳过已上传的分片
+      if (uploadedChunks.includes(chunk.index)) {
         continue;
       }
-    }
 
-    const start = chunk.index * CHUNK_SIZE;
-    const end = Math.min(start + CHUNK_SIZE, file.size);
-    const blob = file.slice(start, end);
-    const controller = new AbortController();
-    controllers.push(controller);
+      const start = chunk.index * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, file.size);
+      const blob = file.slice(start, end);
+      const controller = new AbortController();
+      controllers.push(controller);
 
-    let success = false;
-    for (let retry = 0; retry <= MAX_RETRIES; retry++) {
-      try {
-        const xhr = new XMLHttpRequest();
-        const etag = await new Promise<string>((resolve, reject) => {
-          xhr.open('PUT', chunk.presignURL, true);
-          xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-          xhr.upload.onprogress = () => {};
-          xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) {
-              const etagHeader = xhr.getResponseHeader('ETag');
-              if (etagHeader) {
-                resolve(etagHeader);
+      let success = false;
+      for (let retry = 0; retry <= MAX_RETRIES; retry++) {
+        try {
+          const xhr = new XMLHttpRequest();
+          const etag = await new Promise<string>((resolve, reject) => {
+            xhr.open('PUT', chunk.presignURL, true);
+            xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+            xhr.upload.onprogress = () => {};
+            xhr.onload = () => {
+              if (xhr.status >= 200 && xhr.status < 300) {
+                const etagHeader = xhr.getResponseHeader('ETag');
+                if (etagHeader) {
+                  resolve(etagHeader);
+                } else {
+                  reject(new Error('Missing ETag header'));
+                }
               } else {
-                reject(new Error('Missing ETag header'));
+                reject(new Error(`OSS chunk upload failed: ${xhr.status}`));
               }
-            } else {
-              reject(new Error(`OSS chunk upload failed: ${xhr.status}`));
-            }
-          };
-          xhr.onerror = () => reject(new Error('OSS chunk network error'));
-          xhr.onabort = () => reject(new Error('Aborted'));
-          controller.signal.addEventListener('abort', () => xhr.abort());
-          xhr.send(blob);
-        });
+            };
+            xhr.onerror = () => reject(new Error('OSS chunk network error'));
+            xhr.onabort = () => reject(new Error('Aborted'));
+            controller.signal.addEventListener('abort', () => xhr.abort());
+            xhr.send(blob);
+          });
 
-        parts.push({ partNumber: chunk.partNumber, etag });
-        uploadedCount++;
-        const progress = Math.floor((uploadedCount / totalChunks) * 100);
-        onProgress(progress);
-        success = true;
-        break;
-      } catch (err: any) {
-        if (err?.message === 'Aborted') return { controllers, fileID: initData.fileID };
-        if (retry < MAX_RETRIES) {
-          console.warn(`【直传】分片 ${chunk.index} 失败，${retry + 1}/${MAX_RETRIES} 重试...`);
-          await delay(getRetryDelay(retry));
+          parts.push({ partNumber: chunk.partNumber, etag });
+          uploadedCount++;
+          const progress = Math.floor((uploadedCount / totalChunks) * 100);
+          onProgress(progress);
+          success = true;
+          break;
+        } catch (err: any) {
+          if (err?.message === 'Aborted') return { controllers, fileID: initData.fileID };
+          if (retry < MAX_RETRIES) {
+            console.warn(`【直传】分片 ${chunk.index} 失败，${retry + 1}/${MAX_RETRIES} 重试...`);
+            await delay(getRetryDelay(retry));
+          }
         }
+      }
+
+      if (!success) {
+        onError({ msg: `分片 ${chunk.index} 上传失败` });
+        return { controllers, fileID: initData.fileID };
       }
     }
 
-    if (!success) {
-      onError({ msg: `分片 ${chunk.index} 上传失败` });
+    // 当前批次上传完毕，续签下一批
+    if (nextBatchStart === -1 || nextBatchStart >= totalChunks) {
+      break; // 全部签完了
+    }
+
+    console.log('【直传视频】续签下一批, start:', nextBatchStart);
+    const presignRes = await request.post('v1/upload/presignChunks', {
+      fileID: initData.fileID,
+      start: nextBatchStart,
+      count: 20, // 每批20个
+    }, { timeout: 15000 });
+
+    if (presignRes.data.code !== statusCode.OK || !presignRes.data.data) {
+      onError({ msg: '续签分片失败' });
       return { controllers, fileID: initData.fileID };
     }
+
+    currentChunks = presignRes.data.data.chunks || [];
+    nextBatchStart = presignRes.data.data.nextBatchStart;
   }
 
   // 3. 通知服务器完成合并
