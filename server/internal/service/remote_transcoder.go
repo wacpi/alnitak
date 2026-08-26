@@ -21,10 +21,14 @@ import (
 const (
 	// Redis Stream 名称，用于转码任务队列
 	transcodingQueueStream = "transcoding:queue"
+	// Redis List 名称，等待派发的转码任务（Worker 空闲时从此队列取出放入 Stream）
+	transcodingPendingQueue = "transcoding:pending"
 	// Redis Hash 状态前缀，后接 resourceID
 	transcodingStatusPrefix = "transcoding:status:"
 	// Pub/Sub 频道：转码取消
 	transcodingCancelChannel = "transcoding:cancel"
+	// Pub/Sub 频道：Worker 完成任务通知服务端派发下一个
+	transcodingDispatchChannel = "transcoding:dispatch"
 	// 进度轮询间隔
 	progressPollInterval = 3 * time.Second
 )
@@ -87,38 +91,9 @@ func NewRemoteTranscoder() *RemoteTranscoder {
 	}
 }
 
-// Enqueue 将转码任务序列化为 JSON 并推入 Redis Stream，
-// 同时启动协程异步轮询进度。
-// 入队前会检查 Worker 容量和队列深度，容量不足时返回错误。
+// Enqueue 将转码任务入队：有空闲 Worker 时直接投递 Stream，否则存入 pending 队列等待派发。
 func (t *RemoteTranscoder) Enqueue(ctx context.Context, info *dto.TranscodingInfo) error {
-	// 1. 检查 Worker 可用容量
-	available, err := getAvailableCapacity(ctx)
-	if err != nil {
-		zap.L().Warn("Failed to check worker capacity, proceeding anyway", zap.Error(err))
-	} else if available <= 0 {
-		zap.L().Warn("All workers busy, rejecting enqueue",
-			zap.Uint("videoID", info.VideoID),
-			zap.Uint("resourceID", info.ResourceID))
-		return fmt.Errorf("all transcoding workers are busy, try again later")
-	}
-
-	// 2. 检查队列深度上限
-	maxDepth := global.Config.Transcoding.MaxQueueDepth
-	if maxDepth > 0 {
-		streamLen, err := t.rdb.XLen(ctx, transcodingQueueStream).Result()
-		if err != nil {
-			zap.L().Warn("Failed to check stream length, proceeding anyway", zap.Error(err))
-		} else if streamLen >= int64(maxDepth) {
-			zap.L().Warn("Transcoding queue full, rejecting enqueue",
-				zap.Int64("streamLen", streamLen),
-				zap.Int("maxDepth", maxDepth),
-				zap.Uint("videoID", info.VideoID),
-				zap.Uint("resourceID", info.ResourceID))
-			return fmt.Errorf("transcoding queue is full (%d/%d)", streamLen, maxDepth)
-		}
-	}
-
-	// 3. 从主服务配置填充编码参数，保证 Worker 端与后台设定一致
+	// 1. 填充编码参数（与主服务配置一致）
 	info.UseGpu = global.Config.Transcoding.UseGpu
 	info.UseH265 = global.Config.Transcoding.UseH265
 	info.UseAv1 = global.Config.Transcoding.UseAv1
@@ -129,24 +104,115 @@ func (t *RemoteTranscoder) Enqueue(ctx context.Context, info *dto.TranscodingInf
 		return fmt.Errorf("transcoding job marshal: %w", err)
 	}
 
-	if err := t.rdb.XAdd(ctx, &redis.XAddArgs{
-		Stream: transcodingQueueStream,
-		Values: map[string]interface{}{
+	// 2. 检查 Worker 可用容量
+	available, err := getAvailableCapacity(ctx)
+	if err != nil {
+		zap.L().Warn("Failed to check worker capacity, falling back to pending queue", zap.Error(err))
+		available = 0
+	}
+
+	// 3. 有空闲 Worker → 直接投 Stream；全忙 → 存 pending 队列等 DispatchPending 派发
+	if available > 0 {
+		if err := t.rdb.XAdd(ctx, &redis.XAddArgs{
+			Stream: transcodingQueueStream,
+			Values: map[string]interface{}{
+				"job":        string(job),
+				"resourceID": info.ResourceID,
+				"videoID":    info.VideoID,
+			},
+		}).Err(); err != nil {
+			return fmt.Errorf("xadd transcoding job: %w", err)
+		}
+		utils.InfoLog(fmt.Sprintf("【转码入队→Stream】VideoID=%d ResourceID=%d",
+			info.VideoID, info.ResourceID), "transcoding")
+	} else {
+		// 存入 pending 队列（JSON 序列化的任务 + resourceID）
+		pending := map[string]interface{}{
 			"job":        string(job),
 			"resourceID": info.ResourceID,
 			"videoID":    info.VideoID,
-		},
-	}).Err(); err != nil {
-		return fmt.Errorf("xadd transcoding job: %w", err)
+		}
+		data, _ := json.Marshal(pending)
+		if err := t.rdb.RPush(ctx, transcodingPendingQueue, string(data)).Err(); err != nil {
+			return fmt.Errorf("rpush pending queue: %w", err)
+		}
+		utils.InfoLog(fmt.Sprintf("【转码入队→Pending】VideoID=%d ResourceID=%d PendingLen=%d",
+			info.VideoID, info.ResourceID, t.rdb.LLen(ctx, transcodingPendingQueue).Val()), "transcoding")
 	}
 
-	utils.InfoLog(fmt.Sprintf("【远程转码入队】VideoID=%d ResourceID=%d Stream=%s",
-		info.VideoID, info.ResourceID, transcodingQueueStream), "transcoding")
-
-	// 异步轮询进度
+	// 4. 异步轮询进度
 	go t.pollProgress(ctx, info)
 
 	return nil
+}
+
+// DispatchPending 从 pending 队列取出任务投递到 Stream（由 Worker 完成通知或定时任务触发）。
+func (t *RemoteTranscoder) DispatchPending(ctx context.Context) {
+	available, err := getAvailableCapacity(ctx)
+	if err != nil || available <= 0 {
+		return
+	}
+
+	for i := 0; i < available; i++ {
+		// RPOP 从 pending 队列取出最早的任务
+		result, err := t.rdb.LPop(ctx, transcodingPendingQueue).Result()
+		if err == redis.Nil || result == "" {
+			break // pending 队列空了
+		}
+		if err != nil {
+			zap.L().Error("LPop pending queue failed", zap.Error(err))
+			break
+		}
+
+		// 解析 pending 任务
+		var pending struct {
+			Job        string `json:"job"`
+			ResourceID uint   `json:"resourceID"`
+			VideoID    uint   `json:"videoID"`
+		}
+		if err := json.Unmarshal([]byte(result), &pending); err != nil {
+			zap.L().Error("Unmarshal pending job failed", zap.Error(err))
+			continue
+		}
+
+		// 投递到 Stream
+		if err := t.rdb.XAdd(ctx, &redis.XAddArgs{
+			Stream: transcodingQueueStream,
+			Values: map[string]interface{}{
+				"job":        pending.Job,
+				"resourceID": pending.ResourceID,
+				"videoID":    pending.VideoID,
+			},
+		}).Err(); err != nil {
+			zap.L().Error("XAdd from pending failed, pushing back",
+				zap.Uint("resourceID", pending.ResourceID), zap.Error(err))
+			// 投递失败，放回 pending 队列头部
+			t.rdb.LPush(ctx, transcodingPendingQueue, result)
+			break
+		}
+
+		utils.InfoLog(fmt.Sprintf("【Pending→Stream】VideoID=%d ResourceID=%d",
+			pending.VideoID, pending.ResourceID), "transcoding")
+	}
+}
+
+// ListenDispatch 监听 Worker 完成通知，触发 DispatchPending 派发下一个任务。
+func (t *RemoteTranscoder) ListenDispatch(ctx context.Context) {
+	pubsub := t.rdb.Subscribe(ctx, transcodingDispatchChannel)
+	defer pubsub.Close()
+
+	ch := pubsub.Channel()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case _, ok := <-ch:
+			if !ok {
+				return
+			}
+			t.DispatchPending(ctx)
+		}
+	}
 }
 
 // getAvailableCapacity 扫描所有 Worker 心跳，计算总剩余容量（Σ 最大并发 - 当前活跃任务数）。

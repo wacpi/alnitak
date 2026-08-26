@@ -83,13 +83,27 @@ type InitVideoUploadReq struct {
 	TotalChunks  int    `json:"totalChunks" binding:"required"`
 }
 
-// InitVideoUploadResp 返回 uploadID、objectKey 和每个分片的预签名 URL。
+// InitVideoUploadResp 返回 uploadID、objectKey 和第一批分片的预签名 URL。
 type InitVideoUploadResp struct {
-	FileID       string              `json:"fileID"`
-	UploadID     string              `json:"uploadID"`
-	ObjectKey    string              `json:"objectKey"`
-	TotalChunks  int                 `json:"totalChunks"`
-	Chunks       []PresignChunkResp  `json:"chunks"`
+	FileID         string              `json:"fileID"`
+	UploadID       string              `json:"uploadID"`
+	ObjectKey      string              `json:"objectKey"`
+	TotalChunks    int                 `json:"totalChunks"`
+	Chunks         []PresignChunkResp  `json:"chunks"`
+	NextBatchStart int                 `json:"nextBatchStart"` // 下一批起始 index，-1 表示全部签完
+}
+
+// PresignUploadChunksReq 前端上传完一批分片后续签下一批。
+type PresignUploadChunksReq struct {
+	FileID  string `json:"fileID" binding:"required"`
+	Start   int    `json:"start" binding:"required"`   // 起始分片 index
+	Count   int    `json:"count" binding:"required"`    // 本次请求数量
+}
+
+// PresignUploadChunksResp 返回续签的分片预签名 URL。
+type PresignUploadChunksResp struct {
+	Chunks         []PresignChunkResp `json:"chunks"`
+	NextBatchStart int                `json:"nextBatchStart"` // -1 表示全部签完
 }
 
 // PresignChunkResp 单个分片的预签名信息。

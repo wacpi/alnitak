@@ -175,3 +175,19 @@ func CompleteVideoUpload(ctx *gin.Context) {
 
 	resp.Ok(ctx)
 }
+
+func PresignUploadChunks(ctx *gin.Context) {
+	var req dto.PresignUploadChunksReq
+	if err := ctx.Bind(&req); err != nil {
+		resp.FailWithMessage(ctx, "请求参数有误")
+		return
+	}
+
+	data, err := service.PresignUploadChunks(ctx, req)
+	if err != nil {
+		resp.FailWithMessage(ctx, err.Error())
+		return
+	}
+
+	resp.OkWithData(ctx, data)
+}

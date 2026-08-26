@@ -33,6 +33,7 @@ const (
 	transcodingStatusPrefix    = "transcoding:status:"
 	transcodingCancelChannel   = "transcoding:cancel"
 	transcodingCompleteChannel = "transcoding:complete"
+	transcodingDispatchChannel = "transcoding:dispatch"
 	deadLetterStream           = "transcoding:deadletter"
 )
 
@@ -53,6 +54,67 @@ const (
 	// XReadGroup 每次批量拉取上限
 	readBatchSize = 10
 )
+
+// =============================================================================
+// Redis 重试工具
+// =============================================================================
+
+// redisMaxRetries 关键 Redis 写操作的最大重试次数
+const redisMaxRetries = 3
+
+// retryHSet 带重试的 HSet，防止网络丢包导致进度/状态丢失
+func (w *Worker) retryHSet(ctx context.Context, key string, values ...interface{}) error {
+	var lastErr error
+	for i := 0; i < redisMaxRetries; i++ {
+		if err := w.rdb.HSet(ctx, key, values...).Err(); err != nil {
+			lastErr = err
+			time.Sleep(time.Duration(i+1) * 100 * time.Millisecond)
+			continue
+		}
+		return nil
+	}
+	zap.L().Error("HSet failed after retries",
+		zap.String("key", key),
+		zap.Int("retries", redisMaxRetries),
+		zap.Error(lastErr))
+	return lastErr
+}
+
+// retryXAdd 带重试的 XAdd
+func (w *Worker) retryXAdd(ctx context.Context, args *redis.XAddArgs) error {
+	var lastErr error
+	for i := 0; i < redisMaxRetries; i++ {
+		if err := w.rdb.XAdd(ctx, args).Err(); err != nil {
+			lastErr = err
+			time.Sleep(time.Duration(i+1) * 100 * time.Millisecond)
+			continue
+		}
+		return nil
+	}
+	zap.L().Error("XAdd failed after retries",
+		zap.String("stream", args.Stream),
+		zap.Int("retries", redisMaxRetries),
+		zap.Error(lastErr))
+	return lastErr
+}
+
+// retryPublish 带重试的 Publish
+func (w *Worker) retryPublish(ctx context.Context, channel string, message interface{}) error {
+	var lastErr error
+	for i := 0; i < redisMaxRetries; i++ {
+		if err := w.rdb.Publish(ctx, channel, message).Err(); err != nil {
+			lastErr = err
+			time.Sleep(time.Duration(i+1) * 100 * time.Millisecond)
+			continue
+		}
+		return nil
+	}
+	zap.L().Error("Publish failed after retries",
+		zap.String("channel", channel),
+		zap.Int("retries", redisMaxRetries),
+		zap.Error(lastErr))
+	return lastErr
+}
 
 // =============================================================================
 // Worker 主结构
@@ -446,14 +508,14 @@ func (w *Worker) recoverPending(ctx context.Context) error {
 
 // sendToDeadLetter 将无法处理的消息写入死信队列以便人工排查。
 func (w *Worker) sendToDeadLetter(ctx context.Context, msgID, reason string) {
-	_ = w.rdb.XAdd(ctx, &redis.XAddArgs{
+	w.retryXAdd(ctx, &redis.XAddArgs{
 		Stream: deadLetterStream,
 		Values: map[string]interface{}{
 			"originalMsgID": msgID,
 			"reason":        reason,
 			"movedAt":       time.Now().Unix(),
 		},
-	}).Err()
+	})
 }
 
 // =============================================================================
@@ -598,12 +660,6 @@ func (w *Worker) processJob(ctx context.Context, rawJob, msgID string) (err erro
 				w.encodingSem <- struct{}{}
 				defer func() { <-w.encodingSem }()
 			}
-			// 二次检查：如果该画质已被重试改为 waiting，跳过本次编码
-			if curStatus, err := w.rdb.HGet(ctx, progressKey, fmt.Sprintf("status_%s", qName)).Result(); err == nil && curStatus == "waiting" {
-				zap.L().Info("Quality re-queued by retry, skipping", zap.String("quality", qName))
-				completed.Add(1)
-				return
-			}
 			// 标记开始编码（从 waiting → processing）
 			w.rdb.HSet(ctx, statusKey, fmt.Sprintf("status_%s", qName), "processing")
 			if err := w.encodeQuality(jobCtx, &info, t, outPath); err != nil {
@@ -669,7 +725,7 @@ func (w *Worker) processJob(ctx context.Context, rawJob, msgID string) (err erro
 		idx := w.collectQualityIndex(videoFile, audioFile, &info, qName)
 		if idx != nil {
 			data, _ := json.Marshal(idx)
-			_ = w.rdb.HSet(ctx, statusKey, fmt.Sprintf("idx_%s", qName), string(data)).Err()
+			w.retryHSet(ctx, statusKey, fmt.Sprintf("idx_%s", qName), string(data))
 		}
 	}
 
@@ -683,7 +739,7 @@ func (w *Worker) processJob(ctx context.Context, rawJob, msgID string) (err erro
 			"status":   "uploading",
 		}
 		if data, err := json.Marshal(uploadInfo); err == nil {
-			_ = w.rdb.HSet(ctx, statusKey, "upload", string(data)).Err()
+			w.retryHSet(ctx, statusKey, "upload", string(data))
 		}
 		if err := w.uploadOutputs(ctx, statusKey, &info, targets, audioFiles); err != nil {
 			w.writeStatus(statusKey, "failed", 100, err.Error())
@@ -693,15 +749,15 @@ func (w *Worker) processJob(ctx context.Context, rawJob, msgID string) (err erro
 		uploadInfo["progress"] = 100
 		uploadInfo["status"] = "success"
 		if data, err := json.Marshal(uploadInfo); err == nil {
-			_ = w.rdb.HSet(ctx, statusKey, "upload", string(data)).Err()
+			w.retryHSet(ctx, statusKey, "upload", string(data))
 		}
 	}
 
-	// 5. 标记完成
-	if err := w.rdb.HSet(ctx, statusKey, "status", "completed", "progress", "100").Err(); err != nil {
-		zap.L().Error("HSet status failed", zap.String("key", statusKey), zap.Error(err))
-	}
-	w.rdb.Publish(ctx, transcodingCompleteChannel, fmt.Sprintf("%d", info.ResourceID))
+	// 5. 标记完成（关键写入，重试防丢包）
+	w.retryHSet(ctx, statusKey, "status", "completed", "progress", "100")
+	w.retryPublish(ctx, transcodingCompleteChannel, fmt.Sprintf("%d", info.ResourceID))
+	// 通知服务端：本 Worker 空闲了，可以派发 pending 队列中的下一个任务
+	w.retryPublish(ctx, transcodingDispatchChannel, "dispatch")
 
 	zap.L().Info("Job completed",
 		zap.Uint("resourceID", info.ResourceID),
@@ -715,7 +771,7 @@ func (w *Worker) processJob(ctx context.Context, rawJob, msgID string) (err erro
 // 进度上报
 // =============================================================================
 
-// writeStatus 写入转码进度到 Redis Hash
+// writeStatus 写入转码进度到 Redis Hash（带重试防丢包）
 func (w *Worker) writeStatus(key, status string, progress float64, errMsg string) {
 	fields := map[string]interface{}{
 		"status":   status,
@@ -725,9 +781,7 @@ func (w *Worker) writeStatus(key, status string, progress float64, errMsg string
 	if errMsg != "" {
 		fields["error"] = errMsg
 	}
-	if err := w.rdb.HSet(context.Background(), key, fields).Err(); err != nil {
-		zap.L().Error("HSet status failed", zap.String("key", key), zap.Error(err))
-	}
+	w.retryHSet(context.Background(), key, fields)
 }
 
 // =============================================================================
@@ -845,7 +899,7 @@ func (w *Worker) uploadOutputs(ctx context.Context, statusKey string, info *dto.
 			"status":   "uploading",
 		}
 		if data, err := json.Marshal(uploadInfo); err == nil {
-			_ = w.rdb.HSet(ctx, statusKey, "upload", string(data)).Err()
+			w.retryHSet(ctx, statusKey, "upload", string(data))
 		}
 		zap.L().Info("Upload progress",
 			zap.String("resourceKey", statusKey),
@@ -1013,10 +1067,10 @@ func (w *Worker) doEncodeWithFallback(ctx context.Context, info *dto.Transcoding
 		_, err := ffmpeg.EncodeVideo(ctx, args, info.Duration, func(pct float64) {
 			statusKey := fmt.Sprintf("%s%d", transcodingStatusPrefix, info.ResourceID)
 			qName := target.Resolution + "_" + target.BitrateRate + "_" + target.FpsName
-			_ = w.rdb.HSet(ctx, statusKey,
+			w.retryHSet(ctx, statusKey,
 				fmt.Sprintf("progress_%s", qName), fmt.Sprintf("%.1f", pct),
 				"updated", time.Now().Unix(),
-			).Err()
+			)
 		})
 		return err
 	}

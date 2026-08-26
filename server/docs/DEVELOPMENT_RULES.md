@@ -22,7 +22,24 @@
 - [ ] initialize/tables.go：AutoMigrate（如需）
 - [ ] 文档：更新 API 文档
 
-### 4. 测试验证
+### 4. 改动前检查 + 改动后编译（强制）
+- **改动前**：必须先读完相关文件的原有逻辑，确认新改动不会破坏已有功能
+- **改动后**：必须编译验证：
+  - 后端：`go build ./...` + 打包 exe
+  - Flutter：`flutter analyze` + `flutter build apk --release --target-platform android-arm64 --split-per-abi`
+  - Web：**不编译**
+
+### 5. 前端同步规则（强制）
+- 涉及后端接口变更（新增/修改/删除），**必须同步**以下所有前端项目：
+  - `E:\web\alnitak\web\web-client`（用户端 Web）
+  - `E:\web\alnitak\web\admin-client`（管理端 Web）
+  - `E:\alnitak_flutter`（Flutter App）
+- 三端接口调用参数、响应解析、错误处理必须一致
+- 修改后逐个检查三端是否编译通过：
+  - Web：`yarn build`（如未禁止）
+  - Flutter：`flutter analyze` + `flutter build apk --release --target-platform android-arm64 --split-per-abi`
+
+### 5. 测试验证
 - 修改后用 curl 测试关键 API 是否正常
 - 启动服务检查路由注册日志
 - 确认原有的公开/管理接口未受影响

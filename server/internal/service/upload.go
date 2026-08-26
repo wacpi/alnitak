@@ -860,7 +860,13 @@ func uploadMergedVideoToOSS(dirName, suffix, localPath string) {
 // ═══════════════════════════════════════════════════════════════════
 
 // presignURLTTL 预签名 URL 有效期。
-const presignURLTTL = 15 * time.Minute
+// 图片直传：15分钟足够；视频分片直传：大文件可能超过15分钟，给24小时兜底
+const (
+	presignURLTTL        = 15 * time.Minute // 图片直传
+	presignVideoChunkTTL = 24 * time.Hour   // 视频分片直传
+	// presignBatchSize 每次分批签名的分片数量（防预签名URL被滥用）
+	presignBatchSize = 20
+)
 
 // PresignImageUpload 为图片直传生成预签名 URL。
 // local 模式返回错误（请使用原始上传接口）。
@@ -987,11 +993,20 @@ func InitVideoUpload(ctx *gin.Context, req dto.InitVideoUploadReq) (dto.InitVide
 		return dto.InitVideoUploadResp{}, errors.New("初始化上传失败")
 	}
 
-	// 为每个分片生成预签名 URL
-	chunks := make([]dto.PresignChunkResp, req.TotalChunks)
-	for i := 0; i < req.TotalChunks; i++ {
+	// 缓存 uploadID 到 Redis（续签接口需要），TTL 与分片签名有效期一致
+	uploadIDKey := fmt.Sprintf("video:upload_id:%s", videoFile.DirName)
+	global.Redis.RawClient().Set(ctx, uploadIDKey, uploadID, presignVideoChunkTTL)
+
+	// 分批签名：只签第一批 presignBatchSize 个分片，前端上传完后续签
+	firstBatchEnd := req.TotalChunks
+	if firstBatchEnd > presignBatchSize {
+		firstBatchEnd = presignBatchSize
+	}
+
+	chunks := make([]dto.PresignChunkResp, firstBatchEnd)
+	for i := 0; i < firstBatchEnd; i++ {
 		partNumber := i + 1
-		presignURL, err := global.Storage.PresignUploadPart(uploadID, objectKey, partNumber, presignURLTTL)
+		presignURL, err := global.Storage.PresignUploadPart(uploadID, objectKey, partNumber, presignVideoChunkTTL)
 		if err != nil {
 			utils.ErrorLog("分片预签名失败", "upload", fmt.Sprintf("part=%d, err=%v", partNumber, err))
 			return dto.InitVideoUploadResp{}, errors.New("生成分片上传地址失败")
@@ -1003,15 +1018,90 @@ func InitVideoUpload(ctx *gin.Context, req dto.InitVideoUploadReq) (dto.InitVide
 		}
 	}
 
-	utils.InfoLog(fmt.Sprintf("【直传视频初始化】fileID=%s, uploadID=%s, objectKey=%s, chunks=%d, uid=%d",
-		videoFile.DirName, uploadID, objectKey, req.TotalChunks, userId), "upload")
+	// 计算下一批起始 index
+	nextBatchStart := -1 // -1 表示全部签完
+	if firstBatchEnd < req.TotalChunks {
+		nextBatchStart = firstBatchEnd
+	}
+
+	utils.InfoLog(fmt.Sprintf("【直传视频初始化】fileID=%s, uploadID=%s, objectKey=%s, chunks=%d/%d, uid=%d",
+		videoFile.DirName, uploadID, objectKey, firstBatchEnd, req.TotalChunks, userId), "upload")
 
 	return dto.InitVideoUploadResp{
-		FileID:      videoFile.DirName,
-		UploadID:    uploadID,
-		ObjectKey:   objectKey,
-		TotalChunks: req.TotalChunks,
-		Chunks:      chunks,
+		FileID:         videoFile.DirName,
+		UploadID:       uploadID,
+		ObjectKey:      objectKey,
+		TotalChunks:    req.TotalChunks,
+		Chunks:         chunks,
+		NextBatchStart: nextBatchStart,
+	}, nil
+}
+
+// PresignUploadChunks 前端上传完一批分片后续签下一批预签名 URL。
+// 通过 fileID 查找 uploadID 和 objectKey，为指定范围的分片生成预签名 URL。
+func PresignUploadChunks(ctx *gin.Context, req dto.PresignUploadChunksReq) (dto.PresignUploadChunksResp, error) {
+	if global.Config.Storage.OssType == "local" || global.Storage == nil {
+		return dto.PresignUploadChunksResp{}, errors.New("当前存储模式不支持直传")
+	}
+
+	// 限制每次最大请求数量
+	if req.Count <= 0 || req.Count > presignBatchSize {
+		req.Count = presignBatchSize
+	}
+	if req.Start < 0 {
+		return dto.PresignUploadChunksResp{}, errors.New("无效的起始位置")
+	}
+
+	// 查找文件记录
+	var videoFile model.VideoFile
+	if err := global.Mysql.Where("dir_name = ?", req.FileID).First(&videoFile).Error; err != nil {
+		return dto.PresignUploadChunksResp{}, errors.New("文件记录不存在")
+	}
+
+	suffix := path.Ext(videoFile.OriginalName)
+	objectKey := fmt.Sprintf("video/%s/upload%s", videoFile.DirName, suffix)
+
+	// 需要 uploadID 来签名，从 Redis 获取（InitVideoUpload 时应缓存）
+	// 或者重新查找：如果文件已在上传中，uploadID 存在 Redis
+	uploadIDKey := fmt.Sprintf("video:upload_id:%s", videoFile.DirName)
+	uploadID, err := global.Redis.RawClient().Get(ctx, uploadIDKey).Result()
+	if err != nil {
+		return dto.PresignUploadChunksResp{}, errors.New("上传会话已过期，请重新发起上传")
+	}
+
+	// 计算本批签名范围
+	end := req.Start + req.Count
+	if end > videoFile.ChunksCount {
+		end = videoFile.ChunksCount
+	}
+
+	chunks := make([]dto.PresignChunkResp, 0, end-req.Start)
+	for i := req.Start; i < end; i++ {
+		partNumber := i + 1
+		presignURL, err := global.Storage.PresignUploadPart(uploadID, objectKey, partNumber, presignVideoChunkTTL)
+		if err != nil {
+			utils.ErrorLog("续签分片失败", "upload", fmt.Sprintf("fileID=%s, part=%d, err=%v", req.FileID, partNumber, err))
+			return dto.PresignUploadChunksResp{}, errors.New("续签分片地址失败")
+		}
+		chunks = append(chunks, dto.PresignChunkResp{
+			Index:      i,
+			PartNumber: partNumber,
+			PresignURL: presignURL,
+		})
+	}
+
+	// 计算下一批起始 index
+	nextBatchStart := -1
+	if end < videoFile.ChunksCount {
+		nextBatchStart = end
+	}
+
+	utils.InfoLog(fmt.Sprintf("【直传视频续签】fileID=%s, start=%d, count=%d, next=%d",
+		req.FileID, req.Start, len(chunks), nextBatchStart), "upload")
+
+	return dto.PresignUploadChunksResp{
+		Chunks:         chunks,
+		NextBatchStart: nextBatchStart,
 	}, nil
 }
 

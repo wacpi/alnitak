@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -34,24 +35,24 @@ const (
 func RecoverStuckTranscoding() {
 	utils.InfoLog("开始检查卡住的转码任务", "cron")
 
-	var resources []model.Resource
-	global.Mysql.Model(&model.Resource{}).
-		Where("status = ?", global.VIDEO_PROCESSING).
-		Find(&resources)
-
-	if len(resources) == 0 {
-		utils.InfoLog("没有卡住的转码任务", "cron")
-		return
-	}
-
 	rdb := global.Redis.RawClient()
 	ctx := context.Background()
 
 	recovered := 0
 	skipped := 0
+	autoRetried := 0
+	autoRetryFailed := 0
 	errors := 0
 
-	for _, res := range resources {
+	// ═══════════════════════════════════════════════════════════════
+	// Part 1: 恢复 VIDEO_PROCESSING 状态的任务（原有逻辑）
+	// ═══════════════════════════════════════════════════════════════
+	var processingResources []model.Resource
+	global.Mysql.Model(&model.Resource{}).
+		Where("status = ?", global.VIDEO_PROCESSING).
+		Find(&processingResources)
+
+	for _, res := range processingResources {
 		redisKey := fmt.Sprintf("%s%d", transcodingStatusPrefix, res.ID)
 
 		// 检查 Redis 中是否有该资源的进度哈希
@@ -154,8 +155,85 @@ func RecoverStuckTranscoding() {
 		recovered++
 	}
 
-	utils.InfoLog(fmt.Sprintf("转码恢复任务完成: 恢复=%d, 跳过(已有进度)=%d, 错误=%d",
-		recovered, skipped, errors), "cron")
+	// ═══════════════════════════════════════════════════════════════
+	// Part 2: 自动重试 PROCESSING_FAIL 状态的任务（失败自动重试）
+	// ═══════════════════════════════════════════════════════════════
+	var failedResources []model.Resource
+	global.Mysql.Model(&model.Resource{}).
+		Where("status = ?", global.PROCESSING_FAIL).
+		Find(&failedResources)
+
+	for _, res := range failedResources {
+		// 检查 Stream 中是否已有该 resourceID 的条目（避免重复入队）
+		inStream, err := resourceInStream(ctx, rdb, res.ID)
+		if err != nil {
+			utils.ErrorLog("检查Stream失败(自动重试)", "cron",
+				fmt.Sprintf("ResourceID=%d, err=%v", res.ID, err))
+			errors++
+			continue
+		}
+		if inStream {
+			skipped++
+			continue
+		}
+
+		// 检查重试上限
+		retryKey := fmt.Sprintf("%s%d", retryCounterPrefix, res.ID)
+		retryCount, err := rdb.Incr(ctx, retryKey).Result()
+		if err != nil {
+			utils.ErrorLog("重试计数器失败(自动重试)", "cron",
+				fmt.Sprintf("ResourceID=%d, err=%v", res.ID, err))
+			errors++
+			continue
+		}
+		rdb.Expire(ctx, retryKey, 72*time.Hour)
+
+		if retryCount > maxReenqueueRetries {
+			utils.InfoLog(fmt.Sprintf("自动重试已达上限(%d)，放弃: ResourceID=%d, VideoID=%d",
+				maxReenqueueRetries, res.ID, res.Vid), "cron")
+			rdb.Del(ctx, retryKey)
+			autoRetryFailed++
+			continue
+		}
+
+		// 重置资源状态为转码中
+		global.Mysql.Model(&model.Resource{}).Where("id = ?", res.ID).
+			Update("status", global.VIDEO_PROCESSING)
+
+		// 重置 Redis 中的画质状态
+		statusKey := fmt.Sprintf("%s%d", transcodingStatusPrefix, res.ID)
+		if hash, err := rdb.HGetAll(ctx, statusKey).Result(); err == nil && len(hash) > 0 {
+			pipe := rdb.Pipeline()
+			for field, val := range hash {
+				if strings.HasPrefix(field, "status_") && val != "success" {
+					pipe.HSet(ctx, statusKey, field, "waiting")
+					progressField := "progress_" + field[len("status_"):]
+					pipe.HSet(ctx, statusKey, progressField, "0.00")
+				}
+			}
+			pipe.HSet(ctx, statusKey, "status", "processing")
+			pipe.HSet(ctx, statusKey, "updated", fmt.Sprintf("%d", time.Now().Unix()))
+			pipe.Exec(ctx)
+		}
+
+		utils.InfoLog(fmt.Sprintf("自动重试失败任务(第%d次): ResourceID=%d, VideoID=%d",
+			retryCount, res.ID, res.Vid), "cron")
+
+		if err := reenqueueResource(res); err != nil {
+			utils.ErrorLog("自动重试入队失败", "cron",
+				fmt.Sprintf("ResourceID=%d, err=%v", res.ID, err))
+			// 恢复状态为失败
+			global.Mysql.Model(&model.Resource{}).Where("id = ?", res.ID).
+				Update("status", global.PROCESSING_FAIL)
+			errors++
+			continue
+		}
+
+		autoRetried++
+	}
+
+	utils.InfoLog(fmt.Sprintf("转码恢复任务完成: 恢复(卡住)=%d, 自动重试(失败)=%d, 自动重试放弃=%d, 跳过=%d, 错误=%d",
+		recovered, autoRetried, autoRetryFailed, skipped, errors), "cron")
 }
 
 // getOriginalVideoStatus 读取 ReTranscodeVideo 写入 Redis 的原始审核状态。

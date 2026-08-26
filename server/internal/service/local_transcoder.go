@@ -121,3 +121,9 @@ func (t *LocalTranscoder) GetProgress(ctx context.Context, resourceID uint) (*Tr
 func (t *LocalTranscoder) Cancel(ctx context.Context, videoID uint) error {
 	return t.inner.StopTranscodingAndCleanup(videoID)
 }
+
+// DispatchPending Local 模式无 pending 队列，空操作。
+func (t *LocalTranscoder) DispatchPending(ctx context.Context) {}
+
+// ListenDispatch Local 模式无 pending 队列，空操作。
+func (t *LocalTranscoder) ListenDispatch(ctx context.Context) {}

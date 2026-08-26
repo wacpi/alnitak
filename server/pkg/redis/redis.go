@@ -31,6 +31,7 @@ func Init(c config.Redis) *Redis {
 		PoolSize:     20,                // 连接池大小
 		MinIdleConns: 5,                 // 保持最小空闲连接，减少建连开销
 		PoolTimeout:  10 * time.Second,  // 从池中获取连接的超时
+		DisableIdentity:          true,   // 禁用 CLIENT SETINFO（兼容 Redis < 7.2）
 	})
 	zap.L().Info("redis连接成功", zap.String("module", "db"))
 

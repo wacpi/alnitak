@@ -71,6 +71,8 @@ func main() {
 	cron.RefreshPopular()
 	// 启动定时任务
 	go cron.StartCronTask()
+	// 启动 pending 队列派发监听（Worker 完成通知实时触发 + 10秒兜底）
+	cron.StartDispatchListener()
 
 	// 初始化路由
 	routes.InitRouter()

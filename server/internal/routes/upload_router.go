@@ -59,11 +59,17 @@ func CollectUploadRoutes(r *gin.RouterGroup) {
 			middleware.RateLimiter(middleware.UploadImgRateLimit),
 			api.ConfirmImageUpload)
 
-		// 视频：初始化分片直传（1MB body）
+		// 视频：初始化分片直传（1MB body）— 返回第一批20个预签名URL
 		uploadGroup.POST("initVideo",
 			middleware.MaxBodySize(middleware.UploadJSONMaxBody),
 			middleware.RateLimiter(middleware.UploadCreateRateLimit),
 			api.InitVideoUpload)
+
+		// 视频：续签下一批分片预签名 URL（1MB body）
+		uploadGroup.POST("presignChunks",
+			middleware.MaxBodySize(middleware.UploadJSONMaxBody),
+			middleware.RateLimiter(middleware.UploadChunkRateLimit),
+			api.PresignUploadChunks)
 
 		// 视频：完成分片直传（1MB body）
 		uploadGroup.POST("completeVideo",
