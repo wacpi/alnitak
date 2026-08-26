@@ -24,7 +24,9 @@ import { uploadFileChunkAPI } from "@/api/upload";
 import { globalConfig } from "@/utils/global-config";
 import { Upload as UploadIcon } from "@icon-park/vue-next";
 
-const emits = defineEmits(["finish"]);
+const emits = defineEmits<{
+  (e: 'finish', data: any, coverURL?: string | null): void
+}>();
 const props = defineProps<{
   vid?: number
 }>();

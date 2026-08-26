@@ -14,7 +14,10 @@
             </template>
           </span>
         </template>
-        <template v-else>{{ item.title }}</template>
+        <template v-else>
+          <span class="ugc-title">{{ item.title }}</span>
+          <span v-if="item.part > 1" class="ugc-part">P{{ item.part }}</span>
+        </template>
       </nuxt-link>
       <div class="meta">
         <div class="play-count">
@@ -115,6 +118,18 @@ const watchLink = (item: HistoryVideoType) => {
         white-space: nowrap;
         text-overflow: ellipsis;
         overflow: hidden;
+      }
+
+      .ugc-title {
+        display: inline;
+      }
+
+      .ugc-part {
+        display: inline;
+        margin-left: 4px;
+        font-size: 11px;
+        color: var(--font-primary-3);
+        font-weight: 500;
       }
 
       &:hover {

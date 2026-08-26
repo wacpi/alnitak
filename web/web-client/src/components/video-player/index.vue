@@ -120,6 +120,21 @@ let dashQualityMap: Map<string, number> = new Map(); // 清晰度显示名 → d
 
 /** DASH 片尾兜底延迟（ms），给 ended 事件缓冲 */
 const DASH_END_FALLBACK_DELAY_MS = 220;
+/** DASH MPD 提前刷新时间（ms）：OSS 签名 URL 有效期 24h，提前 30min 刷新 */
+const DASH_MPD_REFRESH_AHEAD_MS = 30 * 60 * 1000;
+/** DASH MPD OSS 签名 URL 有效期（ms）：24h */
+const DASH_OSS_URL_TTL_MS = 24 * 60 * 60 * 1000;
+let dashMpdRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+const cancelDashMpdRefresh = () => {
+  if (dashMpdRefreshTimer) {
+    clearTimeout(dashMpdRefreshTimer);
+    dashMpdRefreshTimer = null;
+  }
+};
+
+/** DASH 容灾标记：下载失败后尝试续签 MPD 一次，续签后仍失败才切备用 OSS */
+let dashTokenRefreshed = false;
 
 // ===== HLS 清晰度切换时保存播放状态（HLS 模式下 Wplayer 仍会创建新 video 元素） =====
 let lastPlaybackState: { time: number; playing: boolean } = { time: 0, playing: false };
@@ -167,6 +182,21 @@ const options: PlayerOptionsType = {
             {
               maxBufferLength: 30,
               maxMaxBufferLength: 60,
+                onTokenExpired: () => {
+                  // JWT 过期：重新获取 manifest（带时间戳防缓存），恢复播放
+                  const rid = getCurrentResourceShortId();
+                  if (!rid) return;
+                  const curQuality = options.video.quality[options.video.defaultQuality]?.name || '';
+                  const newUrl = getVideoFileUrl(rid, curQuality, Date.now());
+                  const savedTime = video.currentTime;
+                  const wasPlaying = !video.paused;
+                  if (hlsPlayerState.instance) {
+                    hlsPlayerState.instance.loadSource(newUrl);
+                  }
+                  video.currentTime = savedTime;
+                  if (wasPlaying) video.play().catch(() => {});
+                  console.log('[HLS] Token 过期续签，currentTime:', savedTime);
+                },
                 onError: (_event, data) => {
                   if (!hlsBackupRetried && data.fatal && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
                     hlsBackupRetried = true;
@@ -268,6 +298,30 @@ const options: PlayerOptionsType = {
           } catch (e) {
             console.warn('[DASH] 读取音轨信息失败:', e);
           }
+
+          // DASH MPD 定时续签：提前 30min 刷新 MPD，让 dash.js 无感切换到新 OSS URL
+          cancelDashMpdRefresh();
+          const refreshMs = DASH_OSS_URL_TTL_MS - DASH_MPD_REFRESH_AHEAD_MS;
+          dashMpdRefreshTimer = setTimeout(() => {
+            const rid = getCurrentResourceShortId();
+            if (!rid || !dash.value) return;
+            const savedTime = video.currentTime;
+            const wasPlaying = !video.paused;
+            const curQuality = options.video.quality[options.video.defaultQuality]?.name || '';
+            const freshUrl = (dashUnifiedMode
+              ? getVideoFileUrlDashUnified(rid, Date.now())
+              : getVideoFileUrlDash(rid, curQuality, Date.now()));
+            // dash.js CmcdController 要求绝对 URL
+            const absUrl = freshUrl.startsWith('http') ? freshUrl : window.location.origin + freshUrl;
+            console.log('[DASH] 定时续签 MPD, currentTime:', savedTime);
+            dash.value.attachSource(absUrl);
+            if (savedTime > 0) {
+              dash.value.seek(savedTime);
+            }
+            if (wasPlaying) video.play().catch(() => {});
+            // 续签后重置 error handler 的 dashTokenRefreshed 标记
+            dashTokenRefreshed = false;
+          }, refreshMs);
         });
 
         dash.value.on('playbackMetaDataLoaded', () => {
@@ -345,34 +399,47 @@ const options: PlayerOptionsType = {
           }, DASH_END_FALLBACK_DELAY_MS);
         });
 
-        // DASH 备用 OSS 容灾：主 OSS 下载失败时切换 backup MPD
-        let dashBackupRetried = false;
-        const origDashUrl = video.src;
+        // DASH 容灾：下载失败（含 JWT 过期 403）时刷新 MPD（新 ts 防缓存）
         dash.value.on('error', (e: any) => {
           console.error('[DASH] 播放错误:', e);
-          // error === 'download' 表示 Manifest/SIDX/Content/Init 段下载失败，可切备用 OSS
-          if (!dashBackupRetried && e?.error === 'download') {
-            dashBackupRetried = true;
-            selectedLineLabel.value = 'backup';
-            const savedDashTime = video.currentTime;
-            // 通过 &backup=true 获取新的备用 MPD（所有清晰度指向备用 OSS，保持画质切换）
-            const backupUrl = origDashUrl + (origDashUrl.includes('?') ? '&' : '?') + 'backup=true';
-            console.log('[DASH] 主 OSS 下载失败，切 &backup=true MPD:', backupUrl);
-            const oldDash = dash.value;
-            if (oldDash) oldDash.reset();
-            dash.value = dashjs.MediaPlayer().create();
-            // 复用相同 settings
-            dash.value.updateSettings({
-              streaming: {
-                buffer: { bufferTimeDefault: 12, bufferTimeAtTopQuality: 30, bufferTimeAtTopQualityLongForm: 60, bufferPruningInterval: 10, bufferToKeep: 20 },
-                abr: { autoSwitchBitrate: { video: false, audio: false } },
-              },
-              debug: { logLevel: import.meta.dev ? 3 : 0 },
-            });
-            dash.value.initialize(video, backupUrl, false);
+          const isDownloadError = e?.error === 'download';
+          if (!isDownloadError) return;
+
+          const rid = getCurrentResourceShortId();
+          if (!rid) return;
+
+          const savedDashTime = video.currentTime;
+          const wasPlaying = !video.paused;
+
+          if (!dashTokenRefreshed) {
+            // 首次下载失败：先尝试用新 ts 刷新 MPD（解决 JWT 过期）
+            dashTokenRefreshed = true;
+            const curQuality = options.video.quality[options.video.defaultQuality]?.name || '';
+            const freshUrl = (dashUnifiedMode
+              ? getVideoFileUrlDashUnified(rid, Date.now())
+              : getVideoFileUrlDash(rid, curQuality, Date.now()));
+            const absUrl = freshUrl.startsWith('http') ? freshUrl : window.location.origin + freshUrl;
+            console.log('[DASH] 下载失败，刷新 MPD 续签, currentTime:', savedDashTime);
+            dash.value.attachSource(absUrl);
             if (savedDashTime > 0) {
               dash.value.seek(savedDashTime);
             }
+            if (wasPlaying) video.play().catch(() => {});
+            return;
+          }
+
+          // 续签后仍失败：切备用 OSS（新 ts 防缓存）
+          selectedLineLabel.value = 'backup';
+          const curQ = options.video.quality[options.video.defaultQuality]?.name || '';
+          const baseBackupUrl = (dashUnifiedMode
+            ? getVideoFileUrlDashUnified(rid, Date.now())
+            : getVideoFileUrlDash(rid, curQ, Date.now()));
+          const backupRaw = baseBackupUrl + (baseBackupUrl.includes('?') ? '&' : '?') + 'backup=true';
+          const backupUrl = backupRaw.startsWith('http') ? backupRaw : window.location.origin + backupRaw;
+          console.log('[DASH] 续签后仍失败，切 &backup=true MPD:', backupUrl);
+          dash.value.attachSource(backupUrl);
+          if (savedDashTime > 0) {
+            dash.value.seek(savedDashTime);
           }
         });
       },
@@ -535,6 +602,7 @@ const setOnEnded = (callback: () => void) => {
 const loadPart = async (part: number) => {
   if (loadingPart) return;
   loadingPart = true;
+  cancelDashMpdRefresh();
   try {
   // 重置播放结束标记
   hasEnded.value = false;
@@ -1356,6 +1424,7 @@ if (typeof window !== 'undefined') {
 }
 onBeforeUnmount(() => {
   if (timer) clearInterval(timer);
+  cancelDashMpdRefresh();
   reportOnLeave();
   if (typeof window !== 'undefined') {
     window.removeEventListener('beforeunload', reportOnLeave);

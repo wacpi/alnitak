@@ -140,3 +140,9 @@ export const getPlayUrlsAPI = (resourceShortId: string, token: string, quality?:
 export const getAudioTracksAPI = (resourceId: number | string) => {
   return request.get(`v1/audio/tracks/${resourceId}`);
 }
+
+// 重新转码分P（可选指定单个画质）
+export const reTranscodeResourceAPI = (resourceID: number, quality?: string) => {
+  const params = `resourceID=${resourceID}${quality ? `&quality=${encodeURIComponent(quality)}` : ''}`;
+  return request.post(`v1/video/reTranscodeResource?${params}`);
+}

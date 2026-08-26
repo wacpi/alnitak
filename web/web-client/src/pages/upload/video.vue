@@ -9,7 +9,7 @@
       <div class="title-box">
         <h2 class="title">基本信息</h2>
       </div>
-      <upload-video-info :info="videoInfo" />
+      <upload-video-info :info="videoInfo" :cover-url="coverURLPreview" />
     </div>
   </div>
 </template>
@@ -36,9 +36,14 @@ const videoInfo = ref<VideoStatusType>({
   createdAt: ""
 });
 
+const coverURLPreview = ref<string | null>(null);
+
 const finishUploadVideo = async (data: any) => {
   if (data && data.data && data.data.resource) {
     videoInfo.value.vid = data.data.resource.vid;
+    if (data.coverURL) {
+      coverURLPreview.value = data.coverURL;
+    }
     getVideoStatus(videoInfo.value.vid);
   }
 }

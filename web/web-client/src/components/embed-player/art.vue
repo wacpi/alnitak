@@ -252,6 +252,78 @@ const loadDanmaku = async () => {
     : [];
 };
 
+// ===== Token 过期自动恢复 =====
+let _tokenRefreshLock = false;
+let qualities: any[] = [];
+
+const handleTokenExpired = async (video: HTMLVideoElement, format: 'm3u8' | 'dash') => {
+  if (_tokenRefreshLock) return;
+  _tokenRefreshLock = true;
+  try {
+    const resource = props.videoInfo?.resources?.[props.part - 1];
+    if (!resource?.id) return;
+    const rid = resource.shortId || resource.id;
+    const ts = Date.now();
+
+    let newUrl: string;
+    if (format === 'dash') {
+      newUrl = dashUnifiedMode
+        ? getVideoFileUrlDashUnified(rid, ts)
+        : getVideoFileUrlDash(rid, qualities?.[0]?.html || '', ts);
+    } else {
+      newUrl = getVideoFileUrl(rid, qualities?.[0]?.html || '', ts);
+    }
+
+    const currentTime = video.currentTime;
+    const wasPlaying = !video.paused;
+
+    if (format === 'm3u8' && Hls.isSupported() && hlsPlayerState.instance) {
+      hlsPlayerState.instance.destroy();
+      hlsPlayerState.instance = null;
+      createHlsPlayer(video, newUrl, hlsPlayerState, { currentTime, wasPlaying, volume: video.volume, muted: video.muted }, {
+        maxBufferLength: 60,
+        maxMaxBufferLength: 120,
+        onTokenExpired: () => handleTokenExpired(video, 'm3u8'),
+      });
+      if (wasPlaying) video.play().catch(() => {});
+    } else if (format === 'dash' && dashPlayer) {
+      dashPlayer.reset();
+      dashPlayer = null;
+      const art = (player as any);
+      if (art?.dash) art.dash = null;
+      if (dashjs && dashjs.MediaPlayer) {
+        dashPlayer = dashjs.MediaPlayer().create();
+        dashPlayer.updateSettings({
+          streaming: {
+            buffer: { bufferTimeDefault: 20, bufferTimeAtTopQuality: 40, bufferTimeAtTopQualityLongForm: 90, bufferPruningInterval: 15, bufferToKeep: 40 },
+            abr: { autoSwitchBitrate: { video: false, audio: false } },
+          },
+          debug: { logLevel: 0 },
+        });
+        dashPlayer.initialize(video, newUrl, false);
+        if (art) art.dash = dashPlayer;
+        dashPlayer.on('error', (e: any) => {
+          const err = e?.error || e;
+          if (err?.code === 403 || err?.httpStatus === 403) {
+            handleTokenExpired(video, 'dash');
+            return;
+          }
+          console.error('[art.vue] DASH 播放错误:', e);
+        });
+        video.currentTime = currentTime;
+        if (wasPlaying) video.play().catch(() => {});
+      }
+    } else {
+      video.src = newUrl;
+      video.currentTime = currentTime;
+      if (wasPlaying) video.play().catch(() => {});
+    }
+    console.log('[Token Renewal] 续签成功, format:', format, 'currentTime:', currentTime);
+  } finally {
+    _tokenRefreshLock = false;
+  }
+};
+
 const initPlayer = async () => {
   const container = playerContainer.value;
   if (!container) {
@@ -273,7 +345,6 @@ const initPlayer = async () => {
   const rid = resource.shortId || resource.id;
   const subPrep = await fetchSubtitleTracksForArtplayer(String(rid));
   const res = await getResourceQualityApi(rid);
-  let qualities = [];
   if (res.data.code === 200 && res.data.data.quality.length > 0) {
     const serverSupportsDash = res.data.data.supportsDash === true;
     const qualityOrderFromServer = (res.data.data.qualityOrder as string[]) || [];
@@ -578,6 +649,7 @@ customType: {
             {
               maxBufferLength: 60,
               maxMaxBufferLength: 120,
+              onTokenExpired: () => handleTokenExpired(video, 'm3u8'),
             }
           );
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {

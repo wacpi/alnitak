@@ -10,10 +10,14 @@ interface UploadOptionsType {
 
 interface FinishUploadType {
   hash: string;
-  fileID: number;
+  fileID: string;
   size: number;
+  duration?: number;
+  width?: number;
+  height?: number;
+  codecName?: string;
   action: string;
-  replaceResourceID?: number; // 替换资源时传旧资源ID
+  replaceResourceID?: number;
   onFinish: (data?: any) => void
   onError: (error?: any) => void
 }
