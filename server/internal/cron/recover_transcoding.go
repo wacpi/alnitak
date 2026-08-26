@@ -46,7 +46,13 @@ func RecoverStuckTranscoding() {
 
 	// ═══════════════════════════════════════════════════════════════
 	// Part 1: 恢复 VIDEO_PROCESSING 状态的任务（原有逻辑）
+	// 【注意】Local 模式使用进程内内存进度，不写 Redis status key，
+	// 也不经过 Stream，因此 Redis 查询永远为空，会误判为卡住并重复入队。
+	// Local 模式下跳过此部分。
 	// ═══════════════════════════════════════════════════════════════
+	if global.Config.Transcoding.Mode == "local" {
+		utils.InfoLog("Local 模式跳过 Redis 恢复检查（使用内存进度）", "cron")
+	} else {
 	var processingResources []model.Resource
 	global.Mysql.Model(&model.Resource{}).
 		Where("status = ?", global.VIDEO_PROCESSING).
@@ -154,6 +160,7 @@ func RecoverStuckTranscoding() {
 
 		recovered++
 	}
+	} // end if mode != "local"
 
 	// ═══════════════════════════════════════════════════════════════
 	// Part 2: 自动重试 PROCESSING_FAIL 状态的任务（失败自动重试）
