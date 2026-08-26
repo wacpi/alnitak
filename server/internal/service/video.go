@@ -2107,9 +2107,8 @@ func getVideoStatus(videoId uint) int {
 }
 
 // ReTranscodeResource 重新入队单个分P（资源级别）的转码任务。
-// 用于在修复源文件问题后单独重试失败的分P，不影响其他分P的状态。
-// 返回更新后的 resource 指针，供 API 层返回 data。
-func ReTranscodeResource(ctx *gin.Context, resourceID uint) (*model.Resource, error) {
+// quality 非空时只重试指定画质，为空则重试所有非 success 画质。
+func ReTranscodeResource(ctx *gin.Context, resourceID uint, quality string) (*model.Resource, error) {
 	var resource model.Resource
 	if err := global.Mysql.Where("id = ?", resourceID).First(&resource).Error; err != nil {
 		return nil, errors.New("分P不存在")
@@ -2159,10 +2158,47 @@ func ReTranscodeResource(ctx *gin.Context, resourceID uint) (*model.Resource, er
 	global.Mysql.Model(&resource).Update("status", global.VIDEO_PROCESSING)
 	resource.Status = global.VIDEO_PROCESSING
 
-	// 清理 Redis 中可能残留的进度哈希
+	// 清理 Redis 中失败画质的进度，保留已完成的
 	rdb := global.Redis.RawClient()
 	statusKey := fmt.Sprintf("transcoding:status:%d", resource.ID)
-	rdb.Del(context.Background(), statusKey)
+	if quality != "" {
+		// 只重置指定画质
+		pipe := rdb.Pipeline()
+		pipe.HSet(context.Background(), statusKey, fmt.Sprintf("status_%s", quality), "waiting")
+		pipe.HSet(context.Background(), statusKey, fmt.Sprintf("progress_%s", quality), "0.00")
+		pipe.HSet(context.Background(), statusKey, "status", "processing")
+		pipe.HSet(context.Background(), statusKey, "updated", fmt.Sprintf("%d", time.Now().Unix()))
+		pipe.Exec(context.Background())
+	} else if hash, err := rdb.HGetAll(context.Background(), statusKey).Result(); err == nil && len(hash) > 0 {
+		// 重置所有非 success 画质
+		pipe := rdb.Pipeline()
+		for field, val := range hash {
+			if strings.HasPrefix(field, "status_") && val != "success" {
+				pipe.HSet(context.Background(), statusKey, field, "waiting")
+				progressField := "progress_" + field[len("status_"):]
+				pipe.HSet(context.Background(), statusKey, progressField, "0.00")
+			}
+		}
+		pipe.HSet(context.Background(), statusKey, "status", "processing")
+		pipe.HSet(context.Background(), statusKey, "updated", fmt.Sprintf("%d", time.Now().Unix()))
+		pipe.Exec(context.Background())
+	}
+
+	// 去重检查：指定画质已经是 waiting 说明已有重试任务在队列，跳过
+	if quality != "" {
+		curStatus, err := rdb.HGet(context.Background(), statusKey, fmt.Sprintf("status_%s", quality)).Result()
+		if err == nil && curStatus == "waiting" {
+			utils.InfoLog(fmt.Sprintf("【重试画质-跳过】ResourceID=%d, quality=%s 已在队列中", resource.ID, quality), "transcoding")
+			return &resource, nil
+		}
+	}
+
+	// 从 VideoIndexFile 读取分辨率（如果有的话），避免 Worker 用 0x0 计算 targets 导致 MinInt64
+	var indexFile model.VideoIndexFile
+	width, height := 0, 0
+	if err := global.Mysql.Where("resource_id = ?", resource.ID).First(&indexFile).Error; err == nil {
+		width, height = indexFile.Width, indexFile.Height
+	}
 
 	// 构建 TranscodingInfo 并入队
 	info := &dto.TranscodingInfo{
@@ -2174,7 +2210,14 @@ func ReTranscodeResource(ctx *gin.Context, resourceID uint) (*model.Resource, er
 		Suffix:              suffix,
 		CodecName:           resource.CodecName,
 		Duration:            float64(resource.Duration),
+		Width:               width,
+		Height:              height,
 		OriginalVideoStatus: origStatus,
+	}
+
+	// 先发 cancel 信号杀掉旧的 pollProgress 协程，避免与新任务竞争
+	if err := GetCurrentTranscoder().Cancel(context.Background(), resource.Vid); err != nil {
+		utils.InfoLog(fmt.Sprintf("【重转码】Cancel 旧 pollProgress 失败（可忽略）: %v", err), "transcoding")
 	}
 
 	if err := GetCurrentTranscoder().Enqueue(context.Background(), info); err != nil {

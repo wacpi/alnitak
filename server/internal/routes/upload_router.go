@@ -44,5 +44,31 @@ func CollectUploadRoutes(r *gin.RouterGroup) {
 			middleware.MaxBodySize(middleware.UploadJSONMaxBody),
 			middleware.RateLimiter(middleware.UploadChunkRateLimit),
 			api.UploadVideoMerge)
+
+		// ── 直传 OSS 接口 ──
+
+		// 图片：获取预签名 URL（1MB body）
+		uploadGroup.POST("presignImage",
+			middleware.MaxBodySize(middleware.UploadJSONMaxBody),
+			middleware.RateLimiter(middleware.UploadImgRateLimit),
+			api.PresignImageUpload)
+
+		// 图片：确认上传完成（1MB body）
+		uploadGroup.POST("confirmImage",
+			middleware.MaxBodySize(middleware.UploadJSONMaxBody),
+			middleware.RateLimiter(middleware.UploadImgRateLimit),
+			api.ConfirmImageUpload)
+
+		// 视频：初始化分片直传（1MB body）
+		uploadGroup.POST("initVideo",
+			middleware.MaxBodySize(middleware.UploadJSONMaxBody),
+			middleware.RateLimiter(middleware.UploadCreateRateLimit),
+			api.InitVideoUpload)
+
+		// 视频：完成分片直传（1MB body）
+		uploadGroup.POST("completeVideo",
+			middleware.MaxBodySize(middleware.UploadJSONMaxBody),
+			middleware.RateLimiter(middleware.UploadChunkRateLimit),
+			api.CompleteVideoUpload)
 	}
 }

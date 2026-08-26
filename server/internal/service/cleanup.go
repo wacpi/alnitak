@@ -272,25 +272,67 @@ func cleanVideoDirDbRecords(dirName string, r *CleanupResult) {
 		cleanedResources  int64
 	)
 	err := global.Mysql.Transaction(func(tx *gorm.DB) error {
+		// 事务内重新校验：防止检查与删除之间有新转码完成创建了有效记录
+		var freshVideoFile model.VideoFile
+		tx.Unscoped().Where("dir_name = ?", dirName).First(&freshVideoFile)
+		if freshVideoFile.ID != 0 {
+			// 有 VideoFile → 检查是否有正在转码的资源引用
+			var processingCount int64
+			tx.Model(&model.Resource{}).
+				Where("status = ?", global.VIDEO_PROCESSING).
+				Where("file_id = ?", freshVideoFile.ID).
+				Count(&processingCount)
+			if processingCount > 0 {
+				return nil // 有转码中的资源，跳过本次清理
+			}
+		}
+		var freshIndexCount int64
+		tx.Model(&model.VideoIndexFile{}).Where("dir_name = ?", dirName).Count(&freshIndexCount)
+		if freshIndexCount > 0 {
+			// 有新创建的 VideoIndexFile → 逐条检查是否有效
+			var freshIndexFiles []model.VideoIndexFile
+			tx.Unscoped().Where("dir_name = ?", dirName).Find(&freshIndexFiles)
+			for _, fif := range freshIndexFiles {
+				if !fif.DeletedAt.Valid {
+					var res model.Resource
+					if tx.Unscoped().Where("id = ?", fif.ResourceID).First(&res); res.ID != 0 && !res.DeletedAt.Valid {
+						return nil // 有有效资源，跳过
+					}
+				}
+			}
+		}
+
 		// 删除 VideoIndexFile 记录
 		result := tx.Unscoped().Where("dir_name = ?", dirName).Delete(&model.VideoIndexFile{})
 		cleanedIndexFiles = result.RowsAffected
 
 		// 清理 VideoFileRef 引用记录（全局去重模式）
-		if videoFile.ID != 0 {
-			tx.Unscoped().Where("file_id = ?", videoFile.ID).Delete(&model.VideoFileRef{})
+		if freshVideoFile.ID != 0 {
+			tx.Unscoped().Where("file_id = ?", freshVideoFile.ID).Delete(&model.VideoFileRef{})
 		}
 
 		// 删除 VideoFile 记录
 		result = tx.Unscoped().Where("dir_name = ?", dirName).Delete(&model.VideoFile{})
 		cleanedVideoFiles = result.RowsAffected
 
-		// 删除相关的 Resource 记录
+		// 删除相关的 Resource 记录（包括通过 indexFiles 和通过 file_id 关联的）
+		resourceIDs := make(map[uint]bool)
 		for _, indexFile := range indexFiles {
 			if indexFile.ResourceID > 0 {
-				result = tx.Unscoped().Where("id = ?", indexFile.ResourceID).Delete(&model.Resource{})
-				cleanedResources += result.RowsAffected
+				resourceIDs[indexFile.ResourceID] = true
 			}
+		}
+		// 补充：通过 file_id 关联的 Resource（无 VideoIndexFile 的场景）
+		if freshVideoFile.ID != 0 {
+			var extraResources []model.Resource
+			tx.Unscoped().Where("file_id = ?", freshVideoFile.ID).Find(&extraResources)
+			for _, er := range extraResources {
+				resourceIDs[er.ID] = true
+			}
+		}
+		for rid := range resourceIDs {
+			result = tx.Unscoped().Where("id = ?", rid).Delete(&model.Resource{})
+			cleanedResources += result.RowsAffected
 		}
 
 		return nil

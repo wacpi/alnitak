@@ -22,9 +22,15 @@ func (r *Redis) RawClient() *redis.Client {
 
 func Init(c config.Redis) *Redis {
 	redisClient := redis.NewClient(&redis.Options{
-		Addr:     fmt.Sprintf("%s:%d", c.Host, c.Port),
-		Password: c.Password,
-		DB:       0, // use default DB
+		Addr:         fmt.Sprintf("%s:%d", c.Host, c.Port),
+		Password:     c.Password,
+		DB:           0,
+		DialTimeout:  10 * time.Second,  // 建连超时（跨洋高延迟）
+		ReadTimeout:  8 * time.Second,   // 读超时（丢包重传需要余量）
+		WriteTimeout: 8 * time.Second,   // 写超时
+		PoolSize:     20,                // 连接池大小
+		MinIdleConns: 5,                 // 保持最小空闲连接，减少建连开销
+		PoolTimeout:  10 * time.Second,  // 从池中获取连接的超时
 	})
 	zap.L().Info("redis连接成功", zap.String("module", "db"))
 

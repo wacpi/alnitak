@@ -419,6 +419,26 @@ func (s *SharedTask) DoOrWait(ctx context.Context, taskFn func() error) error {
 // ==============================================================================
 
 func (s *TranscodeService) ProcessVideo(ctx context.Context, info *dto.TranscodingInfo) {
+	// FPS 为空时自动 ffprobe 补全（前端可能未传帧率）
+	if info.FPS == "" && info.InputFile != "" {
+		if vi, err := getVideoInfo(info.InputFile); err == nil {
+			for _, st := range vi.Stream {
+				if st.CodecType == "video" {
+					info.FPS = st.AvgFrameRate
+					info.FPS30, info.FPS60 = ffmpeg.GetFpsInfo(info.FPS, global.Config.Transcoding.Generate1080p60)
+					utils.InfoLog(fmt.Sprintf("【自动探测FPS】VideoID=%d, FPS=%s", info.VideoID, info.FPS), "transcoding")
+					break
+				}
+			}
+		}
+		if info.FPS == "" {
+			info.FPS = "30/1"
+			info.FPS30 = "30/1"
+			info.FPS60 = "60000/1001"
+			utils.InfoLog(fmt.Sprintf("【FPS探测失败，使用默认值】VideoID=%d, FPS=30/1", info.VideoID), "transcoding")
+		}
+	}
+
 	targets := ffmpeg.GetTranscodingTargets(info.Width, info.Height, info.VideoBitRate, info.FPS30, info.FPS60, global.Config.Transcoding.Generate1080p60)
 	s.initResourceProgress(info.VideoID, info.ResourceID, targets)
 	defer s.clearProgress(info.ResourceID)

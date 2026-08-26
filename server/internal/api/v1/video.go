@@ -387,7 +387,8 @@ func ReTranscodeResource(ctx *gin.Context) {
 		resp.FailWithMessage(ctx, "分PID不能为空")
 		return
 	}
-	resource, err := service.ReTranscodeResource(ctx, resourceID)
+	quality := ctx.Query("quality") // 可选，指定单个画质重试
+	resource, err := service.ReTranscodeResource(ctx, resourceID, quality)
 	if err != nil {
 		resp.FailWithMessage(ctx, err.Error())
 		return

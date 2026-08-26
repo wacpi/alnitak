@@ -542,8 +542,26 @@ func (w *Worker) processJob(ctx context.Context, rawJob, msgID string) (err erro
 	)
 	var completed atomic.Int32
 
-	// 2a. 初始化所有画质进度为 0%（排队中的也能看见）
+	// 2a. 清理旧的画质进度字段（避免多次重转码残留不同码率的旧数据）
 	progressKey := fmt.Sprintf("%s%d", transcodingStatusPrefix, info.ResourceID)
+	currentQualities := make(map[string]bool, len(targets))
+	for _, target := range targets {
+		qn := target.Resolution + "_" + target.BitrateRate + "_" + target.FpsName
+		currentQualities[qn] = true
+	}
+	if oldFields, err := w.rdb.HKeys(ctx, progressKey).Result(); err == nil {
+		for _, field := range oldFields {
+			if strings.HasPrefix(field, "progress_") || strings.HasPrefix(field, "status_") {
+				qualName := strings.TrimPrefix(field, "progress_")
+				qualName = strings.TrimPrefix(qualName, "status_")
+				if !currentQualities[qualName] {
+					w.rdb.HDel(ctx, progressKey, field)
+				}
+			}
+		}
+	}
+
+	// 2b. 初始化所有画质进度为 0%（排队中的也能看见）
 	for _, target := range targets {
 		qualityName := target.Resolution + "_" + target.BitrateRate + "_" + target.FpsName
 		progressField := fmt.Sprintf("progress_%s", qualityName)
@@ -564,6 +582,14 @@ func (w *Worker) processJob(ctx context.Context, rawJob, msgID string) (err erro
 		qualityName := target.Resolution + "_" + target.BitrateRate + "_" + target.FpsName
 		videoOutput := filepath.Join(w.workDir, fmt.Sprintf("alnitak_v_%d_%s.m4s", info.ResourceID, qualityName))
 
+		// 检查该画质是否已成功完成（部分重转码场景）
+		existingStatus, _ := w.rdb.HGet(ctx, progressKey, fmt.Sprintf("status_%s", qualityName)).Result()
+		if existingStatus == "success" {
+			completed.Add(1)
+			zap.L().Info("Skipping already completed quality", zap.String("quality", qualityName))
+			continue
+		}
+
 		zap.L().Info("Starting video encode", zap.String("quality", qualityName))
 		encWg.Add(1)
 		go func(t ffmpeg.TranscodingTarget, outPath, qName string) {
@@ -571,6 +597,12 @@ func (w *Worker) processJob(ctx context.Context, rawJob, msgID string) (err erro
 			if w.encodingSem != nil {
 				w.encodingSem <- struct{}{}
 				defer func() { <-w.encodingSem }()
+			}
+			// 二次检查：如果该画质已被重试改为 waiting，跳过本次编码
+			if curStatus, err := w.rdb.HGet(ctx, progressKey, fmt.Sprintf("status_%s", qName)).Result(); err == nil && curStatus == "waiting" {
+				zap.L().Info("Quality re-queued by retry, skipping", zap.String("quality", qName))
+				completed.Add(1)
+				return
 			}
 			// 标记开始编码（从 waiting → processing）
 			w.rdb.HSet(ctx, statusKey, fmt.Sprintf("status_%s", qName), "processing")

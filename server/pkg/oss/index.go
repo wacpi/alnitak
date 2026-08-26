@@ -3,6 +3,7 @@ package oss
 import (
 	"errors"
 	"io"
+	"time"
 
 	"interastral-peace.com/alnitak/internal/config"
 	"interastral-peace.com/alnitak/utils"
@@ -16,6 +17,12 @@ const (
 	R2TORAGE = "cloudflare"
 )
 
+// CompletePart 表示一个已上传的分片，用于 CompleteMultipartUpload。
+type CompletePart struct {
+	PartNumber int    `json:"partNumber"`
+	ETag       string `json:"etag"`
+}
+
 type Storage interface {
 	GetObjectToFile(objectKey, downloadedFileName string) error
 	DeleteObject(objectKey string) error
@@ -24,6 +31,23 @@ type Storage interface {
 	IsExists(objectKey string) (bool, error)
 	GetObjectUrl(objectKey string) string
 	GetObjectReader(objectKey string) (io.ReadCloser, error)
+
+	// ── 直传 OSS 预签名方法 ──
+
+	// PresignPutObject 生成单文件上传预签名 URL（用于图片直传）。
+	// expiry: 签名有效期。
+	PresignPutObject(objectKey string, expiry time.Duration) (string, error)
+
+	// InitiateMultipartUpload 发起分片上传，返回 uploadID。
+	// 用于视频直传场景：客户端拿到 uploadID 后逐片预签名并直传。
+	InitiateMultipartUpload(objectKey string) (string, error)
+
+	// PresignUploadPart 为指定分片生成预签名 PUT URL。
+	// partNumber 从 1 开始。
+	PresignUploadPart(uploadID, objectKey string, partNumber int, expiry time.Duration) (string, error)
+
+	// CompleteMultipartUpload 通知 OSS 合并所有已上传分片。
+	CompleteMultipartUpload(uploadID, objectKey string, parts []CompletePart) error
 }
 
 func InitStorage(c config.Storage) Storage {
